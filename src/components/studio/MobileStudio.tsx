@@ -17,7 +17,7 @@ const PROMPT_KEY = 'fc:pendingPrompt'
 const MAX_FILES = 10
 const MAX_SIZE = 15 * 1024 * 1024
 
-export function MobileStudio() {
+export function MobileStudio({ onUseBookmarklet }: { onUseBookmarklet?: () => void }) {
   const toast = useToast()
   const platform = getPlatform()
   const { accounts, setAccounts, launch, defaultAccount } = useGoogleAccounts()
@@ -203,6 +203,13 @@ export function MobileStudio() {
           ))}
         </ol>
       </section>
+
+      {onUseBookmarklet && (
+        <button onClick={onUseBookmarklet} className="rounded-3xl p-4 text-left text-sm text-white/60 glass hover:bg-white/[0.06]">
+          <b className="text-white">Ingin galeri & unduh langsung dari FLOW CONNECT?</b> Coba metode <span className="text-aurora-cyan">Bookmarklet</span> dengan
+          Google Flow versi web di browser HP (eksperimental).
+        </button>
+      )}
 
       <AddAccountModal
         open={adding}

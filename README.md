@@ -45,7 +45,7 @@ Uji lokal di runtime Cloudflare: `npm run cf:preview` (port 8787).
 | Landing | `/` | Hero + prompt, model, Plan/Create/Refine, tools, films, FAQ |
 | Masuk / Daftar | `/masuk` | Email + password (Supabase Auth) |
 | **Hub akun Google** | `/app` | Daftar akun, tambah / default / label / hapus, tombol **Buka Google Flow** |
-| **Studio** | `/app/studio` | Mode **Komputer**: kirim gambar/prompt, galeri + unduh (ekstensi Bridge). Mode **HP**: kirim ke aplikasi Google Flow |
+| **Studio** | `/app/studio` | Mode **Komputer**: kirim gambar/prompt, galeri + unduh lewat **Bookmarklet** atau **ekstensi Bridge**. Mode **HP**: kirim ke aplikasi Google Flow |
 | Tools | `/app/tools` | 12 tools Google Flow, dibuka dengan akun pilihan |
 
 Prompt yang diketik di hero landing dibawa ke hub dan otomatis disalin ke clipboard saat membuka Google Flow.
@@ -59,6 +59,22 @@ Jika akun sudah login di browser → langsung masuk; jika belum → Google memin
 2. **Pakai email** (manual) — hanya pintasan, `verified = false`. Klien tidak bisa mengubah dirinya jadi terverifikasi (RLS + trigger).
 
 Maksimal 10 akun per pengguna; akun pertama otomatis jadi default.
+
+## Studio + Bookmarklet (tanpa instal)
+Alternatif ekstensi: bookmark `javascript:` yang dijalankan pengguna di tab **flow.google.com** miliknya
+(sumber: `src/bookmarklet/flow-connect-bookmarklet.js`, dibuat oleh `bookmarkletHref()` di `src/lib/flowLink.ts`).
+
+- Komunikasi tab FLOW CONNECT ↔ tab Flow lewat `window.postMessage`, dua arah:
+  1. Studio membuka tab Flow → pengguna klik bookmarklet → bookmarklet menyapa `window.opener`
+  2. Pengguna klik bookmarklet → tombol “Buka FLOW CONNECT” di panel membuka Studio → bookmarklet menyapa jendela itu
+- Origin dicek di kedua sisi: bookmarklet hanya menerima pesan dari origin FLOW CONNECT yang membuatnya; Studio hanya dari `https://flow.google.com`.
+- Fitur sama dengan ekstensi: status akun/project, galeri (RPC baca-saja `Zzl0ze`/`as29s`), ambil file (Blob) untuk unduh,
+  kirim gambar (File via postMessage) & prompt ke UI Flow. Tidak membuat token reCAPTCHA dan tidak menekan Generate.
+- Tanpa `innerHTML`/`eval` (aman untuk Trusted Types). Kode di-inline penuh (~16 KB) karena CSP Flow memblokir script eksternal.
+- Perlu diklik ulang setiap tab Flow dimuat ulang. React memblokir `href="javascript:"`, jadi tombol seret mengisi `href` lewat DOM.
+
+> ⚠️ Belum diuji pada akun Google Flow sungguhan. Spesifikasi CSP menyatakan bookmarklet tidak boleh diblokir dan Firefox mematuhinya;
+> jika Chrome/Google Flow memblokirnya, gunakan ekstensi. Jika Flow memutus hubungan jendela (COOP), sambungkan lewat tombol “Buka FLOW CONNECT” di panel bookmarklet.
 
 ## Studio + ekstensi FLOW CONNECT Bridge
 Website lain tidak bisa mengakses Google Flow (cookie Google, CORS, iframe diblokir), jadi upload/download lewat FLOW CONNECT memakai
@@ -119,10 +135,11 @@ src/
   components/      UI umum, landing/, hub/ (akun Google), studio/ (mode HP)
   context/         Auth & Toast
   hooks/           useGoogleAccounts
-  lib/             supabase client, api, google (Flow URL + GIS), bridge (klien ekstensi), device (HP/aplikasi Flow), catalog
+  lib/             supabase client, api, google (Flow URL + GIS), bridge (ekstensi), flowLink (bookmarklet), connector, device (HP), catalog
   pages/           Landing, Login, Hub, Studio, Tools
 design/            Pilihan template dark (referensi)
 supabase/migrations, supabase/functions
 extension/          FLOW CONNECT Bridge (Chrome MV3)
+src/bookmarklet/    sumber bookmarklet Flow
 scripts/            build-extension.mjs (zip ekstensi)
 ```

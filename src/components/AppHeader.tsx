@@ -51,6 +51,7 @@ export function AppHeader({ children }: { children?: ReactNode }) {
         <Link to="/app" className="shrink-0"><Logo to="/app" /></Link>
         <nav className="hidden items-center gap-1 sm:flex">
           <NavLink to="/app" end className={link}>Akun Google</NavLink>
+          <NavLink to="/app/studio" className={link}>Studio</NavLink>
           <NavLink to="/app/tools" className={link}>Tools</NavLink>
         </nav>
         <div className="flex-1">{children}</div>

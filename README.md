@@ -45,6 +45,7 @@ Uji lokal di runtime Cloudflare: `npm run cf:preview` (port 8787).
 | Landing | `/` | Hero + prompt, model, Plan/Create/Refine, tools, films, FAQ |
 | Masuk / Daftar | `/masuk` | Email + password (Supabase Auth) |
 | **Hub akun Google** | `/app` | Daftar akun, tambah / default / label / hapus, tombol **Buka Google Flow** |
+| **Studio** | `/app/studio` | Kirim gambar & prompt ke Google Flow, galeri hasil + unduh (via ekstensi Bridge) |
 | Tools | `/app/tools` | 12 tools Google Flow, dibuka dengan akun pilihan |
 
 Prompt yang diketik di hero landing dibawa ke hub dan otomatis disalin ke clipboard saat membuka Google Flow.
@@ -58,6 +59,26 @@ Jika akun sudah login di browser → langsung masuk; jika belum → Google memin
 2. **Pakai email** (manual) — hanya pintasan, `verified = false`. Klien tidak bisa mengubah dirinya jadi terverifikasi (RLS + trigger).
 
 Maksimal 10 akun per pengguna; akun pertama otomatis jadi default.
+
+## Studio + ekstensi FLOW CONNECT Bridge
+Website lain tidak bisa mengakses Google Flow (cookie Google, CORS, iframe diblokir), jadi upload/download lewat FLOW CONNECT memakai
+ekstensi browser kecil di `extension/` yang bekerja **di tab Google Flow milik pengguna sendiri** (akun & kuota Google mereka, tanpa API key).
+
+| Aksi | Cara kerja |
+|---|---|
+| Status | membaca tab `flow.google.com` yang terbuka, akun yang login, dan project dari URL `/project/<id>` |
+| Galeri | RPC baca-saja `Zzl0ze` (media project) & `as29s` (URL media) di konteks halaman Flow — tanpa reCAPTCHA |
+| Unduh | `chrome.downloads` dari `flow-content.google` → folder `Downloads/FLOW CONNECT` |
+| Kirim gambar | file dimasukkan ke UI Flow (input file / paste / drop) — **Flow sendiri** yang meng-upload |
+| Tulis prompt | prompt diketik ke kotak prompt Flow; pengguna menekan **Generate** di Flow |
+
+**Sengaja tidak dilakukan:** memanggil endpoint generate/upload Flow secara langsung atau membuat token reCAPTCHA dari ekstensi.
+Google Flow mendeteksi hal itu (`extension_hijack_detected`) dan melewatinya berarti membobol proteksi Google → risiko akun diblokir.
+
+- Paket: `npm run build:extension` → `public/downloads/flow-connect-bridge.zip` (otomatis saat `dev`/`build`, tidak di-commit).
+- Pasang: ekstrak zip → `chrome://extensions` → *Developer mode* → *Load unpacked* → folder `flow-connect-bridge`.
+- ID tetap `paedhhaejfnmdlgabmdjlncbjjpfdkfp` (dari `key` di manifest). Hanya menerima pesan dari `flow-connect-2qu.pages.dev` & `localhost:5173`.
+- RPC id/format diambil dari riset open-source (crisng95/flowkit, ffroliva/gflow-cli, MIT) — API internal Google tidak resmi dan bisa berubah sewaktu-waktu.
 
 ## Setup Google OAuth (untuk tombol “Masuk dengan Google”)
 1. [Google Cloud Console](https://console.cloud.google.com/) → buat/pilih project.
@@ -83,8 +104,10 @@ src/
   components/      UI umum, landing/, hub/ (avatar, picker, modal tambah akun)
   context/         Auth & Toast
   hooks/           useGoogleAccounts
-  lib/             supabase client, api, google (Flow URL + GIS), catalog (konten)
-  pages/           Landing, Login, Hub, Tools
+  lib/             supabase client, api, google (Flow URL + GIS), bridge (klien ekstensi), catalog
+  pages/           Landing, Login, Hub, Studio, Tools
 design/            Pilihan template dark (referensi)
 supabase/migrations, supabase/functions
+extension/          FLOW CONNECT Bridge (Chrome MV3)
+scripts/            build-extension.mjs (zip ekstensi)
 ```

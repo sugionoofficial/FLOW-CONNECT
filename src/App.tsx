@@ -9,6 +9,7 @@ import Landing from './pages/Landing'
 const Login = lazy(() => import('./pages/Login'))
 const Hub = lazy(() => import('./pages/Hub'))
 const Tools = lazy(() => import('./pages/Tools'))
+const Studio = lazy(() => import('./pages/Studio'))
 const NotFound = lazy(() => import('./pages/NotFound'))
 
 export default function App() {
@@ -21,6 +22,7 @@ export default function App() {
               <Route path="/" element={<Landing />} />
               <Route path="/masuk" element={<Login />} />
               <Route path="/app" element={<ProtectedRoute><Hub /></ProtectedRoute>} />
+              <Route path="/app/studio" element={<ProtectedRoute><Studio /></ProtectedRoute>} />
               <Route path="/app/tools" element={<ProtectedRoute><Tools /></ProtectedRoute>} />
               <Route path="/app/*" element={<Navigate to="/app" replace />} />
               <Route path="*" element={<NotFound />} />

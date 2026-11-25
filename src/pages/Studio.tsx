@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import {
   AlertTriangle, CheckCircle2, Clipboard, Download, ExternalLink, FolderOpen, ImagePlus, Loader2, Play,
-  Puzzle, RefreshCw, Send, ShieldCheck, Type, Wand2, X,
+  Monitor, Puzzle, RefreshCw, Smartphone, Send, ShieldCheck, Type, Wand2, X,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { AppHeader } from '../components/AppHeader'
@@ -15,10 +15,64 @@ import {
   type BridgeStatus, type FlowMedia,
 } from '../lib/bridge'
 import { FLOW_APP_URL } from '../lib/google'
+import { isMobile } from '../lib/device'
+import { MobileStudio } from '../components/studio/MobileStudio'
 
 const PROMPT_KEY = 'fc:pendingPrompt'
 
+type Mode = 'komputer' | 'hp'
+const MODE_KEY = 'fc:studioMode'
+
 export default function Studio() {
+  const [mode, setMode] = useState<Mode>(() => {
+    const saved = localStorage.getItem(MODE_KEY)
+    return saved === 'hp' || saved === 'komputer' ? saved : isMobile() ? 'hp' : 'komputer'
+  })
+  const change = (m: Mode) => {
+    setMode(m)
+    localStorage.setItem(MODE_KEY, m)
+  }
+  const modeSwitch = <ModeSwitch mode={mode} onChange={change} />
+  if (mode === 'komputer') return <DesktopStudio modeSwitch={modeSwitch} />
+  return (
+    <div className="relative isolate min-h-screen">
+      <AuroraBg intensity={0.5} />
+      <AppHeader />
+      <main className="container-x max-w-xl py-8">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="font-display text-3xl font-bold">
+            Studio <span className="text-aurora">Flow</span>
+          </h1>
+          {modeSwitch}
+        </div>
+        <p className="mt-1 text-sm text-white/55">Siapkan gambar & prompt di sini, lalu kirim ke aplikasi Google Flow di HP-mu.</p>
+        <div className="mt-6">
+          <MobileStudio />
+        </div>
+      </main>
+    </div>
+  )
+}
+
+function ModeSwitch({ mode, onChange }: { mode: Mode; onChange: (m: Mode) => void }) {
+  const item = (m: Mode, label: string, Icon: typeof Monitor) => (
+    <button
+      onClick={() => onChange(m)}
+      className={clsx('flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition', mode === m ? 'bg-white text-ink-950' : 'text-white/60 hover:text-white')}
+      aria-pressed={mode === m}
+    >
+      <Icon className="size-3.5" /> {label}
+    </button>
+  )
+  return (
+    <div className="flex gap-1 rounded-xl p-1 glass" role="group" aria-label="Mode studio">
+      {item('komputer', 'Komputer', Monitor)}
+      {item('hp', 'HP', Smartphone)}
+    </div>
+  )
+}
+
+function DesktopStudio({ modeSwitch }: { modeSwitch: ReactNode }) {
   const { launch, defaultAccount } = useGoogleAccounts()
   const [version, setVersion] = useState<string | null | undefined>(undefined) // undefined = memeriksa
   const [status, setStatus] = useState<BridgeStatus | null>(null)
@@ -77,7 +131,10 @@ export default function Studio() {
               dengan akun Google kamu — tanpa API key.
             </p>
           </div>
-          <Button variant="glass" onClick={refresh}><RefreshCw className="size-4" /> Segarkan</Button>
+          <div className="flex items-center gap-2">
+            {modeSwitch}
+            <Button variant="glass" onClick={refresh}><RefreshCw className="size-4" /> Segarkan</Button>
+          </div>
         </div>
 
         {/* ───── status ───── */}

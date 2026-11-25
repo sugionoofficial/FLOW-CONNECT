@@ -1,75 +1,4 @@
-import type { AspectRatio, GenerationMode } from './types'
-
-/* ───────────── Models & modes (mirip alur Google Flow) ───────────── */
-
-export interface ModelDef {
-  id: string
-  name: string
-  tagline: string
-  cost: number
-  kind: 'video' | 'image'
-  badge?: string
-}
-
-export const MODELS: Record<string, ModelDef> = {
-  'motion-3-fast': { id: 'motion-3-fast', name: 'Aurora Motion 3 · Fast', tagline: 'Cepat & hemat, cocok untuk eksplorasi', cost: 10, kind: 'video' },
-  'motion-3-quality': { id: 'motion-3-quality', name: 'Aurora Motion 3 · Quality', tagline: 'Kualitas sinematik tertinggi + audio', cost: 40, kind: 'video', badge: 'PRO' },
-  'omni-1': { id: 'omni-1', name: 'Aurora Omni', tagline: 'Gabungkan referensi gambar jadi satu video', cost: 20, kind: 'video', badge: 'BARU' },
-  'aurora-image': { id: 'aurora-image', name: 'Aurora Image', tagline: 'Gambar cepat dengan konsistensi subjek', cost: 2, kind: 'image' },
-  'aurora-image-pro': { id: 'aurora-image-pro', name: 'Aurora Image Pro', tagline: 'Detail & teks presisi tinggi', cost: 5, kind: 'image', badge: 'PRO' },
-}
-
-export interface ModeDef {
-  id: GenerationMode
-  label: string
-  short: string
-  description: string
-  models: string[]
-  needs?: { firstFrame?: boolean; lastFrame?: boolean; ingredients?: number }
-}
-
-export const MODES: ModeDef[] = [
-  {
-    id: 'text_to_video',
-    label: 'Teks ke Video',
-    short: 'Teks→Video',
-    description: 'Tulis deskripsi adegan, AI membuat klip videonya.',
-    models: ['motion-3-fast', 'motion-3-quality'],
-  },
-  {
-    id: 'frames_to_video',
-    label: 'Frame ke Video',
-    short: 'Frame→Video',
-    description: 'Unggah frame awal (dan opsional frame akhir), AI menganimasikan di antaranya.',
-    models: ['motion-3-fast', 'motion-3-quality'],
-    needs: { firstFrame: true, lastFrame: true },
-  },
-  {
-    id: 'ingredients_to_video',
-    label: 'Bahan ke Video',
-    short: 'Bahan→Video',
-    description: 'Gabungkan hingga 3 gambar referensi (karakter, objek, gaya) dalam satu video.',
-    models: ['omni-1'],
-    needs: { ingredients: 3 },
-  },
-  {
-    id: 'text_to_image',
-    label: 'Buat Gambar',
-    short: 'Gambar',
-    description: 'Hasilkan gambar berkualitas tinggi dari teks.',
-    models: ['aurora-image', 'aurora-image-pro'],
-  },
-]
-
-export const modeById = (id: GenerationMode) => MODES.find((m) => m.id === id)!
-
-export const ASPECT_RATIOS: { id: AspectRatio; label: string }[] = [
-  { id: '16:9', label: 'Lanskap 16:9' },
-  { id: '9:16', label: 'Potret 9:16' },
-  { id: '1:1', label: 'Persegi 1:1' },
-]
-
-/* ───────────── Konten landing page ───────────── */
+/* ───────────── Konten landing page & tools ───────────── */
 
 export const SHOWCASE_MEDIA = [
   '/media/space.jpg',
@@ -82,36 +11,40 @@ export const SHOWCASE_MEDIA = [
 
 export const LANDING_MODELS = [
   {
-    name: 'Aurora Omni',
+    name: 'Gemini Omni',
     image: '/media/portrait.jpg',
     desc: 'Buat dan edit video dari referensi apa pun — nyata maupun hasil AI. Lompatan besar dalam pemahaman dunia, multimodal, dan editing lewat percakapan.',
   },
   {
-    name: 'Aurora Image',
+    name: 'Nano Banana',
     image: '/media/golem.jpg',
     desc: 'Generasi gambar yang kuat dengan kontrol edit presisi. Unggul dalam konsistensi subjek, render teks, dan penalaran visual.',
   },
   {
-    name: 'Aurora Motion 3',
+    name: 'Veo 3.1',
     image: '/media/space.jpg',
     desc: 'Kontrol kreatif yang luas, audio native, dan video berkualitas. Unggul dalam fisika, realisme, dan kepatuhan pada prompt.',
   },
 ]
 
+const TOOL_BASE = 'https://flow.google.com/shared/tool/'
+
 export const TOOLS = [
-  { name: 'Teks Animasi', desc: 'Tambahkan teks bergerak ke videomu', author: 'FLOW CONNECT', icon: 'Type' },
-  { name: 'Ubah Ukuran Video', desc: 'Ubah video ke rasio aspek apa pun', author: 'FLOW CONNECT', icon: 'Scaling' },
-  { name: 'Editor Gambar', desc: 'Transformasi objek, tambah teks, dan atur ukuran dengan layer', author: 'FLOW CONNECT', icon: 'Layers' },
-  { name: 'Studio Storyboard', desc: 'Tulis naskah, buat pemeran, dan visualisasikan storyboard', author: 'FLOW CONNECT', icon: 'LayoutPanelTop' },
-  { name: 'Efek Shader', desc: 'Terapkan filter visual yang bisa diatur ke video & gambar', author: 'FLOW CONNECT', icon: 'Sparkles' },
-  { name: 'Mockup', desc: 'Tempatkan gambarmu ke berbagai lingkungan', author: 'FLOW CONNECT', icon: 'Frame' },
-  { name: 'Beat Sync', desc: 'Mainkan video secara live mengikuti ketukan musik', author: 'Komunitas', icon: 'AudioWaveform' },
-  { name: 'Sketsa ke Render', desc: 'Ubah sketsa kasarmu jadi render jadi', author: 'Komunitas', icon: 'PenTool' },
-  { name: 'Profil Karakter', desc: 'Kembangkan karakter beserta latar ceritanya', author: 'Komunitas', icon: 'UserRoundSearch' },
-  { name: 'Efek Retro', desc: 'Efek pasca-produksi seperti lo-fi dan glitch', author: 'Komunitas', icon: 'Tv' },
-  { name: 'Arsitek Grid', desc: 'Buat grid gambar dan ekstrak gambar satuan', author: 'Komunitas', icon: 'Grid3x3' },
-  { name: 'Scout 360', desc: 'Tangkap lingkungan 360 derajat dari sebuah gambar', author: 'Komunitas', icon: 'Orbit' },
+  { name: 'Teks Animasi', desc: 'Tambahkan teks bergerak ke videomu', author: 'Google', icon: 'Type', url: `${TOOL_BASE}075ead65-520a-4f5e-88bd-f150caa24dc4` },
+  { name: 'Ubah Ukuran Video', desc: 'Ubah video ke rasio aspek apa pun', author: 'Google', icon: 'Scaling', url: `${TOOL_BASE}b78766c3-4cd7-4c1e-b597-769d4cfcf37a` },
+  { name: 'Editor Gambar', desc: 'Transformasi objek, tambah teks, dan atur ukuran dengan layer', author: 'Google', icon: 'Layers', url: `${TOOL_BASE}1b12bbd4-51d7-4c76-8b62-24ac2473e07e` },
+  { name: 'Studio Storyboard', desc: 'Tulis naskah, buat pemeran, dan visualisasikan storyboard', author: 'Google', icon: 'LayoutPanelTop', url: `${TOOL_BASE}79c9d2e6-4ad6-4636-ad05-22022f8a5a74` },
+  { name: 'Efek Shader', desc: 'Terapkan filter visual yang bisa diatur ke video & gambar', author: 'Google', icon: 'Sparkles', url: `${TOOL_BASE}63ca3af5-0058-4c7f-b104-dfc417db2e22` },
+  { name: 'Mockup', desc: 'Tempatkan gambarmu ke berbagai lingkungan', author: 'Google', icon: 'Frame', url: `${TOOL_BASE}611fa902-797c-457d-92de-71a3dc714894` },
+  { name: 'Ribbit', desc: 'Mainkan video secara live mengikuti ketukan musik', author: 'Kat Zhang', icon: 'AudioWaveform', url: `${TOOL_BASE}46270263-54a1-46fb-a68c-dae111f650fb` },
+  { name: 'Converge', desc: 'Ubah sketsa kasarmu jadi render jadi', author: 'Chris Maestas', icon: 'PenTool', url: `${TOOL_BASE}f260ed2b-2a14-4ece-a8d3-88b8cf6e660f` },
+  { name: 'Character X-ray', desc: 'Kembangkan karakter beserta latar ceritanya', author: 'MetaPuppet', icon: 'UserRoundSearch', url: `${TOOL_BASE}32f2b8f8-a1a9-43ed-899f-c0fbff2e9599` },
+  { name: 'pixelBento', desc: 'Efek pasca-produksi seperti lo-fi dan glitch', author: 'László Gaal', icon: 'Tv', url: `${TOOL_BASE}44b73cc0-ad82-49a6-b118-86c31ec49a71` },
+  { name: 'Grid Architect', desc: 'Buat grid gambar dan ekstrak gambar satuan', author: 'Henry Daubrez', icon: 'Grid3x3', url: `${TOOL_BASE}52da09f1-1da1-4a40-96c6-41d36b3b2392` },
+  { name: 'Scout360', desc: 'Tangkap lingkungan 360 derajat dari sebuah gambar', author: 'PJ Ace', icon: 'Orbit', url: `${TOOL_BASE}2102cb9f-a06e-4590-8a53-aa34bdcb0dff` },
 ] as const
+
+export type Tool = (typeof TOOLS)[number]
 
 export const FILMS = [
   { title: 'Sampai Jumpa Lagi', desc: 'Di hutan yang terlupakan, persahabatan golem batu dan bunga dandelion yang tumbuh setiap musim semi.', author: 'Rani Wijaya', role: 'Art Director', image: '/media/golem.jpg' },

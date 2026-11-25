@@ -49,7 +49,7 @@ export function ModelsSection() {
                 {i === active && (
                   <div className="mt-4 flex gap-2">
                     <Link to="/app" className={buttonClass('primary', 'sm')}>
-                      Coba di FLOW CONNECT
+                      Coba di Google Flow
                     </Link>
                     <span className={buttonClass('ghost', 'sm')}>Pelajari</span>
                   </div>
@@ -159,7 +159,7 @@ export function ToolsSection() {
             <h2 className="mt-3 font-display text-4xl font-bold tracking-tight sm:text-5xl">
               Tools kreatif, <span className="text-aurora">siap pakai</span>
             </h2>
-            <p className="mt-3 max-w-xl text-white/60">Dibuat oleh tim kami dan komunitas kreator. Pakai, remix, atau buat tools-mu sendiri.</p>
+            <p className="mt-3 max-w-xl text-white/60">Dibuat oleh Google dan komunitas kreator. Buka langsung di Google Flow dengan akun pilihanmu.</p>
           </div>
           <div className="flex gap-2">
             <button onClick={() => scroll(-1)} className="rounded-full p-3 glass hover:bg-white/10" aria-label="Sebelumnya">
@@ -208,7 +208,7 @@ export function FilmsSection() {
         <SectionTitle
           eyebrow="FLOW Sessions"
           title={<>Karya dari para <span className="text-aurora">kreator</span></>}
-          desc="Program kreator yang mengundang seniman visioner untuk bereksperimen dengan FLOW CONNECT dan mewujudkan project impian mereka."
+          desc="Karya para seniman visioner yang bereksperimen dengan Google Flow untuk mewujudkan project impian mereka."
         />
         <div className="grid gap-6 lg:grid-cols-[1.5fr_1fr]">
           <div key={f.title} className="relative aspect-video animate-fade-up overflow-hidden rounded-3xl border border-white/10">
@@ -250,10 +250,10 @@ export function FilmsSection() {
 
 /* ─────────────── FAQ + CTA ─────────────── */
 const FAQ = [
-  { q: 'Apa itu FLOW CONNECT?', a: 'Studio kreatif AI untuk membuat video, gambar, dan tools kustom. Kamu bisa merencanakan cerita bersama agen AI, membuat klip, lalu merangkainya di Scenebuilder.' },
-  { q: 'Bagaimana sistem kredit bekerja?', a: 'Setiap generate memotong kredit sesuai model yang dipakai (mis. Motion 3 Fast 10 kredit, Image 2 kredit). Pengguna baru mendapat 100 kredit gratis. Kredit dikembalikan otomatis jika generate gagal.' },
-  { q: 'Mode generate apa saja yang tersedia?', a: 'Teks ke Video, Frame ke Video (dari frame awal/akhir), Bahan ke Video (gabungan beberapa gambar referensi), dan Buat Gambar.' },
-  { q: 'Apakah karyaku aman?', a: 'Setiap project dan aset hanya bisa diakses oleh pemiliknya (Row Level Security). Kamu bisa menghapus project kapan saja.' },
+  { q: 'Apa itu FLOW CONNECT?', a: 'Pintu masuk ke Google Flow. Kamu login di FLOW CONNECT, menautkan satu atau beberapa akun Google, lalu membuka Google Flow dengan akun mana pun dalam satu klik.' },
+  { q: 'Apakah generate video terjadi di FLOW CONNECT?', a: 'Tidak. Semua proses generate berjalan di Google Flow memakai akun Google kamu sendiri, termasuk kuota dan langganan Google AI milik akun tersebut.' },
+  { q: 'Bisakah menambah lebih dari satu akun Google?', a: 'Bisa, hingga 10 akun. Tautkan lewat “Masuk dengan Google” (terverifikasi) atau cukup dengan alamat email, lalu pilih akun default.' },
+  { q: 'Apakah password Google saya aman?', a: 'FLOW CONNECT tidak pernah melihat atau menyimpan password Google. Login selalu dilakukan di halaman resmi Google.' },
 ]
 
 export function FaqSection() {
@@ -267,7 +267,7 @@ export function FaqSection() {
           <div className="glow-border relative mt-10 overflow-hidden rounded-3xl p-8">
             <div className="absolute -right-10 -top-10 size-48 rounded-full bg-aurora-violet/40 blur-3xl" />
             <h3 className="relative font-display text-2xl font-bold">Siap memulai?</h3>
-            <p className="relative mt-2 text-white/60">Daftar gratis dan dapatkan 100 kredit untuk mencoba semua model.</p>
+            <p className="relative mt-2 text-white/60">Daftar gratis, tautkan akun Google, dan langsung buka Google Flow.</p>
             <Link to="/app" className={buttonClass('primary', 'lg', 'relative mt-6')}>
               Mulai Berkarya <ArrowRight className="size-4" />
             </Link>

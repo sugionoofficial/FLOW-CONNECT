@@ -59,7 +59,7 @@ export default function Login() {
         <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center py-12">
           <h1 className="font-display text-3xl font-bold">{mode === 'masuk' ? 'Selamat datang kembali' : 'Buat akun gratis'}</h1>
           <p className="mt-2 text-sm text-white/55">
-            {mode === 'masuk' ? 'Masuk untuk melanjutkan project-mu.' : 'Dapatkan 100 kredit gratis untuk mulai berkarya.'}
+            {mode === 'masuk' ? 'Masuk untuk melanjutkan project-mu.' : 'Daftar, lalu tautkan akun Google kamu untuk membuka Google Flow.'}
           </p>
 
           <div className="mt-8 grid grid-cols-2 gap-1 rounded-xl p-1 glass">

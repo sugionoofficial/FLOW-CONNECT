@@ -35,8 +35,8 @@ export function Hero() {
             jadi <span className="text-aurora">film AI</span>
           </h1>
           <p className="mt-6 max-w-xl text-lg text-white/65">
-            FLOW CONNECT adalah studio kreatif AI untuk membuat video, gambar, dan tools kustom. Rencanakan, buat, dan sempurnakan karyamu —
-            semuanya dalam satu alur.
+            FLOW CONNECT adalah pintu masuk ke Google Flow — studio kreatif AI untuk video, gambar, dan tools kustom. Kelola banyak akun Google
+            dan mulai berkarya dalam satu klik.
           </p>
 
           <form onSubmit={submit} className="glow-border mt-8 flex max-w-xl items-center gap-2 rounded-2xl p-2 glass">
@@ -52,7 +52,7 @@ export function Hero() {
             </button>
           </form>
           <p className="mt-4 max-w-xl text-xs text-white/40">
-            Gratis 100 kredit untuk pengguna baru. Fitur dapat berbeda sesuai paket langganan. 18+.
+            Proses generate berjalan di Google Flow dengan akun Google kamu sendiri. Fitur mengikuti langganan Google AI tiap akun. 18+.
           </p>
         </div>
 

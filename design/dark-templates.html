@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FLOW CONNECT — Pilihan Template Dark</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Space+Grotesk:wght@500;700&family=Playfair+Display:wght@600;800&family=JetBrains+Mono:wght@400;700&family=Syne:wght@600;800&display=swap" rel="stylesheet" />
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0b0b0d;color:#eee;font-family:Inter,system-ui,sans-serif;padding:40px 24px 80px}
+  h1{font-size:28px;text-align:center;margin-bottom:6px}
+  .sub{text-align:center;color:#999;margin-bottom:36px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(520px,1fr));gap:28px;max-width:1200px;margin:0 auto}
+  @media(max-width:600px){.grid{grid-template-columns:1fr}}
+  .card{border-radius:18px;overflow:hidden;border:1px solid #222;background:#111}
+  .meta{padding:14px 18px;display:flex;justify-content:space-between;align-items:center;gap:12px}
+  .meta b{font-size:15px}
+  .meta span{font-size:12px;color:#888}
+  .sw{display:flex;gap:6px}
+  .sw i{width:18px;height:18px;border-radius:50%;display:block;border:1px solid #333}
+  .tag{font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px;background:#222;color:#ddd;white-space:nowrap}
+
+  .mock{height:300px;position:relative;overflow:hidden;padding:18px 22px;display:flex;flex-direction:column}
+  .nav{display:flex;justify-content:space-between;align-items:center;font-size:12px}
+  .nav .logo{font-weight:800;letter-spacing:.5px}
+  .nav .links{display:flex;gap:14px;opacity:.7}
+  .hero{flex:1;display:flex;flex-direction:column;justify-content:center;gap:12px;position:relative;z-index:2}
+  .hero h2{font-size:34px;line-height:1.05}
+  .hero p{font-size:12px;max-width:300px;opacity:.75}
+  .prompt{display:flex;align-items:center;gap:8px;padding:8px 8px 8px 14px;border-radius:14px;font-size:11px;max-width:360px}
+  .prompt .t{flex:1;opacity:.6}
+  .btn{padding:7px 14px;border-radius:10px;font-size:11px;font-weight:700}
+  .tiles{position:absolute;right:18px;bottom:18px;display:grid;grid-template-columns:repeat(2,84px);gap:8px;z-index:1}
+  .tiles div{height:60px;border-radius:10px}
+
+  /* 1 Aurora Neon */
+  .t1{background:#05050a;color:#fff;font-family:'Space Grotesk',sans-serif}
+  .t1::before{content:"";position:absolute;inset:-40%;background:radial-gradient(circle at 30% 30%,#7c3aed55,transparent 40%),radial-gradient(circle at 75% 60%,#06b6d455,transparent 40%);filter:blur(20px)}
+  .t1 .hero h2 span{background:linear-gradient(90deg,#a78bfa,#22d3ee);-webkit-background-clip:text;color:transparent}
+  .t1 .prompt{background:#ffffff10;border:1px solid #ffffff22;backdrop-filter:blur(10px)}
+  .t1 .btn{background:linear-gradient(90deg,#7c3aed,#06b6d4);color:#fff}
+  .t1 .tiles div{background:linear-gradient(135deg,#7c3aed66,#06b6d433);border:1px solid #ffffff1a}
+
+  /* 2 Cinematic Amber */
+  .t2{background:#0d0a07;color:#f5e9d7;font-family:'Playfair Display',serif}
+  .t2::before{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at 80% 20%,#f59e0b33,transparent 50%),linear-gradient(180deg,transparent 60%,#000 100%)}
+  .t2::after{content:"";position:absolute;left:0;right:0;top:0;height:14px;background:#000;box-shadow:0 286px 0 #000}
+  .t2 .nav{margin-top:8px;font-family:Inter}
+  .t2 .hero p,.t2 .prompt{font-family:Inter}
+  .t2 .hero h2 em{color:#f59e0b;font-style:italic}
+  .t2 .prompt{background:#1a140d;border:1px solid #f59e0b44}
+  .t2 .btn{background:#f59e0b;color:#1a0f00}
+  .t2 .tiles div{background:linear-gradient(160deg,#3b2a14,#120c06);border:1px solid #f59e0b33}
+
+  /* 3 Midnight Glass */
+  .t3{background:linear-gradient(160deg,#0a0f1f,#05070d);color:#e6ecff}
+  .t3::before{content:"";position:absolute;width:260px;height:260px;right:-40px;top:-60px;border-radius:50%;background:#3b82f6;filter:blur(90px);opacity:.45}
+  .t3 .prompt{background:#ffffff0d;border:1px solid #ffffff1f;backdrop-filter:blur(14px);border-radius:999px}
+  .t3 .btn{background:#e6ecff;color:#0a0f1f;border-radius:999px}
+  .t3 .tiles div{background:#ffffff0a;border:1px solid #ffffff1a;backdrop-filter:blur(8px)}
+
+  /* 4 Terminal Lime */
+  .t4{background:#0a0a0a;color:#d9f99d;font-family:'JetBrains Mono',monospace}
+  .t4::before{content:"";position:absolute;inset:0;background-image:linear-gradient(#ffffff08 1px,transparent 1px),linear-gradient(90deg,#ffffff08 1px,transparent 1px);background-size:22px 22px}
+  .t4 .hero h2{font-size:28px;color:#fff}
+  .t4 .hero h2 span{color:#a3e635}
+  .t4 .prompt{background:#111;border:1px solid #a3e63555;border-radius:4px}
+  .t4 .btn{background:#a3e635;color:#0a0a0a;border-radius:4px}
+  .t4 .tiles div{background:#111;border:1px dashed #a3e63566;border-radius:4px}
+
+  /* 5 Crimson Noir */
+  .t5{background:#0a0607;color:#fff;font-family:'Syne',sans-serif}
+  .t5::before{content:"";position:absolute;left:-60px;bottom:-80px;width:340px;height:340px;background:conic-gradient(from 90deg,#e11d48,#7f1d1d,#e11d48);border-radius:50%;filter:blur(70px);opacity:.45}
+  .t5 .hero h2{text-transform:uppercase;letter-spacing:-1px}
+  .t5 .hero h2 span{-webkit-text-stroke:1px #fb7185;color:transparent}
+  .t5 .prompt{background:#160b0d;border:1px solid #e11d4855}
+  .t5 .btn{background:#e11d48;color:#fff}
+  .t5 .tiles div{background:linear-gradient(135deg,#3f0d17,#0a0607);border:1px solid #e11d4833}
+
+  /* 6 Mono Studio */
+  .t6{background:#000;color:#fafafa}
+  .t6 .hero h2{font-weight:800;letter-spacing:-1.5px}
+  .t6 .hero h2 span{color:#737373}
+  .t6 .prompt{background:#111;border:1px solid #262626}
+  .t6 .btn{background:#fafafa;color:#000}
+  .t6 .tiles div{background:#171717;border:1px solid #262626}
+.shots{display:grid;grid-template-columns:repeat(auto-fill,minmax(520px,1fr));gap:28px;max-width:1200px;margin:0 auto}@media(max-width:600px){.shots{grid-template-columns:1fr}}.shot{border:1px solid #222;border-radius:18px;overflow:hidden;background:#111}.shot img{width:100%;display:block}.shot figcaption{padding:12px 16px;font-weight:700}
+</style>
+</head>
+<body>
+<h1>Pilihan Template Dark — FLOW CONNECT</h1>
+<p class="sub">Pilih salah satu (atau campurkan, misal “layout #3 + warna #1”).</p>
+<h1 style="margin-top:0">Contoh Gambar Mockup</h1><p class="sub">Contoh visual tiap template (mockup AI, sebagai gambaran nuansa).</p>
+<div class="shots"><figure class="shot"><img src="templates/1-aurora-neon.png" alt="1. Aurora Neon"><figcaption>1. Aurora Neon</figcaption></figure><figure class="shot"><img src="templates/2-cinematic-amber.png" alt="2. Cinematic Amber"><figcaption>2. Cinematic Amber</figcaption></figure><figure class="shot"><img src="templates/3-midnight-glass.png" alt="3. Midnight Glass"><figcaption>3. Midnight Glass</figcaption></figure><figure class="shot"><img src="templates/4-terminal-lime.png" alt="4. Terminal Lime"><figcaption>4. Terminal Lime</figcaption></figure><figure class="shot"><img src="templates/5-crimson-noir.png" alt="5. Crimson Noir"><figcaption>5. Crimson Noir</figcaption></figure><figure class="shot"><img src="templates/6-mono-studio.png" alt="6. Mono Studio"><figcaption>6. Mono Studio</figcaption></figure></div>
+<h1 style="margin-top:60px">Pratinjau Live (HTML)</h1><p class="sub">Versi kode asli dari tiap palet.</p>
+
+
+<div class="grid">
+  <div class="card">
+    <div class="mock t1">
+      <div class="nav"><div class="logo">FLOW·CONNECT</div><div class="links"><span>Model</span><span>Tools</span><span>Galeri</span></div></div>
+      <div class="hero"><h2>Wujudkan ide jadi<br><span>film AI</span></h2><p>Studio kreatif AI untuk video, gambar, dan tools kustom.</p>
+        <div class="prompt"><span class="t">Seekor paus terbang di atas Jakarta saat senja…</span><span class="btn">Buat</span></div></div>
+      <div class="tiles"><div></div><div></div><div></div><div></div></div>
+    </div>
+    <div class="meta"><div><b>1. Aurora Neon</b><br><span>Hitam + gradien ungu→cyan, glassmorphism, futuristik</span></div><div class="sw"><i style="background:#05050a"></i><i style="background:#7c3aed"></i><i style="background:#06b6d4"></i></div></div>
+  </div>
+
+  <div class="card">
+    <div class="mock t2">
+      <div class="nav"><div class="logo">FLOW CONNECT</div><div class="links"><span>Model</span><span>Tools</span><span>Galeri</span></div></div>
+      <div class="hero"><h2>Setiap ide layak<br>jadi <em>sinema</em></h2><p>Rangkai adegan, karakter, dan suara dalam satu studio.</p>
+        <div class="prompt"><span class="t">Close-up, cahaya lilin, hujan di jendela…</span><span class="btn">Buat</span></div></div>
+      <div class="tiles"><div></div><div></div><div></div><div></div></div>
+    </div>
+    <div class="meta"><div><b>2. Cinematic Amber</b><br><span>Nuansa bioskop, letterbox, serif elegan, aksen amber</span></div><div class="sw"><i style="background:#0d0a07"></i><i style="background:#f59e0b"></i><i style="background:#f5e9d7"></i></div></div>
+  </div>
+
+  <div class="card">
+    <div class="mock t3">
+      <div class="nav"><div class="logo">flow connect</div><div class="links"><span>Model</span><span>Tools</span><span>Galeri</span></div></div>
+      <div class="hero"><h2>Studio kreatif AI,<br>selalu dalam alur.</h2><p>Rencanakan, buat, dan sempurnakan bersama agen AI.</p>
+        <div class="prompt"><span class="t">Deskripsikan adeganmu…</span><span class="btn">Buat</span></div></div>
+      <div class="tiles"><div></div><div></div><div></div><div></div></div>
+    </div>
+    <div class="meta"><div><b>3. Midnight Glass</b><br><span>Navy gelap, kaca buram, sudut membulat, kalem & premium</span></div><div class="sw"><i style="background:#0a0f1f"></i><i style="background:#3b82f6"></i><i style="background:#e6ecff"></i></div></div>
+  </div>
+
+  <div class="card">
+    <div class="mock t4">
+      <div class="nav"><div class="logo">&gt;_ flow.connect</div><div class="links"><span>models</span><span>tools</span><span>docs</span></div></div>
+      <div class="hero"><h2>generate --video<br><span>"ide kamu"</span></h2><p>Untuk kreator teknis: cepat, presisi, penuh kontrol.</p>
+        <div class="prompt"><span class="t">$ prompt: drone shot, sawah, pagi berkabut</span><span class="btn">RUN</span></div></div>
+      <div class="tiles"><div></div><div></div><div></div><div></div></div>
+    </div>
+    <div class="meta"><div><b>4. Terminal Lime</b><br><span>Gaya developer/hacker, grid, monospace, aksen lime</span></div><div class="sw"><i style="background:#0a0a0a"></i><i style="background:#a3e635"></i><i style="background:#ffffff"></i></div></div>
+  </div>
+
+  <div class="card">
+    <div class="mock t5">
+      <div class="nav"><div class="logo">FLOW/CONNECT</div><div class="links"><span>Model</span><span>Tools</span><span>Galeri</span></div></div>
+      <div class="hero"><h2>Buat. Edit.<br><span>Tayangkan.</span></h2><p>Konten video AI yang berani untuk brand & kreator.</p>
+        <div class="prompt"><span class="t">Iklan sneakers, slow-motion, neon merah…</span><span class="btn">Buat</span></div></div>
+      <div class="tiles"><div></div><div></div><div></div><div></div></div>
+    </div>
+    <div class="meta"><div><b>5. Crimson Noir</b><br><span>Berani & editorial, tipografi besar, aksen merah crimson</span></div><div class="sw"><i style="background:#0a0607"></i><i style="background:#e11d48"></i><i style="background:#fb7185"></i></div></div>
+  </div>
+
+  <div class="card">
+    <div class="mock t6">
+      <div class="nav"><div class="logo">Flow Connect</div><div class="links"><span>Model</span><span>Tools</span><span>Galeri</span></div></div>
+      <div class="hero"><h2>Kreativitas tanpa batas.<br><span>Ditenagai AI.</span></h2><p>Minimalis, fokus ke konten — biar karyamu yang bicara.</p>
+        <div class="prompt"><span class="t">Apa yang ingin kamu buat hari ini?</span><span class="btn">Buat</span></div></div>
+      <div class="tiles"><div></div><div></div><div></div><div></div></div>
+    </div>
+    <div class="meta"><div><b>6. Mono Studio</b><br><span>Hitam-putih murni ala Vercel/Linear, sangat bersih</span></div><div class="sw"><i style="background:#000"></i><i style="background:#737373"></i><i style="background:#fafafa"></i></div></div>
+  </div>
+</div>
+</body>
+</html>

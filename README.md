@@ -4,7 +4,7 @@ Studio kreatif AI untuk video, gambar, dan tools kustom — terinspirasi alur [G
 
 ## Stack
 - **Frontend:** Vite + React 19 + TypeScript + Tailwind CSS v4 + React Router
-- **Backend:** Supabase (Auth, Postgres + RLS, Storage) — project `FLOW-CONNECT` (`rwoizblpvfcarhgggclv`, ap-southeast-1)
+- **Backend:** Supabase (Auth, Postgres + RLS, Storage) — project `FLOW-CONNECT` (`zpuubgziohvqavmihgls`, ap-northeast-1)
 
 ## Menjalankan
 ```bash

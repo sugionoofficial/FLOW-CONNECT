@@ -45,7 +45,7 @@ Uji lokal di runtime Cloudflare: `npm run cf:preview` (port 8787).
 | Landing | `/` | Hero + prompt, model, Plan/Create/Refine, tools, films, FAQ |
 | Masuk / Daftar | `/masuk` | Email + password (Supabase Auth) |
 | **Hub akun Google** | `/app` | Daftar akun, tambah / default / label / hapus, tombol **Buka Google Flow** |
-| **Studio** | `/app/studio` | Kirim gambar & prompt ke Google Flow, galeri hasil + unduh (via ekstensi Bridge) |
+| **Studio** | `/app/studio` | Mode **Komputer**: kirim gambar/prompt, galeri + unduh (ekstensi Bridge). Mode **HP**: kirim ke aplikasi Google Flow |
 | Tools | `/app/tools` | 12 tools Google Flow, dibuka dengan akun pilihan |
 
 Prompt yang diketik di hero landing dibawa ke hub dan otomatis disalin ke clipboard saat membuka Google Flow.
@@ -80,6 +80,21 @@ Google Flow mendeteksi hal itu (`extension_hijack_detected`) dan melewatinya ber
 - ID tetap `paedhhaejfnmdlgabmdjlncbjjpfdkfp` (dari `key` di manifest). Hanya menerima pesan dari `flow-connect-2qu.pages.dev` & `localhost:5173`.
 - RPC id/format diambil dari riset open-source (crisng95/flowkit, ffroliva/gflow-cli, MIT) — API internal Google tidak resmi dan bisa berubah sewaktu-waktu.
 
+## Studio mode HP → aplikasi Google Flow
+HP tidak mendukung ekstensi, jadi di HP Studio otomatis memakai **aplikasi Google Flow resmi**
+(Android `com.google.android.apps.labs.whisk`, iPhone App Store `id6751294549`). Bisa juga dipilih manual lewat tombol *Komputer / HP*.
+
+1. Pilih gambar (galeri/kamera) & tulis prompt di FLOW CONNECT.
+2. **Kirim ke aplikasi Flow** → prompt disalin ke clipboard, lalu menu *Bagikan* bawaan HP (Web Share API) terbuka berisi gambar → pilih Google Flow.
+   - Jika browser tidak mendukung berbagi file: gambar disimpan ke HP, lalu aplikasi Flow dibuka (unggah dari galeri).
+   - Tanpa gambar: aplikasi Flow langsung dibuka.
+3. Di Flow: tempel prompt → Generate → Unduh hasil ke HP.
+
+Membuka aplikasi: Android memakai intent URL (`intent://flow.google.com/#Intent;scheme=https;package=…;S.browser_fallback_url=<Play Store>;end`),
+iPhone memakai link `https://flow.google.com/` (Universal Link). Hub di HP juga menampilkan tombol **Buka aplikasi Flow**.
+
+> Catatan: apakah Google Flow muncul di menu *Bagikan* ditentukan oleh aplikasi Flow sendiri — jika tidak muncul, pakai jalur simpan ke galeri.
+
 ## Setup Google OAuth (untuk tombol “Masuk dengan Google”)
 1. [Google Cloud Console](https://console.cloud.google.com/) → buat/pilih project.
 2. *APIs & Services → OAuth consent screen* → User type **External** → isi nama app `FLOW CONNECT`, email support, domain `flow-connect-2qu.pages.dev` → scopes: `openid`, `email`, `profile` → **Publish app** (agar semua akun Google bisa login, bukan hanya test users).
@@ -101,10 +116,10 @@ Tanpa Client ID, aplikasi tetap jalan dengan mode “Pakai email”.
 ## Struktur
 ```
 src/
-  components/      UI umum, landing/, hub/ (avatar, picker, modal tambah akun)
+  components/      UI umum, landing/, hub/ (akun Google), studio/ (mode HP)
   context/         Auth & Toast
   hooks/           useGoogleAccounts
-  lib/             supabase client, api, google (Flow URL + GIS), bridge (klien ekstensi), catalog
+  lib/             supabase client, api, google (Flow URL + GIS), bridge (klien ekstensi), device (HP/aplikasi Flow), catalog
   pages/           Landing, Login, Hub, Studio, Tools
 design/            Pilihan template dark (referensi)
 supabase/migrations, supabase/functions

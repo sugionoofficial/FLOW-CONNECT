@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
-  ArrowRight, BadgeCheck, Clipboard, ImageDown, ExternalLink, Info, MoreVertical, Pencil, Plus, ShieldCheck, Star, Trash2, Wand2, X,
+  ArrowRight, BadgeCheck, Clipboard, ImageDown, Smartphone, ExternalLink, Info, MoreVertical, Pencil, Plus, ShieldCheck, Star, Trash2, Wand2, X,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { AppHeader } from '../components/AppHeader'
@@ -18,6 +18,7 @@ import { useToast } from '../context/ToastContext'
 import { useGoogleAccounts } from '../hooks/useGoogleAccounts'
 import { linkGoogleAccount, removeGoogleAccount, setDefaultGoogleAccount, updateGoogleAccountLabel } from '../lib/api'
 import { isGoogleOAuthEnabled, requestGoogleAccessToken, revokeGoogleToken } from '../lib/google'
+import { flowAppHref, isMobile } from '../lib/device'
 import type { GoogleAccount } from '../lib/types'
 
 const PROMPT_KEY = 'fc:pendingPrompt'
@@ -57,6 +58,11 @@ export default function Hub() {
     if (!accounts) return
     setSelected((cur) => (cur && accounts.some((a) => a.id === cur.id) ? accounts.find((a) => a.id === cur.id)! : defaultAccount))
   }, [accounts, defaultAccount])
+
+  const mobile = isMobile()
+  const copyPromptQuiet = () => {
+    if (prompt) navigator.clipboard.writeText(prompt).catch(() => {})
+  }
 
   const clearPrompt = () => {
     setPrompt('')
@@ -151,10 +157,27 @@ export default function Hub() {
               {hasAccounts ? (
                 <>
                   <AccountPicker accounts={accounts} value={selected} onChange={setSelected} onAdd={() => setAdding(true)} />
-                  <Button size="lg" disabled={!selected} onClick={() => selected && openWith(selected)}>
-                    Buka Google Flow <ExternalLink className="size-4" />
-                  </Button>
-                  <p className="text-center text-xs text-white/40">Terbuka di tab baru. Jika belum masuk, Google akan meminta login akun tersebut.</p>
+                  {mobile ? (
+                    <>
+                      <a href={flowAppHref('/')} onClick={copyPromptQuiet} className={buttonClass('primary', 'lg')}>
+                        <Smartphone className="size-4" /> Buka aplikasi Flow
+                      </a>
+                      <Button variant="glass" disabled={!selected} onClick={() => selected && openWith(selected)}>
+                        Buka versi web <ExternalLink className="size-4" />
+                      </Button>
+                      <p className="text-center text-xs text-white/40">
+                        Pastikan aplikasi Flow login dengan akun yang sama. Mau kirim gambar?{' '}
+                        <Link to="/app/studio" className="text-aurora-cyan hover:underline">Buka Studio</Link>
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <Button size="lg" disabled={!selected} onClick={() => selected && openWith(selected)}>
+                        Buka Google Flow <ExternalLink className="size-4" />
+                      </Button>
+                      <p className="text-center text-xs text-white/40">Terbuka di tab baru. Jika belum masuk, Google akan meminta login akun tersebut.</p>
+                    </>
+                  )}
                 </>
               ) : (
                 <div className="rounded-2xl border border-dashed border-white/15 p-6 text-center">
@@ -175,7 +198,7 @@ export default function Hub() {
           <span className="grid size-12 place-items-center rounded-2xl bg-gradient-to-br from-cyan-500 to-violet-600"><ImageDown className="size-6" /></span>
           <div className="min-w-56 flex-1">
             <p className="font-display text-lg font-bold">Studio: kirim & unduh lewat FLOW CONNECT</p>
-            <p className="text-sm text-white/55">Upload gambar referensi, tulis prompt, lalu lihat & unduh hasil Google Flow dari sini (butuh ekstensi Bridge).</p>
+            <p className="text-sm text-white/55">Komputer: kirim gambar, galeri & unduh lewat ekstensi Bridge. HP: kirim gambar & prompt ke aplikasi Google Flow.</p>
           </div>
           <span className="flex items-center gap-1 text-sm font-semibold text-aurora-cyan">Buka Studio <ArrowRight className="size-4 transition group-hover:translate-x-1" /></span>
         </Link>

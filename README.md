@@ -1,5 +1,7 @@
 # FLOW CONNECT
 
+**Live:** https://flow-connect-2qu.pages.dev
+
 Studio kreatif AI untuk video, gambar, dan tools kustom — terinspirasi alur [Google Flow](https://flow.google.com/) dengan tampilan baru **Aurora Neon**.
 
 ## Stack

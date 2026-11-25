@@ -1,19 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
-import { Coins, LogOut, User } from 'lucide-react'
+import { LogOut } from 'lucide-react'
 import clsx from 'clsx'
 import { Logo } from './Logo'
 import { useAuth } from '../context/AuthContext'
-
-export function CreditsBadge() {
-  const { profile } = useAuth()
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold glass" title="Sisa kredit">
-      <Coins className="size-3.5 text-amber-300" />
-      {profile?.credits ?? '—'} kredit
-    </span>
-  )
-}
 
 export function UserMenu() {
   const { user, profile, signOut } = useAuth()
@@ -38,12 +28,8 @@ export function UserMenu() {
           <div className="px-3 py-2">
             <p className="truncate font-semibold">{name}</p>
             <p className="truncate text-xs text-white/50">{user?.email}</p>
-            <p className="mt-1 text-xs capitalize text-aurora-cyan">Paket {profile?.plan ?? 'free'}</p>
           </div>
           <div className="my-1 h-px bg-white/10" />
-          <button className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-white/70 hover:bg-white/5" onClick={() => setOpen(false)}>
-            <User className="size-4" /> Profil (segera)
-          </button>
           <button
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-300 hover:bg-red-500/10"
             onClick={async () => { await signOut(); navigate('/') }}
@@ -64,11 +50,10 @@ export function AppHeader({ children }: { children?: ReactNode }) {
       <div className="container-x flex h-16 items-center gap-6">
         <Link to="/app" className="shrink-0"><Logo to="/app" /></Link>
         <nav className="hidden items-center gap-1 sm:flex">
-          <NavLink to="/app" end className={link}>Project</NavLink>
+          <NavLink to="/app" end className={link}>Akun Google</NavLink>
           <NavLink to="/app/tools" className={link}>Tools</NavLink>
         </nav>
         <div className="flex-1">{children}</div>
-        <CreditsBadge />
         <UserMenu />
       </div>
     </header>

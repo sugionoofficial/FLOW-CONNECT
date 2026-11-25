@@ -2,11 +2,14 @@
 
 **Live:** https://flow-connect-2qu.pages.dev
 
-Studio kreatif AI untuk video, gambar, dan tools kustom — terinspirasi alur [Google Flow](https://flow.google.com/) dengan tampilan baru **Aurora Neon**.
+Clone tampilan [Google Flow](https://flow.google.com/) dengan desain baru **Aurora Neon**, berfungsi sebagai **hub akun Google**: login di FLOW CONNECT, tautkan beberapa akun Google, lalu buka Google Flow dengan akun mana pun. **Proses generate berjalan di Google Flow** memakai akun Google masing-masing pengguna.
+
+> Tidak berafiliasi dengan Google. Google Flow tidak punya API publik dan tidak bisa di-embed (iframe), jadi Flow selalu dibuka di tab baru.
 
 ## Stack
 - **Frontend:** Vite + React 19 + TypeScript + Tailwind CSS v4 + React Router
-- **Backend:** Supabase (Auth, Postgres + RLS, Storage) — project `FLOW-CONNECT` (`zpuubgziohvqavmihgls`, ap-northeast-1)
+- **Backend:** Supabase (Auth, Postgres + RLS, Edge Function `link-google-account`)
+- **Login Google:** Google Identity Services (opsional, aktif jika `VITE_GOOGLE_CLIENT_ID` di-set) — project `FLOW-CONNECT` (`zpuubgziohvqavmihgls`, ap-northeast-1)
 
 ## Menjalankan
 ```bash
@@ -39,38 +42,49 @@ Uji lokal di runtime Cloudflare: `npm run cf:preview` (port 8787).
 ## Alur aplikasi
 | Halaman | Rute | Isi |
 |---|---|---|
-| Landing | `/` | Hero + prompt, Model, Alur (Rencanakan/Buat/Sempurnakan), Tools, Karya kreator, FAQ |
-| Masuk/Daftar | `/masuk` | Email + kata sandi (Supabase Auth), user baru dapat 100 kredit |
-| Dashboard | `/app` | Daftar project, buat / ganti nama / hapus, cari |
-| Workspace | `/app/project/:id` | Galeri hasil + composer prompt + Scenebuilder |
-| Tools | `/app/tools` | Galeri tools (placeholder) |
+| Landing | `/` | Hero + prompt, model, Plan/Create/Refine, tools, films, FAQ |
+| Masuk / Daftar | `/masuk` | Email + password (Supabase Auth) |
+| **Hub akun Google** | `/app` | Daftar akun, tambah / default / label / hapus, tombol **Buka Google Flow** |
+| Tools | `/app/tools` | 12 tools Google Flow, dibuka dengan akun pilihan |
 
-### Workspace
-- **Mode generate:** Teks→Video, Frame→Video (frame awal/akhir), Bahan→Video (≤3 referensi), Buat Gambar
-- **Pengaturan:** model, rasio aspek (16:9, 9:16, 1:1), jumlah output 1–4, biaya kredit tampil langsung
-- **Agen “Sempurnakan”:** memperkaya prompt (mock)
-- **Detail hasil:** putar, pakai ulang prompt, *Animasikan* gambar → Frame→Video, *Jadikan bahan*, favorit, jadikan sampul, unduh, hapus
-- **Scenebuilder:** rangkai klip, drag & drop / geser urutan, putar semua berurutan
+Prompt yang diketik di hero landing dibawa ke hub dan otomatis disalin ke clipboard saat membuka Google Flow.
+
+### Membuka Google Flow dengan akun tertentu
+`https://accounts.google.com/AccountChooser?Email=<email>&continue=https://flow.google.com/?authuser=<email>`
+Jika akun sudah login di browser → langsung masuk; jika belum → Google meminta login akun itu (di halaman resmi Google).
+
+### Menambah akun Google
+1. **Masuk dengan Google** (terverifikasi) — pop-up Google Identity Services → access token dikirim ke Edge Function `link-google-account` → diverifikasi ke Google (`tokeninfo`, `email_verified`, `aud`) → disimpan `verified = true`. Token langsung di-revoke; tidak ada token yang disimpan.
+2. **Pakai email** (manual) — hanya pintasan, `verified = false`. Klien tidak bisa mengubah dirinya jadi terverifikasi (RLS + trigger).
+
+Maksimal 10 akun per pengguna; akun pertama otomatis jadi default.
+
+## Setup Google OAuth (untuk tombol “Masuk dengan Google”)
+1. [Google Cloud Console](https://console.cloud.google.com/) → buat/pilih project.
+2. *APIs & Services → OAuth consent screen* → User type **External** → isi nama app `FLOW CONNECT`, email support, domain `flow-connect-2qu.pages.dev` → scopes: `openid`, `email`, `profile` → **Publish app** (agar semua akun Google bisa login, bukan hanya test users).
+3. *APIs & Services → Credentials → Create credentials → OAuth client ID* → tipe **Web application**.
+   - **Authorized JavaScript origins:** `https://flow-connect-2qu.pages.dev` dan `http://localhost:5173`
+   - Redirect URI tidak diperlukan (pakai pop-up token).
+4. Salin **Client ID** (`xxxx.apps.googleusercontent.com`):
+   - Cloudflare Pages → project `flow-connect` → *Settings → Variables and Secrets* → tambah `VITE_GOOGLE_CLIENT_ID` (Production & Preview) → *Retry deployment*.
+   - Lokal: isi `VITE_GOOGLE_CLIENT_ID` di `.env`.
+   - (Disarankan) Supabase → *Edge Functions → Secrets* → `GOOGLE_CLIENT_ID` = Client ID yang sama, agar token dari aplikasi lain ditolak.
+
+Tanpa Client ID, aplikasi tetap jalan dengan mode “Pakai email”.
 
 ## Database (`supabase/migrations`)
-- `profiles` — kredit & paket (kolom kredit dilindungi trigger, tidak bisa diubah user)
-- `projects`, `generations`, `scenes` — semua dengan RLS (hanya pemilik)
-- `credit_transactions` — ledger kredit
-- RPC `create_generations()` — potong kredit secara atomik + buat job
-- RPC `refund_generation()` — kembalikan kredit jika gagal (anti double-refund)
-- Storage bucket `assets` — upload per folder `user_id/`
-
-## Generate AI (saat ini: simulasi)
-Logika ada di `src/lib/engine.ts`. Saat ini hasil di-*mock* (gambar placeholder, video = animasi Ken Burns).
-Untuk API asli: buat Supabase Edge Function yang memproses job lalu mengisi `output_url` (mp4/png) dan `status='done'` — UI otomatis memutar file video asli.
+- `20261125000001_init_schema.sql` — skema awal (profiles, dsb.).
+- `20261126000001_google_accounts_hub.sql` — menghapus sistem generate/kredit simulasi, menambah tabel `google_accounts` (RLS per user, unik `(user_id, email)`, satu default, batas 10) + RPC `set_default_google_account`.
+- Edge Function: `supabase/functions/link-google-account`.
 
 ## Struktur
 ```
 src/
-  components/      UI umum, landing/, workspace/
+  components/      UI umum, landing/, hub/ (avatar, picker, modal tambah akun)
   context/         Auth & Toast
-  lib/             supabase client, api, catalog (model/mode/konten), engine (mock)
-  pages/           Landing, Login, Dashboard, Workspace, Tools
+  hooks/           useGoogleAccounts
+  lib/             supabase client, api, google (Flow URL + GIS), catalog (konten)
+  pages/           Landing, Login, Hub, Tools
 design/            Pilihan template dark (referensi)
-supabase/migrations
+supabase/migrations, supabase/functions
 ```

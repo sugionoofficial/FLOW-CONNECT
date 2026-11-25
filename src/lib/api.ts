@@ -1,8 +1,25 @@
+import { FunctionsHttpError } from '@supabase/supabase-js'
 import { supabase } from './supabase'
-import type { AspectRatio, Generation, GenerationMode, InputAsset, Profile, Project, Scene } from './types'
+import type { GoogleAccount, Profile } from './types'
+
+const ERRORS: Record<string, string> = {
+  account_limit: 'Maksimal 10 akun Google per pengguna.',
+  google_accounts_user_id_email_key: 'Akun Google ini sudah ditambahkan.',
+  duplicate: 'Akun Google ini sudah ditambahkan.',
+  google_accounts_email_check: 'Format email tidak valid.',
+  invalid_google_token: 'Login Google gagal diverifikasi. Coba lagi.',
+  token_audience_mismatch: 'Token Google bukan untuk aplikasi ini.',
+  email_not_verified: 'Email akun Google belum terverifikasi.',
+  not_authenticated: 'Sesi berakhir, silakan masuk lagi.',
+}
+
+function friendly(message: string): Error {
+  const key = Object.keys(ERRORS).find((k) => message.includes(k))
+  return new Error(key ? ERRORS[key] : message)
+}
 
 const fail = (error: { message: string } | null) => {
-  if (error) throw new Error(error.message)
+  if (error) throw friendly(error.message)
 }
 
 /* ───────── profile ───────── */
@@ -12,138 +29,56 @@ export async function getProfile(userId: string): Promise<Profile | null> {
   return data as Profile | null
 }
 
-/* ───────── projects ───────── */
-export async function listProjects(): Promise<Project[]> {
-  const { data, error } = await supabase.from('projects').select('*').order('updated_at', { ascending: false })
-  fail(error)
-  return (data ?? []) as Project[]
-}
-
-export async function getProject(id: string): Promise<Project | null> {
-  const { data, error } = await supabase.from('projects').select('*').eq('id', id).maybeSingle()
-  fail(error)
-  return data as Project | null
-}
-
-export async function createProject(title?: string): Promise<Project> {
+/* ───────── google accounts ───────── */
+export async function listGoogleAccounts(): Promise<GoogleAccount[]> {
   const { data, error } = await supabase
-    .from('projects')
-    .insert({ title: title?.trim() || 'Project tanpa judul' })
-    .select()
-    .single()
-  fail(error)
-  return data as Project
-}
-
-export async function updateProject(id: string, patch: Partial<Pick<Project, 'title' | 'description' | 'cover_url'>>) {
-  const { error } = await supabase.from('projects').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id)
-  fail(error)
-}
-
-export async function deleteProject(id: string) {
-  const { error } = await supabase.from('projects').delete().eq('id', id)
-  fail(error)
-}
-
-/* ───────── generations ───────── */
-export async function listGenerations(projectId: string): Promise<Generation[]> {
-  const { data, error } = await supabase
-    .from('generations')
+    .from('google_accounts')
     .select('*')
-    .eq('project_id', projectId)
-    .order('created_at', { ascending: false })
+    .order('is_default', { ascending: false })
+    .order('created_at', { ascending: true })
   fail(error)
-  return (data ?? []) as Generation[]
+  return (data ?? []) as GoogleAccount[]
 }
 
-export interface CreateGenerationInput {
-  projectId: string
-  mode: GenerationMode
-  model: string
-  prompt: string
-  aspectRatio: AspectRatio
-  count: number
-  costEach: number
-  inputAssets: InputAsset[]
-  settings?: Record<string, unknown>
-}
-
-const RPC_ERRORS: Record<string, string> = {
-  insufficient_credits: 'Kredit tidak cukup untuk generate ini.',
-  project_not_found: 'Project tidak ditemukan.',
-  not_authenticated: 'Silakan masuk terlebih dahulu.',
-  invalid_count: 'Jumlah output harus 1–4.',
-}
-
-export async function createGenerations(input: CreateGenerationInput): Promise<Generation[]> {
-  const { data, error } = await supabase.rpc('create_generations', {
-    p_project_id: input.projectId,
-    p_mode: input.mode,
-    p_model: input.model,
-    p_prompt: input.prompt,
-    p_aspect_ratio: input.aspectRatio,
-    p_count: input.count,
-    p_cost_each: input.costEach,
-    p_input_assets: input.inputAssets,
-    p_settings: input.settings ?? {},
-  })
-  if (error) {
-    const key = Object.keys(RPC_ERRORS).find((k) => error.message.includes(k))
-    throw new Error(key ? RPC_ERRORS[key] : error.message)
-  }
-  return (data ?? []) as Generation[]
-}
-
-export async function updateGeneration(id: string, patch: Partial<Generation>) {
-  const { data, error } = await supabase.from('generations').update(patch).eq('id', id).select().single()
-  fail(error)
-  return data as Generation
-}
-
-export async function deleteGeneration(id: string) {
-  const { error } = await supabase.from('generations').delete().eq('id', id)
-  fail(error)
-}
-
-export async function refundGeneration(id: string) {
-  const { error } = await supabase.rpc('refund_generation', { p_generation_id: id })
-  fail(error)
-}
-
-/* ───────── scenes ───────── */
-export async function listScenes(projectId: string): Promise<Scene[]> {
-  const { data, error } = await supabase.from('scenes').select('*').eq('project_id', projectId).order('position')
-  fail(error)
-  return (data ?? []) as Scene[]
-}
-
-export async function addScene(projectId: string, generationId: string, position: number): Promise<Scene> {
+export async function addGoogleAccountByEmail(email: string, label?: string): Promise<GoogleAccount> {
   const { data, error } = await supabase
-    .from('scenes')
-    .insert({ project_id: projectId, generation_id: generationId, position })
+    .from('google_accounts')
+    .insert({ email: email.trim().toLowerCase(), label: label?.trim() || null })
     .select()
     .single()
   fail(error)
-  return data as Scene
+  return data as GoogleAccount
 }
 
-export async function removeScene(id: string) {
-  const { error } = await supabase.from('scenes').delete().eq('id', id)
+/** Verifikasi token Google di server (Edge Function) lalu simpan sebagai akun terverifikasi. */
+export async function linkGoogleAccount(accessToken: string): Promise<{ account: GoogleAccount; updated: boolean }> {
+  const { data, error } = await supabase.functions.invoke('link-google-account', { body: { access_token: accessToken } })
+  if (error) {
+    let msg = error.message
+    if (error instanceof FunctionsHttpError) {
+      const body = await error.context.json().catch(() => null)
+      if (body?.error) msg = body.error
+    }
+    throw friendly(msg)
+  }
+  return data as { account: GoogleAccount; updated: boolean }
+}
+
+export async function updateGoogleAccountLabel(id: string, label: string) {
+  const { error } = await supabase.from('google_accounts').update({ label: label.trim() || null }).eq('id', id)
   fail(error)
 }
 
-export async function reorderScenes(scenes: Scene[]) {
-  await Promise.all(
-    scenes.map((s, i) => supabase.from('scenes').update({ position: i }).eq('id', s.id).then(({ error }) => fail(error))),
-  )
+export async function touchGoogleAccount(id: string) {
+  await supabase.from('google_accounts').update({ last_used_at: new Date().toISOString() }).eq('id', id)
 }
 
-/* ───────── storage ───────── */
-export async function uploadAsset(userId: string, file: File): Promise<{ url: string; path: string }> {
-  const ext = file.name.split('.').pop() || 'png'
-  const path = `${userId}/${crypto.randomUUID()}.${ext}`
-  const { error } = await supabase.storage.from('assets').upload(path, file, { contentType: file.type, upsert: false })
+export async function setDefaultGoogleAccount(id: string) {
+  const { error } = await supabase.rpc('set_default_google_account', { p_id: id })
   fail(error)
-  const { data } = supabase.storage.from('assets').getPublicUrl(path)
-  return { url: data.publicUrl, path }
+}
+
+export async function removeGoogleAccount(id: string) {
+  const { error } = await supabase.from('google_accounts').delete().eq('id', id)
+  fail(error)
 }

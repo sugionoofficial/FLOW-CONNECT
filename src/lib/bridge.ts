@@ -46,6 +46,9 @@ const runtime = (): ChromeRuntime | null =>
 
 const ERRORS: Record<string, string> = {
   NOT_INSTALLED: 'Ekstensi FLOW CONNECT Bridge belum terpasang atau tidak aktif.',
+  NOT_CONNECTED: 'Bookmarklet belum terhubung. Klik bookmark FLOW CONNECT di tab Google Flow.',
+  INVALID_URL: 'URL media tidak valid.',
+  INVALID_IMAGE: 'File harus berupa gambar.',
   NO_FLOW_TAB: 'Buka Google Flow di tab lain terlebih dahulu.',
   NOT_SIGNED_IN: 'Login ke Google Flow dengan akun Google-mu dulu.',
   PROMPT_BOX_NOT_FOUND: 'Kotak prompt Google Flow tidak ditemukan. Buka sebuah project di Flow.',

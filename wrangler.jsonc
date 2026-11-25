@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Cloudflare Workers — static assets (SPA). Deploy: `npm run deploy`
+  "name": "flow-connect",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./dist",
+    // React Router: semua rute yang tidak ada filenya dilayani index.html
+    "not_found_handling": "single-page-application"
+  },
+  "observability": { "enabled": true }
+}

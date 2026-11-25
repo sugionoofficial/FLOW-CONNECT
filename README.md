@@ -13,6 +13,24 @@ cp .env.example .env   # sudah berisi URL & publishable key Supabase
 npm run dev            # http://localhost:5173
 ```
 
+## Deploy ke Cloudflare (Workers, static assets)
+Konfigurasi: `wrangler.jsonc` (SPA fallback), header keamanan + cache di `public/_headers`.
+
+**Opsi A — dari dashboard Cloudflare (tanpa token):**
+1. Cloudflare Dashboard → *Workers & Pages* → *Create* → *Import a repository* → pilih `sugionoofficial/FLOW-CONNECT`
+2. Build command: `npm run build` · Deploy command: `npx wrangler deploy` · branch: `main`
+3. Setiap push ke `main` otomatis di-deploy ke `https://flow-connect.<subdomain>.workers.dev`
+
+**Opsi B — GitHub Actions** (`.github/workflows/deploy-cloudflare.yml`):
+1. Buat API token di Cloudflare (*My Profile → API Tokens → template "Edit Cloudflare Workers"*)
+2. GitHub repo → *Settings → Secrets and variables → Actions* → tambahkan `CLOUDFLARE_API_TOKEN` dan `CLOUDFLARE_ACCOUNT_ID`
+3. Push ke `main` (atau *Run workflow*) → build + deploy otomatis. PR hanya build & validasi.
+
+**Manual dari komputer sendiri:** `npx wrangler login` lalu `npm run deploy`.
+Uji lokal di runtime Cloudflare: `npm run cf:preview` (port 8787).
+
+> Setelah domain produksi diketahui, set **Site URL** & **Redirect URLs** di Supabase → Authentication → URL Configuration.
+
 ## Alur aplikasi
 | Halaman | Rute | Isi |
 |---|---|---|

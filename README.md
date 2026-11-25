@@ -21,6 +21,9 @@ Konfigurasi: `wrangler.jsonc` (SPA fallback), header keamanan + cache di `public
 2. Build command: `npm run build` · Deploy command: `npx wrangler deploy` · branch: `main`
 3. Setiap push ke `main` otomatis di-deploy ke `https://flow-connect.<subdomain>.workers.dev`
 
+**Opsi A2 — Cloudflare Pages:** Framework preset `None` · Build command `npm run build` · Build output directory `dist`.
+SPA routing otomatis (Pages menyajikan `index.html` untuk rute yang tidak ada filenya), `_headers` tetap berlaku. Versi Node diambil dari `.node-version`.
+
 **Opsi B — GitHub Actions** (`.github/workflows/deploy-cloudflare.yml`):
 1. Buat API token di Cloudflare (*My Profile → API Tokens → template "Edit Cloudflare Workers"*)
 2. GitHub repo → *Settings → Secrets and variables → Actions* → tambahkan `CLOUDFLARE_API_TOKEN` dan `CLOUDFLARE_ACCOUNT_ID`

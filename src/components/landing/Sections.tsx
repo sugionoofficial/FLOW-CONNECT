@@ -253,6 +253,7 @@ const FAQ = [
   { q: 'Apa itu FLOW CONNECT?', a: 'Pintu masuk ke Google Flow. Kamu login di FLOW CONNECT, menautkan satu atau beberapa akun Google, lalu membuka Google Flow dengan akun mana pun dalam satu klik.' },
   { q: 'Apakah generate video terjadi di FLOW CONNECT?', a: 'Tidak. Semua proses generate berjalan di Google Flow memakai akun Google kamu sendiri, termasuk kuota dan langganan Google AI milik akun tersebut.' },
   { q: 'Bisakah menambah lebih dari satu akun Google?', a: 'Bisa, hingga 10 akun. Tautkan lewat “Masuk dengan Google” (terverifikasi) atau cukup dengan alamat email, lalu pilih akun default.' },
+  { q: 'Bisakah upload & download lewat FLOW CONNECT?', a: 'Bisa, dengan ekstensi gratis FLOW CONNECT Bridge. Gambar & prompt dikirim ke project Google Flow-mu, dan hasil generate bisa dilihat serta diunduh dari Studio FLOW CONNECT. Tanpa API key.' },
   { q: 'Apakah password Google saya aman?', a: 'FLOW CONNECT tidak pernah melihat atau menyimpan password Google. Login selalu dilakukan di halaman resmi Google.' },
 ]
 

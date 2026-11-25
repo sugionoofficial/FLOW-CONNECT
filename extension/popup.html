@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<style>
+  body { width: 290px; margin: 0; padding: 16px; background: #05050a; color: #fff; font: 13px/1.45 Inter, system-ui, sans-serif; }
+  h1 { margin: 0 0 2px; font-size: 15px; background: linear-gradient(90deg,#a78bfa,#22d3ee); -webkit-background-clip: text; color: transparent; }
+  .muted { color: #ffffff80; font-size: 12px; }
+  .row { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: #ffffff10; border: 1px solid #ffffff22; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #6b7280; flex: none; }
+  .ok { background: #34d399; } .warn { background: #fbbf24; }
+  a.btn { display: block; margin-top: 12px; padding: 9px; text-align: center; border-radius: 10px; color: #fff; text-decoration: none; font-weight: 600; background: linear-gradient(90deg,#7c3aed,#06b6d4); }
+  a.ghost { background: #ffffff10; border: 1px solid #ffffff22; font-weight: 500; }
+</style>
+</head>
+<body>
+  <h1>FLOW CONNECT Bridge</h1>
+  <div class="muted" id="ver"></div>
+  <div class="row"><span class="dot" id="d1"></span><span id="s1">Memeriksa tab Google Flow…</span></div>
+  <div class="row"><span class="dot" id="d2"></span><span id="s2">—</span></div>
+  <a class="btn" href="https://flow-connect-2qu.pages.dev/app/studio" target="_blank">Buka Studio FLOW CONNECT</a>
+  <a class="btn ghost" href="https://flow.google.com/" target="_blank">Buka Google Flow</a>
+  <script src="popup.js"></script>
+</body>
+</html>

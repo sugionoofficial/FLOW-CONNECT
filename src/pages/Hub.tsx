@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
-  BadgeCheck, Clipboard, ExternalLink, Info, MoreVertical, Pencil, Plus, ShieldCheck, Star, Trash2, Wand2, X,
+  ArrowRight, BadgeCheck, Clipboard, ImageDown, ExternalLink, Info, MoreVertical, Pencil, Plus, ShieldCheck, Star, Trash2, Wand2, X,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { AppHeader } from '../components/AppHeader'
@@ -169,6 +169,16 @@ export default function Hub() {
             </div>
           </div>
         </section>
+
+        {/* ───── studio ───── */}
+        <Link to="/app/studio" className="group mt-6 flex flex-wrap items-center gap-5 rounded-3xl p-5 glass transition hover:bg-white/[0.07]">
+          <span className="grid size-12 place-items-center rounded-2xl bg-gradient-to-br from-cyan-500 to-violet-600"><ImageDown className="size-6" /></span>
+          <div className="min-w-56 flex-1">
+            <p className="font-display text-lg font-bold">Studio: kirim & unduh lewat FLOW CONNECT</p>
+            <p className="text-sm text-white/55">Upload gambar referensi, tulis prompt, lalu lihat & unduh hasil Google Flow dari sini (butuh ekstensi Bridge).</p>
+          </div>
+          <span className="flex items-center gap-1 text-sm font-semibold text-aurora-cyan">Buka Studio <ArrowRight className="size-4 transition group-hover:translate-x-1" /></span>
+        </Link>
 
         {/* ───── daftar akun ───── */}
         <section className="mt-12">

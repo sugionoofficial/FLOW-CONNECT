@@ -37,6 +37,29 @@ function pickOption(options, want, exact = true) {
   return pre.length === 1 ? pre[0] : -1;
 }
 
+/** URL media Flow yang boleh diambil (sama dengan agen: isMediaUrl). */
+function isMediaUrl(url, cfg) {
+  let x;
+  try { x = new URL(url); } catch { return false; }
+  if (!(x.protocol === 'https:' || (cfg.allowHttp && x.protocol === 'http:'))) return false;
+  const h = x.hostname;
+  if (cfg.mediaHosts.includes(h) || h === 'flow-content.google' || /\.googleusercontent\.com$/.test(h)) return true;
+  return (h === 'flow.google.com' || h === 'labs.google') && (/^\/asb\//.test(x.pathname) || /getMediaUrlRedirect/.test(x.pathname));
+}
+
+// Gambar yang DIUNGGAH sebagai referensi juga tercatat di project Flow; judulnya nama file (mis. kucing-oren-1a2b3c.png)
+const UPLOAD_TITLE = /\.(png|jpe?g|webp|gif|heic|heif|avif|bmp)$/i;
+
+function sniffMime(b) {
+  if (b.length < 12) return null;
+  if (b[0] === 0x89 && b[1] === 0x50) return 'image/png';
+  if (b[0] === 0xff && b[1] === 0xd8) return 'image/jpeg';
+  if (b.toString('ascii', 0, 4) === 'RIFF' && b.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+  if (b.toString('ascii', 0, 3) === 'GIF') return 'image/gif';
+  if (b.toString('ascii', 4, 8) === 'ftyp') return 'video/mp4';
+  return null;
+}
+
 function checkImageFile(p) {
   if (!IMAGE_EXT[path.extname(p).toLowerCase()]) throw new Error('INVALID_IMAGE');
   const st = fs.statSync(p);
@@ -61,7 +84,8 @@ class FlowSession extends EventEmitter {
     this.getBrowser = o.getBrowser;
     this.flowUrl = o.flowUrl || DEFAULT_FLOW_URL;
     this.flowHost = new URL(this.flowUrl).host;
-    this.agentCfg = o.agentCfg || { mediaHosts: ['flow-content.google'] };
+    this.agentCfg = o.agentCfg || { mediaHosts: ['flow-content.google', 'lh3.googleusercontent.com'] };
+    this.uploads = o.uploads || new Set(); // media id gambar referensi yang diunggah aplikasi (bukan hasil generate)
     this.extraArgs = o.extraArgs || [];
     this.getMode = o.getMode || (() => 'normal');
     this.loginUrl = o.loginUrl || 'https://accounts.google.com/ServiceLogin?continue=' + encodeURIComponent(this.flowUrl.replace(/[?&]hl=[^&]*/, ''));
@@ -312,19 +336,56 @@ class FlowSession extends EventEmitter {
     await this.waitReady();
   }
 
-  async listMedia(projectId) { return this.call('listMedia', [projectId]); }
+  /** Isi project Flow: hasil generate saja (gambar referensi yang diunggah disaring), kecuali { uploads: true }. */
+  async listMedia(projectId, { uploads = false } = {}) {
+    const items = await this.call('listMedia', [projectId]);
+    return uploads ? items : items.filter((i) => !this.uploads.has(i.mediaId) && !UPLOAD_TITLE.test((i.title || '').trim()));
+  }
   async getMedia(mediaId) { return this.call('getMedia', [mediaId]); }
 
   /** Ambil file media (Buffer). Coba langsung dulu (URL bertanda tangan), lalu lewat tab Flow (cookie pengguna). */
   async fetchMedia(url) {
-    const u = new URL(url);
-    if (!this.agentCfg.mediaHosts.includes(u.hostname)) throw new Error('INVALID_URL');
+    if (!isMediaUrl(url, this.agentCfg)) throw new Error('INVALID_URL');
+    // 1) langsung (URL CDN bertanda tangan tidak butuh cookie)
     try {
       const r = await fetch(url, { redirect: 'follow' });
-      if (r.ok) return { buffer: Buffer.from(await r.arrayBuffer()), mime: (r.headers.get('content-type') || '').split(';')[0] };
-    } catch { /* lanjut lewat tab */ }
+      const mime = (r.headers.get('content-type') || '').split(';')[0];
+      if (r.ok && !/^text\/html/.test(mime)) return { buffer: Buffer.from(await r.arrayBuffer()), mime };
+    } catch { /* lanjut */ }
+    // 2) lewat jaringan browser Flow (cookie akun, tanpa batasan CORS) — poster /asb/ butuh ini
+    try { return await this._browserFetch(url); } catch { /* lanjut */ }
+    // 3) fetch dari dalam tab
     const res = await this.call('fetchB64', [url], 180000);
     return { buffer: Buffer.from(res.b64, 'base64'), mime: (res.mime || '').split(';')[0] };
+  }
+
+  /** Ambil URL lewat tumpukan jaringan browser (Network.loadNetworkResource): cookie ikut, CORS tidak berlaku. */
+  async _browserFetch(url) {
+    if (!isMediaUrl(url, this.agentCfg)) throw new Error('INVALID_URL');
+    await this._net(); // Network domain aktif
+    const page = await this.ensurePage();
+    const tree = await page.send('Page.getFrameTree');
+    const r = await page.send('Network.loadNetworkResource', { frameId: tree.frameTree.frame.id, url, options: { disableCache: false, includeCredentials: true } }, 120000);
+    const res = r.resource || {};
+    if (!res.success || !res.stream) throw new Error('HTTP_' + (res.httpStatusCode || 0));
+    if (res.httpStatusCode && res.httpStatusCode >= 400) { await page.send('IO.close', { handle: res.stream }).catch(() => {}); throw new Error('HTTP_' + res.httpStatusCode); }
+    const parts = [];
+    let size = 0;
+    try {
+      for (;;) {
+        const c = await page.send('IO.read', { handle: res.stream, size: 1 << 20 }, 60000);
+        if (c.data) { const b = Buffer.from(c.data, c.base64Encoded ? 'base64' : 'utf8'); parts.push(b); size += b.length; }
+        if (size > 300 * 1024 * 1024) throw new Error('FILE_TOO_LARGE');
+        if (c.eof) break;
+      }
+    } finally { await page.send('IO.close', { handle: res.stream }).catch(() => {}); }
+    const h = res.headers || {};
+    const ct = Object.keys(h).find((k) => k.toLowerCase() === 'content-type');
+    let mime = ct ? String(h[ct]).split(';')[0].trim() : '';
+    const buf = Buffer.concat(parts);
+    if (!mime || mime === 'application/octet-stream') mime = sniffMime(buf) || mime;
+    if (/^text\/html/.test(mime)) throw new Error('NOT_MEDIA');
+    return { buffer: buf, mime };
   }
 
   /** Unduh satu item galeri ke folder; kembalikan path file. */
@@ -805,6 +866,8 @@ class FlowSession extends EventEmitter {
     const mediaId = ev.text ? wire.uploadedMediaId(ev.text, st.projectId) : null;
     if (!mediaId) throw fail('UPLOAD_FAILED', 'tanpa media id');
     await this._closeOverlays();
+    this.uploads.add(mediaId);
+    this.emit('upload', mediaId);
     return { mediaId, name, stem, tag, how };
   }
 
@@ -1029,14 +1092,17 @@ class FlowSession extends EventEmitter {
             fresh = items.filter((it) => !skip.has(it.mediaId));
             if (imgs.length) { const mine = fresh.filter((it) => imgs.some((x) => x.mediaId === it.mediaId)); if (mine.length) fresh = mine; }
             if (fresh.length && !firstSeen) firstSeen = Date.now();
+            for (const it of fresh) {
+              const r = !it.image && imgs.find((x) => x.mediaId === it.mediaId);
+              if (r && isMediaUrl(r.url, this.agentCfg)) it.image = r.url; // URL dari balasan generate Flow
+            }
             const ready = fresh.filter((it) => it.done && (it.image || it.video));
             if (fresh.length) status(`Hasil: ${ready.length}/${fresh.length} siap`);
             if (!wait && (submitted || fresh.length)) return { ok: true, started: true, projectId: st.projectId };
             if (fresh.length && (ready.length === fresh.length || (ready.length && Date.now() - firstSeen > 90000))) return { ok: true, items: ready, projectId: st.projectId };
             if (imgs.length && imageReply && Date.now() - imageReply.t > 15000) {
               // gambar sudah jadi menurut balasan Flow, tetapi belum muncul di daftar → pakai data balasan
-              const hosts = this.agentCfg.mediaHosts;
-              const okUrl = (u) => { try { return hosts.includes(new URL(u).hostname) ? u : null; } catch { return null; } };
+              const okUrl = (u) => (isMediaUrl(u, this.agentCfg) ? u : null);
               return { ok: true, items: imgs.map((r) => ({ mediaId: r.mediaId, title: String(prompt || 'gambar').slice(0, 40), isVideo: false, done: true, image: okUrl(r.url), video: null })), projectId: st.projectId };
             }
           } catch (e) { status('Membaca galeri gagal (' + e.message + '), mencoba lagi…'); }

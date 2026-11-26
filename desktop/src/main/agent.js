@@ -4,7 +4,7 @@
 // ambil file media, mencari kolom prompt / input file / tombol Generate.
 // Tidak pernah membuat token reCAPTCHA — Generate selalu lewat tombol UI Flow sendiri.
 
-const AGENT_VERSION = 5;
+const AGENT_VERSION = 6;
 
 /* eslint-disable */
 function fcAgent(V, cfg) {
@@ -20,11 +20,21 @@ function fcAgent(V, cfg) {
     var title = (document.title || '').replace(/\s*[-–|]\s*Google Flow.*$/i, '') || 'Project';
     return { signedIn: !!wiz.SNlM0e, account: email, projectId: projectId(), projectTitle: projectId() ? title : null, url: location.href };
   }
+  // Media Flow: CDN bertanda tangan (flow-content.google/{image,video}/…), poster/gambar galeri
+  // (lh3.googleusercontent.com/asb/…, flow.google.com/asb/…), atau rute labs getMediaUrlRedirect.
   function isMediaUrl(u) {
     try {
       var x = new URL(u);
-      return (x.protocol === 'https:' || (cfg.allowHttp && x.protocol === 'http:')) && MEDIA_HOSTS.indexOf(x.hostname) >= 0;
+      if (!(x.protocol === 'https:' || (cfg.allowHttp && x.protocol === 'http:'))) return false;
+      var h = x.hostname;
+      if (MEDIA_HOSTS.indexOf(h) >= 0) return true;
+      if (h === 'flow-content.google' || /\.googleusercontent\.com$/.test(h)) return true;
+      if ((h === 'flow.google.com' || h === 'labs.google') && (/^\/asb\//.test(x.pathname) || /getMediaUrlRedirect/.test(x.pathname))) return true;
+      return false;
     } catch (e) { return false; }
+  }
+  function mediaKind(u) {
+    try { var p = new URL(u).pathname; return /\/video\/|\.(mp4|webm)$/i.test(p) ? 'video' : 'image'; } catch (e) { return null; }
   }
   function walk(n, fn) {
     if (typeof n === 'string') fn(n);
@@ -73,6 +83,34 @@ function fcAgent(V, cfg) {
     return { payload: payload, urls: urls };
   }
 
+  // URL tidak selalu memuat media id (poster /asb/<token>, CDN /video/<workflow id>) → URL milik item adalah
+  // URL di simpul TERKECIL yang memuat tepat satu media id item (record item + saudaranya).
+  function urlsNear(payload, itemIds) {
+    var out = {};
+    (function post(n) {
+      if (typeof n === 'string') {
+        if (itemIds[n]) return { ids: [n], urls: [] };
+        if (n.indexOf('http') === 0 && isMediaUrl(n)) return { ids: [], urls: [n] };
+        return null;
+      }
+      if (!Array.isArray(n)) return null;
+      var acc = { ids: [], urls: [] };
+      for (var i = 0; i < n.length; i++) {
+        var c = post(n[i]);
+        if (!c) continue;
+        for (var a = 0; a < c.ids.length; a++) if (acc.ids.indexOf(c.ids[a]) < 0) acc.ids.push(c.ids[a]);
+        if (acc.urls.length < 12) acc.urls = acc.urls.concat(c.urls);
+      }
+      if (acc.urls.length && acc.ids.length === 1) {
+        var id = acc.ids[0], rec = out[id] = out[id] || {};
+        for (var q = 0; q < acc.urls.length; q++) { var k = mediaKind(acc.urls[q]); if (k && !rec[k]) rec[k] = acc.urls[q]; }
+        acc.urls = []; // dipakai di sini → tidak bocor ke item tetangga
+      }
+      return acc;
+    })(payload);
+    return out;
+  }
+
   async function listMedia(pid) {
     if (!/^[A-Za-z0-9-]{1,128}$/.test(pid || '')) throw new Error('INVALID_PROJECT_ID');
     var r = await batchRead('Zzl0ze', ['projects/' + pid, null, null, null, [1]]);
@@ -95,6 +133,14 @@ function fcAgent(V, cfg) {
       }
       for (var i = 0; i < n.length; i++) visit(n[i]);
     })(r.payload);
+    var itemIds = {};
+    for (var k = 0; k < items.length; k++) itemIds[items[k].mediaId] = 1;
+    var near = urlsNear(r.payload, itemIds);
+    for (var m = 0; m < items.length; m++) {
+      var nu = near[items[m].mediaId] || {};
+      if (!items[m].image) items[m].image = nu.image || null;
+      if (!items[m].video) items[m].video = nu.video || null;
+    }
     items.sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
     return items;
   }

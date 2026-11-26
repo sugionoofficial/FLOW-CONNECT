@@ -19,10 +19,20 @@ const EXTRA = (process.env.CHROME_ARGS || '--headless=new').split(' ').filter(Bo
 // 1x1 PNG
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 
+// PNG nyata 64x64 (Flow menolak gambar 1x1)
+function makePng(w = 64, h = 64, rgb = [220, 120, 40]) {
+  const zlib = require('zlib');
+  const raw = Buffer.alloc((w * 3 + 1) * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const o = y * (w * 3 + 1) + 1 + x * 3; raw[o] = rgb[0] ^ x; raw[o + 1] = rgb[1] ^ y; raw[o + 2] = rgb[2]; }
+  const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const td = Buffer.concat([Buffer.from(type), data]); const crc = Buffer.alloc(4); crc.writeUInt32BE(zlib.crc32(td) >>> 0); return Buffer.concat([len, td, crc]); };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+}
+
 function mockFlow() {
   const media = []; // {id, prompt, files, at}
   const generated = [];
-  const state = { blockNext: 0, projects: 0 };
+  const state = { blockNext: 0, projects: 0, rpc: false, terms: false, unsafeNext: 0, failNext: 0, uploads: [], polls: 0 };
   let port;
   // panel setelan meniru Flow terbaru: chip "Video · 8s · x2" → dialog berisi radio + daftar model
   const settingsUi = `
@@ -30,7 +40,7 @@ function mockFlow() {
   <div id="panel" role="dialog" style="display:none;position:fixed;right:20px;bottom:120px;background:#fff;border:1px solid #ccc;padding:8px">
     <div role="radiogroup"><button role="radio" data-g="kind" data-v="image"><i>image</i>Image</button><button role="radio" data-g="kind" data-v="video"><i>videocam</i>Video</button></div>
     <div role="radiogroup" id="subs"><button role="radio" data-g="sub" data-v="frames">Frames</button><button role="radio" data-g="sub" data-v="ingredients">Ingredients</button></div>
-    <div role="radiogroup"><button role="radio" data-g="ratio" data-v="9:16"><i>crop_portrait</i>9:16</button><button role="radio" data-g="ratio" data-v="16:9"><i>crop_landscape</i>16:9</button><button role="radio" data-g="ratio" data-v="1:1">1:1</button></div>
+    <div role="radiogroup"><button role="radio" data-g="ratio" data-v="9:16"><i>crop_9_16</i>9:16</button><button role="radio" data-g="ratio" data-v="16:9"><i>crop_16_9</i>16:9</button><button role="radio" data-g="ratio" data-v="1:1"><i>crop_square</i>1:1</button></div>
     <div role="radiogroup"><button role="radio" data-g="count" data-v="1">x1</button><button role="radio" data-g="count" data-v="2">x2</button><button role="radio" data-g="count" data-v="3">x3</button><button role="radio" data-g="count" data-v="4">x4</button></div>
     <div role="radiogroup" id="durs"><button role="radio" data-g="duration" data-v="4">4s</button><button role="radio" data-g="duration" data-v="6">6s</button><button role="radio" data-g="duration" data-v="8">8s</button></div>
     <button id="modelbtn" aria-haspopup="listbox"><span id="modeltext">Veo 3.1 - Fast</span><i>arrow_drop_down</i></button>
@@ -47,34 +57,84 @@ document.getElementById('chip').addEventListener('click',function(e){if(!e.isTru
 document.querySelectorAll('[data-g]').forEach(function(b){b.addEventListener('click',function(e){if(!e.isTrusted)return;S[b.dataset.g]=b.dataset.v;if(b.dataset.g==='kind')S.model=MODELS[S.kind][1].replace('🍌 ','');paint()})});
 document.getElementById('modelbtn').addEventListener('click',function(e){if(!e.isTrusted)return;var l=document.getElementById('models');l.innerHTML=MODELS[S.kind].map(function(m){return '<div role="option" tabindex="0">'+m+'<small style="display:block">Beta Audio</small></div>'}).join('');l.style.display='';
   l.querySelectorAll('[role=option]').forEach(function(o){o.addEventListener('click',function(ev){if(!ev.isTrusted)return;S.model=o.firstChild.nodeValue.replace('🍌 ','');l.style.display='none';paint()})})});
-document.addEventListener('keydown',function(e){if(e.key!=='Escape')return;var l=document.getElementById('models');if(l.style.display!=='none'){l.style.display='none';return}document.getElementById('panel').style.display='none'});`;
+document.addEventListener('keydown',function(e){if(e.key!=='Escape')return;var am=document.getElementById('addmenu');if(am&&am.style.display!=='none'){am.style.display='none';return}var l=document.getElementById('models');if(l.style.display!=='none'){l.style.display='none';return}document.getElementById('panel').style.display='none'});`;
+  // unggah lewat "+" → Upload, pemilih "@" yang membuat .mention-chip, kirim lewat batchexecute
+  const refsJs = String.raw`var files=[], assets=[], pick={open:false,i:0,opts:[]};
+// "+" → menu → "Upload media" → dialog file → unggah (maseQ)
+document.getElementById('add').addEventListener('click',function(e){if(!e.isTrusted)return;var m=document.getElementById('addmenu');m.style.display=m.style.display==='none'?'':'none'});
+document.getElementById('upitem').addEventListener('click',function(e){
+  if(!e.isTrusted)return;
+  document.getElementById('addmenu').style.display='none';
+  if(window.__terms){var d=document.createElement('div');d.setAttribute('role','dialog');d.textContent='Before you upload: confirm you have the rights';document.body.appendChild(d);return}
+  var inp=document.createElement('input');inp.type='file';inp.accept='image/*';
+  inp.addEventListener('change',function(){var f=inp.files[0];if(!f)return;
+    f.arrayBuffer().then(function(buf){return fetch('/_/AiSandboxAngularFrontend/data/batchexecute?rpcids=maseQ&rt=c',{method:'POST',body:JSON.stringify({name:f.name,size:buf.byteLength})})})
+     .then(function(r){return r.text()}).then(function(t){var m=/"([0-9a-f]{8}-[0-9a-f-]{27})/.exec(t.replace(/\\/g,''));if(m)assets.push({id:m[1],title:f.name})});
+  });
+  inp.click();
+});
+function rpcPost(rpc,body){return fetch('/_/AiSandboxAngularFrontend/data/batchexecute?rpcids='+rpc+'&rt=c',{method:'POST',body:JSON.stringify(body)}).then(function(r){return r.text()})}
+// pemilih "@"
+function caretInfo(){var sel=getSelection();if(!sel.rangeCount)return null;var r=sel.getRangeAt(0),n=r.startContainer;if(n.nodeType!==3)return null;var m=/@([\w.-]*)$/.exec(n.data.slice(0,r.startOffset));return m?{node:n,off:r.startOffset,len:m[0].length,q:m[1]}:null}
+function paintPick(){var pk=document.getElementById('pk');if(!pick.open||!pick.opts.length){pk.style.display='none';pk.innerHTML='';pick.open=false;return}
+  pk.innerHTML=pick.opts.map(function(a,i){return '<button class="asset-item" role="option" aria-selected="'+(i===pick.i)+'"><img alt=""><span class="asset-title">'+a.title+'</span></button>'}).join('');pk.style.display=''}
+document.getElementById('prompt').addEventListener('input',function(){var ci=caretInfo();if(!ci){pick.open=false;paintPick();return}
+  var q=ci.q.toLowerCase();pick.opts=assets.filter(function(a){return a.title.toLowerCase().indexOf(q)===0});pick.open=true;pick.i=0;setTimeout(paintPick,300)});
+document.getElementById('prompt').addEventListener('keydown',function(e){if(!pick.open)return;
+  if(e.key==='ArrowDown'){e.preventDefault();pick.i=Math.min(pick.i+1,pick.opts.length-1);paintPick()}
+  else if(e.key==='Escape'){e.preventDefault();e.stopPropagation();pick.open=false;paintPick()}
+  else if(e.key==='Enter'){e.preventDefault();var a=pick.opts[pick.i],ci=caretInfo();if(!a||!ci)return;
+    var r=document.createRange();r.setStart(ci.node,ci.off-ci.len);r.setEnd(ci.node,ci.off);r.deleteContents();
+    var c=document.createElement('span');c.className='mention-chip';c.contentEditable='false';c.setAttribute('data-entity-id',a.id);c.setAttribute('data-reference-type','media');c.textContent=a.title.replace(/\.\w+$/,'');
+    r.insertNode(c);r.setStartAfter(c);r.collapse(true);var sel=getSelection();sel.removeAllRanges();sel.addRange(r);
+    pick.open=false;paintPick();document.getElementById('gen').disabled=false}
+},true);`;
+  const genJs = String.raw`document.getElementById('gen').addEventListener('click',function(e){
+  if(!e.isTrusted) return; // klik harus asli
+  var refs=[].map.call(document.querySelectorAll('.mention-chip'),function(c){return c.getAttribute('data-entity-id')});
+  var body={prompt:val(),files:files,refs:refs,settings:Object.assign({},S),ua:navigator.userAgent,project:(/\/project\/([\w-]+)/.exec(location.pathname)||[])[1]||null};
+  var done=function(pid){
+    if(location.pathname==='/') history.pushState({},'', '/project/'+pid+location.search);
+    var p=document.getElementById('prompt'); if(p.tagName==='TEXTAREA') p.value=''; else p.textContent=''; document.getElementById('gen').disabled=true; files=[]; document.getElementById('chips').textContent='';
+  };
+  var alertMsg=function(t){var a=document.createElement('div');a.setAttribute('role','alert');a.textContent=t;document.getElementById('alerts').appendChild(a)};
+  if(window.__rpc){ // Flow 2026: kirim lewat batchexecute (gambar: ogiZ0b, video: YhhmEf), status video: jwpduf
+    rpcPost(S.kind==='image'?'ogiZ0b':'YhhmEf',body).then(function(t){
+      var pid=(/p-[\w-]+/.exec(t)||['p-test-1'])[0];done(pid);
+      if(/UNUSUAL_ACTIVITY/.test(t))alertMsg('We noticed some unusual activity.');
+      if(S.kind==='video'){var wf=(/"wf":"([\w-]+)"/.exec(t.replace(/\\/g,''))||[])[1];if(!wf)return;
+        var poll=function(){rpcPost('jwpduf',{wf:wf}).then(function(t2){t2=t2.replace(/\\/g,'');if(/"running"/.test(t2))setTimeout(poll,800);else if(/"failed"/.test(t2)){var d=document.createElement('div');d.className='tile';d.textContent='Failed';document.getElementById('tiles').appendChild(d)}})};setTimeout(poll,800)}
+    });
+    return;
+  }
+  fetch('/mock/generate',{method:'POST',body:JSON.stringify(body)})
+    .then(function(r){return r.json()}).then(function(j){
+      if(j.error){alertMsg(j.error);return;}
+      done(j.projectId);
+    });
+});
+`;
   const page = (signedIn, ce) => `<!doctype html><html lang="id"><head><title>Film Saya - Google Flow</title></head><body>
-<script>window.WIZ_global_data=${JSON.stringify(signedIn ? { SNlM0e: 'AT_TOKEN', oPEP7c: 'kreator@gmail.com', cfb2h: 'bl1', FdrFJe: 'sid' } : {})};</script>
-<header><button aria-label="Setelan"><i>settings</i></button><button aria-label="Tambah media"><i>add</i></button></header>
-<main><div class="composer">
+<script>window.WIZ_global_data=${JSON.stringify(signedIn ? { SNlM0e: 'AT_TOKEN', oPEP7c: 'kreator@gmail.com', cfb2h: 'bl1', FdrFJe: 'sid' } : {})};window.__rpc=${state.rpc};window.__terms=${state.terms};</script>
+<header><button aria-label="Setelan"><i>settings</i></button><button aria-label="Tambah media" id="add"><i>add</i></button></header>
+<div class="cdk-overlay-pane" id="addmenu" role="menu" style="display:none;position:fixed;left:20px;top:50px;background:#fff;border:1px solid #ccc"><button role="menuitem" id="upitem"><i>upload</i>Upload media</button><button role="menuitem"><i>photo_library</i>Library</button></div>
+<div class="cdk-overlay-pane" id="pk" style="display:none;position:fixed;left:20px;bottom:160px;background:#fff;border:1px solid #ccc"></div>
+<div id="tiles"></div>
+<main><flow-prompt-box class="composer">
   <input type="file" accept="image/*" multiple style="display:none" id="file">
   <div id="chips"></div>
   ${ce ? '<div contenteditable="true" role="textbox" aria-label="Prompt" id="prompt" style="min-height:40px;border:1px solid #ccc"></div>' : '<textarea aria-label="Prompt" id="prompt" rows="3"></textarea>'}
   ${settingsUi}
   <button id="gen" aria-label="Buat" disabled><i>arrow_forward</i></button>
   <div id="alerts"></div>
-</div></main>
+</flow-prompt-box></main>
 <script>
 ${settingsJs}
-var files=[];
+${refsJs}
 document.getElementById('file').addEventListener('change',function(e){files=[].map.call(e.target.files,function(f){return f.name});document.getElementById('chips').textContent=files.join(',')});
 function val(){var p=document.getElementById('prompt');return p.tagName==='TEXTAREA'?p.value:p.innerText}
 document.getElementById('prompt').addEventListener('input',function(){document.getElementById('gen').disabled=!val().trim()});
-document.getElementById('gen').addEventListener('click',function(e){
-  if(!e.isTrusted) return; // klik harus asli
-  var body={prompt:val(),files:files,settings:Object.assign({},S),ua:navigator.userAgent};
-  fetch('/mock/generate',{method:'POST',body:JSON.stringify(body)})
-    .then(function(r){return r.json()}).then(function(j){
-      if(j.error){var a=document.createElement('div');a.setAttribute('role','alert');a.textContent=j.error;document.getElementById('alerts').appendChild(a);return;}
-      if(location.pathname==='/') history.pushState({},'', '/project/'+j.projectId+location.search);
-      var p=document.getElementById('prompt'); if(p.tagName==='TEXTAREA') p.value=''; else p.textContent=''; document.getElementById('gen').disabled=true; files=[]; document.getElementById('chips').textContent='';
-    });
-});
+${genJs}
 </script></body></html>`;
   // beranda Flow (daftar project + tombol "New project") & halaman sambutan publik
   const home = (q) => `<!doctype html><html><head><title>Google Flow</title></head><body>
@@ -114,6 +174,38 @@ document.getElementById('gen').addEventListener('click',function(e){
         media.push({ id, prompt: j.prompt, files: j.files, at: Date.now() });
         res.writeHead(200, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ projectId: (/\/project\/([\w-]+)/.exec(req.headers.referer || '') || [])[1] || 'p-test-1' }));
+      }
+      const rpcName = u.pathname === '/_/AiSandboxAngularFrontend/data/batchexecute' ? u.searchParams.get('rpcids') : null;
+      if (['maseQ', 'ogiZ0b', 'YhhmEf', 'jwpduf'].includes(rpcName)) {
+        const j = JSON.parse(body || '{}');
+        const out = (rows) => { const line = JSON.stringify(rows); res.writeHead(200, { 'content-type': 'application/json' }); res.end(`)]}'\n\n${line.length}\n${line}\n`); };
+        const refuse = (code, reason) => out([['wrb.fr', rpcName, null, null, null, [code, null, reason ? [['type.googleapis.com/google.rpc.ErrorInfo', [reason, 'aisandbox']]] : []], 'generic']]);
+        const uuid = (n, tag) => `${String(n).padStart(8, '0')}-${tag}-4ccc-8ddd-${String(Date.now()).slice(-12).padStart(12, '0')}`;
+        if (rpcName === 'maseQ') {
+          state.uploads.push(j);
+          if (j.size < 200) return refuse(3); // gambar 1x1 ditolak Flow (gRPC 3)
+          return out([['wrb.fr', 'maseQ', JSON.stringify([[uuid(state.uploads.length, 'eeee'), 'p-test-1'], j.name]), null, null, null, 'generic']]);
+        }
+        if (rpcName === 'jwpduf') {
+          state.polls++;
+          const g = generated.find((x) => x.wf === j.wf);
+          if (!g) return refuse(5);
+          g.polls = (g.polls || 0) + 1;
+          const failed = g.fail && g.polls > 1;
+          return out([['wrb.fr', 'jwpduf', JSON.stringify([failed ? 'failed' : g.fail ? 'running' : 'done', [[g.wf, 'aaaaaaaa-0000-4000-8000-000000000001', g.mediaId, null, null, [null, null, null, null, null, null, null, null, failed ? [7, [13, 'Audio generation failed for this prompt']] : [g.fail ? 2 : 3]]]]]), null, null, null, 'generic']]);
+        }
+        if (state.blockNext > 0) { state.blockNext--; return refuse(8, 'PUBLIC_ERROR_UNUSUAL_ACTIVITY'); }
+        if (rpcName === 'ogiZ0b' && state.unsafeNext > 0) { state.unsafeNext--; return refuse(3, 'PUBLIC_ERROR_UNSAFE_GENERATION'); }
+        const fail = rpcName === 'YhhmEf' && state.failNext > 0;
+        if (fail) state.failNext--;
+        const n = generated.length + 1;
+        const id = '0000000' + n + '-aaaa-bbbb-cccc-111122223333';
+        const wf = uuid(n, 'ffff');
+        generated.push({ ...j, wf, mediaId: id, fail });
+        if (!fail) media.push({ id, prompt: j.prompt, files: j.refs, at: Date.now() - (rpcName === 'ogiZ0b' ? 5000 : 0) });
+        const pid = j.project || 'p-test-1';
+        if (rpcName === 'ogiZ0b') return out([['wrb.fr', 'ogiZ0b', JSON.stringify([pid, [[id, null, wf, null, null, null, [['https://flow-content.google/image/' + id + '?sig=1', 1024, 1024]]]]]), null, null, null, 'generic']]);
+        return out([['wrb.fr', 'YhhmEf', JSON.stringify([pid, { wf }, [[wf, 'aaaaaaaa-0000-4000-8000-000000000001', id, null, null, [null, null, null, null, null, null, null, null, [6]]]]]), null, null, null, 'generic']]);
       }
       if (u.pathname === '/_/AiSandboxAngularFrontend/data/batchexecute') {
         const params = new URLSearchParams(body);
@@ -352,4 +444,83 @@ test('Kartu login → mode tersembunyi → project baru → setelan Flow → cad
   assert.strictEqual(res2.settings.missing.length, 0);
   assert.strictEqual(mock.generated[mock.generated.length - 1].settings.model, 'Imagen 4');
   await sleep(10);
+});
+
+test('Skill Foto: unggah referensi ke Flow → @ chip → generate gambar → hasil; kegagalan terdeteksi cepat', { skip: !CHROME && 'Chrome tidak ditemukan (set CHROME_PATH)', timeout: 240000 }, async (t) => {
+  const mock = await mockFlow();
+  mock.state.rpc = true;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fc-photo-'));
+  const base = `http://127.0.0.1:${mock.port}`;
+  const s = new FlowSession({
+    profileDir: path.join(tmp, 'profile'), getBrowser: () => ({ path: CHROME }),
+    flowUrl: `${base}/?ce=1`, agentCfg: { mediaHosts: ['127.0.0.1', 'flow-content.google'], allowHttp: true }, extraArgs: EXTRA
+  });
+  t.after(async () => { await s.closeBrowser(); mock.server.close(); try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* Windows */ } });
+  await s.connect();
+  await s.navigate(`${base}/project/p-test-1?ce=1`);
+  await new Promise((r) => setTimeout(r, 800));
+
+  const kucing = path.join(tmp, 'Kucing Oren.png');
+  const latar = path.join(tmp, 'latar.png');
+  fs.writeFileSync(kucing, makePng(64, 64, [230, 130, 30]));
+  fs.writeFileSync(latar, makePng(48, 32, [20, 90, 200]));
+
+  // 1) unggah lewat "+" → Upload → dialog file; dikonfirmasi dari balasan maseQ Flow
+  const up = await s.uploadReference(kucing, 'kucing-oren');
+  assert.strictEqual(up.how, 'menu');
+  assert.match(up.mediaId, /^00000001-eeee-/);
+  assert.match(up.name, /^kucing-oren-[0-9a-f]{6}\.png$/);
+  assert.strictEqual(mock.state.uploads.length, 1);
+  assert.ok(mock.state.uploads[0].size > 200, 'file asli terunggah');
+
+  // gambar 1x1 ditolak Flow → dilaporkan, bukan menunggu
+  const tiny = path.join(tmp, 'kecil.png');
+  fs.writeFileSync(tiny, PNG);
+  await assert.rejects(() => s.uploadReference(tiny, 'kecil'), /UPLOAD_REJECTED/);
+
+  // 2) skill foto: dua referensi, satu disebut di tengah prompt, satu tidak disebut (tetap ditandai)
+  const logs = [];
+  const res = await s.generate(
+    { prompt: 'Foto @kucing-oren duduk di kafe, gaya editorial', images: [kucing, latar], tags: ['kucing-oren', 'latar'], options: { kind: 'image', model: 'Nano Banana Pro', ratio: '1:1', count: 1 } },
+    { onLog: (x) => logs.push(x), timeoutMs: 60000 }
+  );
+  assert.strictEqual(res.items.length, 1);
+  assert.deepStrictEqual(res.refs.map((r) => r.tag), ['kucing-oren', 'latar']);
+  assert.deepStrictEqual(res.mentions.ok.sort(), ['kucing-oren', 'latar']);
+  const g = mock.generated[mock.generated.length - 1];
+  assert.strictEqual(g.settings.kind, 'image');
+  assert.strictEqual(g.refs.length, 2, 'kedua gambar terpasang sebagai referensi');
+  assert.match(g.prompt, /kucing-oren-[0-9a-f]{6}\s+duduk di kafe, gaya editorial$/, 'teks prompt utuh setelah chip: ' + g.prompt);
+  assert.ok(logs.some((l) => /Mengunggah gambar 2\/2/.test(l)));
+  assert.ok(logs.some((l) => /Tidak disebut di prompt/.test(l)));
+  assert.ok(!res.items.some((i) => res.refs.some((r) => r.mediaId === i.mediaId)), 'gambar referensi bukan hasil');
+
+  // 3) ditolak filter keamanan (balasan ogiZ0b) → gagal dalam hitungan detik
+  mock.state.unsafeNext = 1;
+  let t0 = Date.now();
+  await assert.rejects(() => s.generate({ prompt: 'sesuatu yang ditolak', options: { kind: 'image', count: 1 } }, { timeoutMs: 120000 }), /FLOW_CONTENT_POLICY/);
+  assert.ok(Date.now() - t0 < 40000, 'penolakan terdeteksi cepat');
+
+  // 4) video gagal saat diproses (status jwpduf) → GENERATE_FAILED dengan pesan Flow
+  mock.state.failNext = 1;
+  t0 = Date.now();
+  await assert.rejects(
+    () => s.generate({ prompt: 'Penari kecak', options: { kind: 'video', sub: 'ingredients', count: 1 } }, { timeoutMs: 120000 }),
+    (e) => e.message === 'GENERATE_FAILED' && /Audio generation failed|Failed/.test(e.detail || '')
+  );
+  assert.ok(Date.now() - t0 < 60000, 'kegagalan video terdeteksi cepat');
+
+  // 5) @ yang menunjuk gambar yang tidak bisa ditemukan di Flow → Generate dibatalkan
+  const n0 = mock.generated.length;
+  const orig = s._mention.bind(s);
+  s._mention = async () => false;
+  await assert.rejects(() => s.generate({ prompt: '@latar pantai', images: [latar], tags: ['latar'], options: { kind: 'image', count: 1 } }, { timeoutMs: 60000 }), /REFERENCE_NOT_ATTACHED/);
+  s._mention = orig;
+  assert.strictEqual(mock.generated.length, n0, 'tidak ada generate tanpa referensi');
+
+  // 6) dialog persetujuan unggah pertama Flow → pengguna diminta menyetujui sekali
+  mock.state.terms = true;
+  await s.navigate(`${base}/project/p-test-1?ce=1`);
+  await new Promise((r) => setTimeout(r, 800));
+  await assert.rejects(() => s.uploadReference(latar, 'latar', { timeoutMs: 4000 }), /UPLOAD_TERMS/);
 });

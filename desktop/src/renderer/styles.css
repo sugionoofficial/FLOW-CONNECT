@@ -646,3 +646,15 @@ body.has-titlebar .stage { max-height: calc(100vh - 370px); }
 .table { border-radius: var(--radius-lg); }
 .tile { border-radius: var(--radius-lg); transition: transform 0.12s, box-shadow 0.12s; }
 .tile:hover { transform: translateY(-1px); box-shadow: var(--shadow-lg); }
+
+/* v1.3: tag "@" gambar referensi & autocomplete */
+.ref-row .thumb .reftag { position: absolute; left: 3px; right: 3px; bottom: 3px; padding: 1px 4px; border: 0; border-radius: 4px; background: rgba(0, 0, 0, 0.62); color: #fff; font: 600 10px/1.4 var(--mono, ui-monospace, Consolas, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; backdrop-filter: blur(6px); }
+.ref-row .thumb .reftag:hover { background: var(--accent); }
+.prompt-wrap { position: relative; }
+.mention-pop { position: absolute; left: 12px; bottom: 34px; z-index: 30; min-width: 220px; max-width: 320px; max-height: 240px; overflow: auto; padding: 4px; border: 1px solid var(--stroke-2); border-radius: 10px; background: var(--card); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35); }
+.mention-pop[hidden] { display: none; }
+.mention-pop .mp-head { padding: 4px 8px 6px; }
+.mention-pop .mp-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.mention-pop .mp-item img, .mention-pop .mp-item svg { width: 28px; height: 28px; flex: none; border-radius: 5px; object-fit: cover; }
+.mention-pop .mp-item.on, .mention-pop .mp-item:hover { background: var(--accent-soft); }
+.mention-pop .mp-item span { font-family: var(--mono, ui-monospace, Consolas, monospace); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

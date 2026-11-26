@@ -4,7 +4,7 @@
 // ambil file media, mencari kolom prompt / input file / tombol Generate.
 // Tidak pernah membuat token reCAPTCHA — Generate selalu lewat tombol UI Flow sendiri.
 
-const AGENT_VERSION = 3;
+const AGENT_VERSION = 4;
 
 /* eslint-disable */
 function fcAgent(V, cfg) {
@@ -195,6 +195,7 @@ function fcAgent(V, cfg) {
   }
 
   var POS = /generat|create|buat|hasilkan|kirim|submit|send|jalankan|\brun\b/i;
+  var STRONG = /^(start generation|generate|mulai membuat|buat sekarang)$/i;
   var NEG = /setting|setelan|more|lainnya|menu|close|tutup|cancel|batal|delete|hapus|upload|unggah|tambah|\badd\b|share|bagikan|download|unduh|back|kembali|help|bantuan|account|akun|new project|project baru/i;
   var ICON = /^(arrow_forward|arrow_upward|send|north|east|auto_awesome|spark)$/;
   function findGenerate() {
@@ -207,10 +208,17 @@ function fcAgent(V, cfg) {
       if (!visible(el)) continue;
       var label = [el.getAttribute('aria-label') || '', el.getAttribute('title') || '', (el.innerText || '').slice(0, 80)].join(' ').trim();
       var score = 0;
+      if (STRONG.test(label.trim())) score += 4;
       if (POS.test(label)) score += 3;
+      // tombol yang membuka dialog/menu (mis. "Create" untuk menambah bahan, chip setelan) bukan Generate
+      if (el.getAttribute('aria-haspopup') || el.getAttribute('aria-expanded') !== null) score -= 6;
       if (NEG.test(label) && !POS.test(label)) score -= 4;
       var icons = el.querySelectorAll('i, span, mat-icon');
-      for (var k = 0; k < icons.length; k++) if (ICON.test((icons[k].textContent || '').trim())) { score += 3; break; }
+      for (var k = 0; k < icons.length; k++) {
+        var it = (icons[k].textContent || '').trim();
+        if (ICON.test(it)) { score += 3; break; }
+        if (/^(add|add_2|tune|settings)$/.test(it)) { score -= 3; break; }
+      }
       if (el.type === 'submit') score += 2;
       if (ed) {
         var a = ed;
@@ -231,10 +239,168 @@ function fcAgent(V, cfg) {
     };
   }
 
+
+  // ---------- Kontrol UI Flow (Project baru, setelan model/mode/rasio) ----------
+  var ICON_SEL = 'i, mat-icon, .material-icons, .material-symbols-outlined, .google-symbols, [class*="icon" i][aria-hidden="true"]';
+  function labelOf(el) {
+    var a = (el.getAttribute('aria-label') || '').trim();
+    if (a) return a.replace(/\s+/g, ' ');
+    var out = '';
+    (function rec(n) {
+      for (var c = n.firstChild; c; c = c.nextSibling) {
+        if (c.nodeType === 3) out += c.nodeValue + ' ';
+        else if (c.nodeType === 1 && !(c.matches && c.matches(ICON_SEL)) && c.getAttribute('aria-hidden') !== 'true') rec(c);
+      }
+    })(el);
+    out = out.replace(/\s+/g, ' ').trim();
+    return out || (el.getAttribute('title') || '').trim();
+  }
+  // teks utama elemen (mis. "Veo 3.1 - Fast" tanpa keterangan kecil "Beta Audio")
+  function primaryText(el) {
+    var out = '';
+    (function rec(n) {
+      for (var c = n.firstChild; c && !out; c = c.nextSibling) {
+        if (c.nodeType === 3) { if (c.nodeValue.trim()) out = c.nodeValue.trim(); }
+        else if (c.nodeType === 1 && !(c.matches && c.matches(ICON_SEL)) && c.getAttribute('aria-hidden') !== 'true') rec(c);
+      }
+    })(el);
+    return out.replace(/^[^0-9A-Za-z\u00c0-\u024f\u4e00-\u9fff]+/, '').trim();
+  }
+  function norm(t) { return String(t || '').toLowerCase().replace(/[^a-z0-9\u00c0-\u024f\u4e00-\u9fff]+/g, ''); }
+  var OVERLAY_SEL = '[role="dialog"], [role="menu"], [role="listbox"], [data-radix-popper-content-wrapper], .cdk-overlay-pane, [data-state="open"][role="presentation"]';
+  function overlays() {
+    return Array.prototype.filter.call(document.querySelectorAll(OVERLAY_SEL), visible);
+  }
+  function overlayOpen() { return overlays().length > 0; }
+  function isChecked(el) {
+    var ac = el.getAttribute('aria-checked'), as = el.getAttribute('aria-selected'), ap = el.getAttribute('aria-pressed'), ds = el.getAttribute('data-state');
+    return ac === 'true' || as === 'true' || ap === 'true' || ds === 'on' || ds === 'checked' || ds === 'active' || el.checked === true;
+  }
+  function box(el, extra) {
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    var r = el.getBoundingClientRect();
+    var o = { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height, label: labelOf(el).slice(0, 80),
+      checked: isChecked(el), disabled: !!(el.disabled || el.getAttribute('aria-disabled') === 'true') };
+    for (var k in extra || {}) o[k] = extra[k];
+    return o;
+  }
+  /**
+   * Cari elemen yang bisa diklik.
+   * spec: { roles:[...], re:'regex', flags:'i', norm:'teks-target' (cocok teks dinormalisasi), scope:'overlay'|'page'|'auto', exclude:'regex' }
+   */
+  function find(spec) {
+    var roles = spec.roles || ['button'];
+    var sel = roles.map(function (r) { return r === 'button' ? 'button, [role="button"]' : r === 'link' ? 'a[href], [role="link"]' : '[role="' + r + '"]'; }).join(', ');
+    var re = spec.re ? new RegExp(spec.re, spec.flags || 'i') : null;
+    var ex = spec.exclude ? new RegExp(spec.exclude, 'i') : null;
+    var target = spec.norm ? norm(spec.norm) : null;
+    function search(root) {
+      var best = null, bestScore = 0;
+      var els = root.querySelectorAll(sel);
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if (!visible(el)) continue;
+        var lab = labelOf(el);
+        if (ex && ex.test(lab)) continue;
+        var score = 0;
+        if (re && re.test(lab)) score = 10;
+        if (target) {
+          var n = norm(lab);
+          if (n === target || norm(primaryText(el)) === target) score = 12;
+          else if (n.indexOf(target) === 0) score = Math.max(score, 8 - Math.min(4, (n.length - target.length) / 4));
+          else if (target.length > 3 && n.indexOf(target) > 0) score = Math.max(score, 5);
+        }
+        if (score > bestScore) { bestScore = score; best = el; }
+      }
+      return best;
+    }
+    var scope = spec.scope || 'auto';
+    var hit = null;
+    if (scope !== 'page') {
+      var ov = overlays();
+      for (var j = ov.length - 1; j >= 0 && !hit; j--) hit = search(ov[j]);
+    }
+    if (!hit && scope !== 'overlay') hit = search(document);
+    return hit ? box(hit) : null;
+  }
+  var NEW_PROJECT = /^\+?\s*(new project|create (a )?new project|start new project|project baru|proyek baru|buat project( baru)?|buat proyek( baru)?|nuevo proyecto|新建项目|新建項目|新增專案)\s*$/i;
+  var LANDING_CTA = /^(create with (google )?flow|get started|start creating|try (it )?now|coba flow|mulai membuat)$/i;
+  function newProjectTarget() {
+    var els = document.querySelectorAll('button, [role="button"], a[href], [role="link"], [tabindex="0"]');
+    var cta = null;
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (!visible(el)) continue;
+      var lab = labelOf(el);
+      if (NEW_PROJECT.test(lab)) return box(el, { kind: 'new' });
+      if (!cta && LANDING_CTA.test(lab)) cta = el;
+    }
+    return cta ? box(cta, { kind: 'cta' }) : null;
+  }
+  // chip setelan di samping kolom prompt (mis. "Video · 8s · x2" / aria-label "Settings trigger")
+  function settingsTrigger() {
+    var ed = editor();
+    var er = ed ? ed.getBoundingClientRect() : null;
+    var els = document.querySelectorAll('button, [role="button"], [role="combobox"]');
+    var best = null, bestScore = 0;
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (!visible(el)) continue;
+      var lab = labelOf(el), all = (el.getAttribute('aria-label') || '') + ' ' + (el.innerText || '');
+      var score = 0;
+      if (/settings trigger|generation settings|setelan (pembuatan|generate)/i.test(all)) score += 10;
+      if (/(^|[\s·•|])x[1-4]([\s·•|]|$)/i.test(all)) score += 4;
+      if (/\b(video|image|images|gambar|视频|图片|圖片)\b/i.test(all)) score += 2;
+      if (/\b\d{1,2}\s?s\b|16:9|9:16/.test(all)) score += 2;
+      if (/^(tune|settings)$/i.test(lab) || /^(tune|settings)/.test((el.innerText || '').trim())) score += 3;
+      if (/to video|create image/i.test(all)) score -= 4; // pemilih mode lama, bukan panel setelan
+      if (er) {
+        var r = el.getBoundingClientRect();
+        var dy = Math.abs((r.top + r.height / 2) - (er.top + er.height / 2));
+        if (dy < 200) score += 1;
+      }
+      if (score > bestScore) { bestScore = score; best = el; }
+    }
+    return best && bestScore >= 5 ? box(best) : null;
+  }
+  // pemilih mode gaya lama: combobox "Text to Video"
+  function legacyModeTrigger() {
+    return find({ roles: ['combobox', 'button'], re: '^(text|frames|ingredients) to video$|^create image$|^(teks|frame|bahan) ke video$|^buat gambar$', scope: 'page' });
+  }
+  // pemicu daftar model (tombol/combobox bertuliskan nama model)
+  function modelTrigger() {
+    return find({ roles: ['combobox', 'button'], re: '(veo|imagen|nano ?banana|omni|gemini|lyria)', exclude: '^(start generation|generate)$', scope: 'auto' });
+  }
+  function optionLabels() {
+    var out = [];
+    var els = document.querySelectorAll('[role="option"], [role="menuitemradio"], [role="menuitem"], [role="radio"], [role="tab"]');
+    for (var i = 0; i < els.length; i++) {
+      if (!visible(els[i])) continue;
+      var lab = labelOf(els[i]);
+      if (lab && lab.length <= 80) out.push({ role: els[i].getAttribute('role'), label: lab, primary: primaryText(els[i]) || lab, checked: isChecked(els[i]) });
+    }
+    return out;
+  }
+  var SUSPECT = /unusual (traffic|activity)|re-?captcha|captcha|not a robot|verify (it.s you|you are human|that you)|automated (queries|requests)|aktivitas tidak biasa|bukan robot|something went wrong|try again later|terjadi kesalahan|coba lagi nanti/i;
+  var FAIL = /fail|error|couldn.t|could not|unable|violat|policy|quota|limit reached|out of credits|insufficient|gagal|tidak dapat|kuota|kredit tidak cukup|melanggar/i;
+  function pageError() {
+    var els = document.querySelectorAll('[role="alert"], [role="alertdialog"], [aria-live="assertive"], [aria-live="polite"], [role="status"], .snackbar, [class*="snackbar" i], [class*="toast" i]');
+    for (var i = 0; i < els.length; i++) {
+      if (!visible(els[i])) continue;
+      var t = (els[i].innerText || '').replace(/\s+/g, ' ').trim();
+      if (!t || t.length > 300) continue;
+      if (SUSPECT.test(t)) return { suspect: true, text: t.slice(0, 200) };
+      if (FAIL.test(t)) return { suspect: false, text: t.slice(0, 200) };
+    }
+    return null;
+  }
+
   var api = {
     status: status, listMedia: listMedia, getMedia: getMedia, fetchB64: fetchB64, focusPrompt: focusPrompt,
     promptText: promptText, setPromptFallback: setPromptFallback, markFileInput: markFileInput, pasteFiles: pasteFiles,
-    findGenerate: findGenerate
+    findGenerate: findGenerate, find: find, newProjectTarget: newProjectTarget, settingsTrigger: settingsTrigger,
+    legacyModeTrigger: legacyModeTrigger, modelTrigger: modelTrigger, overlayOpen: overlayOpen, optionLabels: optionLabels,
+    pageError: pageError
   };
   Object.defineProperty(window, '__fcDesktop', {
     configurable: true, enumerable: false,

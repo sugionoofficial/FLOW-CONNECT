@@ -66,6 +66,7 @@ const ERR = {
   NOT_READY: 'Pembaruan belum selesai diunduh.',
   UPDATE_UNSUPPORTED: 'Pembaruan otomatis hanya tersedia di versi installer Windows.',
   FORBIDDEN: 'Tidak diizinkan.',
+  BROWSER_LAUNCH_FAILED: 'Browser tidak bisa dijalankan. Periksa pilihan browser di Pengaturan.',
   LOGIN_TIMEOUT: 'Kartu login ditutup karena terlalu lama. Coba lagi.',
   LOGIN_IN_PROGRESS: 'Kartu login untuk akun ini sudah terbuka.',
   QUEUE_RUNNING: 'Hentikan antrean otomatis terlebih dahulu.',

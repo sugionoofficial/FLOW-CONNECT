@@ -112,54 +112,58 @@ class FlowSession extends EventEmitter {
 
   get connected() { return !!this.port; }
 
-  /** Buka browser TANPA kendali (cadangan login manual — jendela browser biasa). */
+  /** Buka browser biasa TANPA kendali (cadangan login manual — jendela browser lengkap). */
   openForLogin() {
     const exe = this.getBrowser().path;
-    browser.launchBrowser({ exe, profileDir: this.profileDir, url: this.loginUrl, debug: false, extraArgs: this.extraArgs });
+    browser.launchBrowser({ exe, profileDir: this.profileDir, url: this.loginUrl, plain: true, extraArgs: this.extraArgs });
   }
 
   /**
    * KARTU LOGIN GOOGLE: jendela kecil tanpa bilah alamat (--app) yang langsung membuka halaman login Google asli.
-   * Halaman TIDAK disentuh lewat CDP (tidak ada skrip/klik dari aplikasi) — aplikasi hanya membaca alamat tab lewat
-   * HTTP /json/list untuk mengetahui kapan login selesai (Google mengalihkan ke Flow), lalu menutup kartu.
+   * Browser dijalankan POLOS: tanpa port debug/CDP (bila ada, Chrome menyalakan navigator.webdriver dan Google
+   * menolak: "This browser or app may not be secure"). Aplikasi hanya membaca log jaringan Chrome untuk tahu kapan
+   * Google mengalihkan ke Flow, lalu menutup kartu dengan wajar (cookie login tersimpan) dan menghapus log itu.
    * @returns {Promise<{ok:boolean, closed?:boolean}>}
    */
   async loginCard({ card, timeoutMs = 10 * 60000, shouldStop } = {}) {
     const running = this.port || await browser.existingDebugPort(this.profileDir);
     if (running) { this.port = running; await this.closeBrowser(); }
+    if (this.cardChild) await browser.closeGracefully(this.cardChild, null, 5000);
     await browser.waitForExit(this.profileDir);
+    const netLog = path.join(this.profileDir, 'fc-login-netlog.json');
+    try { fs.rmSync(netLog, { force: true }); } catch { /* tidak ada */ }
     this._setLogin('card');
-    browser.launchBrowser({ exe: this.getBrowser().path, profileDir: this.profileDir, url: this.loginUrl, debug: true, app: true, mode: 'card', card, extraArgs: this.extraArgs });
-    let port;
-    try { port = await browser.waitForDebugPort(this.profileDir); } catch (e) { this._setLogin(null); throw e; }
-    const start = Date.now(), end = start + timeoutMs;
-    let seen = false, opened = false;
+    const child = browser.launchBrowser({ exe: this.getBrowser().path, profileDir: this.profileDir, url: this.loginUrl, plain: true, app: true, mode: 'card', card, netLog, extraArgs: this.extraArgs });
+    this.cardChild = child;
+    let spawnError = null;
+    child.once('error', (e) => { spawnError = e; });
+    const log = new browser.NetLogReader(netLog);
+    const reachedFlow = () => log.read().some((u) => this._isFlowUrl(u) && !u.startsWith(this.loginUrl));
+    const end = Date.now() + timeoutMs;
     try {
       while (Date.now() < end) {
-        if (shouldStop && shouldStop()) { await this._closePort(port); return { ok: false, closed: true }; }
-        let targets;
-        try { targets = await browser.getJSON(port, '/json/list', 'GET', 2000); } catch { return { ok: false, closed: true }; } // kartu ditutup pengguna
-        const pages = targets.filter((t) => t.type === 'page');
-        if (!pages.length) {
-          if (seen) return { ok: false, closed: true };
-          // browser tertentu mengabaikan --app: buka halaman login sebagai tab biasa (tetap tanpa kendali)
-          if (!opened && Date.now() - start > 4000) { opened = true; await browser.getJSON(port, '/json/new?' + encodeURI(this.loginUrl), 'PUT').catch(() => {}); }
-          await sleep(400);
-          continue;
-        }
-        seen = true;
-        if (pages.some((t) => this._isFlowUrl(t.url) && !t.url.startsWith(this.loginUrl))) {
+        if (spawnError) throw new Error('BROWSER_LAUNCH_FAILED');
+        if (shouldStop && shouldStop()) { await browser.closeGracefully(child, this.profileDir); return { ok: false, closed: true }; }
+        if (reachedFlow()) {
           this._setLogin('done');
-          await sleep(600);
-          await this._closePort(port);
+          await sleep(2500); // biarkan Flow selesai memuat & menyimpan sesinya
+          await browser.closeGracefully(child, this.profileDir);
           return { ok: true };
         }
-        await sleep(600);
+        if (await browser.waitChild(child, 0)) {
+          // kartu ditutup pengguna — mungkin setelah login selesai
+          await browser.waitForExit(this.profileDir);
+          if (reachedFlow()) { this._setLogin('done'); return { ok: true }; }
+          return { ok: false, closed: true };
+        }
+        await sleep(500);
       }
-      await this._closePort(port);
+      await browser.closeGracefully(child, this.profileDir);
       throw new Error('LOGIN_TIMEOUT');
     } finally {
+      if (this.cardChild === child) this.cardChild = null;
       await browser.waitForExit(this.profileDir);
+      try { fs.rmSync(netLog, { force: true }); } catch { /* dihapus nanti */ }
       if (this.loginState !== 'done') this._setLogin(null);
     }
   }

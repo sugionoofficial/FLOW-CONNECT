@@ -16,6 +16,9 @@ const { Store } = require('../src/main/store');
 
 const CHROME = process.env.CHROME_PATH || (findBrowsers()[0] || {}).path;
 const EXTRA = (process.env.CHROME_ARGS || '--headless=new').split(' ').filter(Boolean);
+const HEADLESS = EXTRA.some((a) => a.startsWith('--headless'));
+// Uji kartu login dengan jendela Chrome sungguhan (butuh desktop; di CI dijalankan di runner Windows)
+const HEADED_ARGS = process.env.CHROME_HEADED_ARGS != null ? process.env.CHROME_HEADED_ARGS.split(' ').filter(Boolean) : null;
 // 1x1 PNG
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 
@@ -176,7 +179,9 @@ ${genJs}
       if (req.method === 'GET' && u.pathname === '/' && u.searchParams.get('view') === 'home') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(home(keep)); }
       if (req.method === 'GET' && u.pathname === '/mock-login') {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-        return res.end('<!doctype html><title>Login</title><p>Masuk…</p><script>setTimeout(function(){location.href=new URLSearchParams(location.search).get("continue")},1200)</script>');
+        return res.end('<!doctype html><title>Login</title><p>Masuk…</p><script>fetch("/mock/wd?v="+navigator.webdriver);setTimeout(function(){location.href=new URLSearchParams(location.search).get("continue")},1200)</script>');
+      }
+      if (u.pathname === '/mock/wd') { state.webdriver = u.searchParams.get('v'); res.writeHead(204); return res.end();
       }
       if (u.pathname === '/mock/project') { state.projects++; res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ id: 'p-new-' + state.projects })); }
       if (req.method === 'GET' && (u.pathname === '/' || u.pathname.startsWith('/project/'))) {
@@ -427,6 +432,11 @@ test('Kartu login → mode tersembunyi → project baru → setelan Flow → cad
   assert.deepStrictEqual(lr, { ok: true });
   assert.deepStrictEqual(states, ['card', 'done']);
   assert.strictEqual(await existingDebugPort(profileDir), null, 'kartu login sudah ditutup');
+  // halaman login Google harus melihat browser biasa: navigator.webdriver = false (tanpa port debug/CDP).
+  // Chrome headless selalu true, jadi hanya diperiksa bila headed (lihat uji "Kartu login (Chrome asli…)").
+  if (!HEADLESS) assert.strictEqual(mock.state.webdriver, 'false', 'Google menolak login bila navigator.webdriver = true');
+  else assert.ok(mock.state.webdriver, 'halaman login dimuat');
+  assert.ok(!fs.existsSync(path.join(profileDir, 'fc-login-netlog.json')), 'log jaringan login dihapus');
 
   // 2) sambung dalam mode tersembunyi: UA & Client Hints tanpa "Headless"
   await s.connect();
@@ -484,6 +494,25 @@ test('Kartu login → mode tersembunyi → project baru → setelan Flow → cad
   assert.strictEqual(res2.settings.missing.length, 0);
   assert.strictEqual(mock.generated[mock.generated.length - 1].settings.model, 'Nano Banana 2.1');
   await sleep(10);
+});
+
+test('Kartu login (Chrome asli berjendela): tanpa port debug → navigator.webdriver=false, Google tidak menolak', { skip: !(CHROME && HEADED_ARGS) && 'set CHROME_HEADED_ARGS (butuh desktop)', timeout: 120000 }, async (t) => {
+  const { existingDebugPort } = require('../src/main/browser');
+  const mock = await mockFlow();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fc-card-'));
+  const base = `http://127.0.0.1:${mock.port}`;
+  const flowUrl = `${base}/?view=landing&ce=1`;
+  const profileDir = path.join(tmp, 'profile');
+  const s = new FlowSession({
+    profileDir, getBrowser: () => ({ path: CHROME }), flowUrl, getMode: () => 'normal',
+    loginUrl: `${base}/mock-login?continue=${encodeURIComponent(flowUrl)}`, extraArgs: HEADED_ARGS
+  });
+  t.after(() => { mock.server.closeAllConnections(); mock.server.close(); try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* Windows */ } });
+  const lr = await s.loginCard({ card: { x: 100, y: 100, width: 460, height: 640 }, timeoutMs: 60000 });
+  assert.deepStrictEqual(lr, { ok: true });
+  assert.strictEqual(mock.state.webdriver, 'false', 'navigator.webdriver harus false agar Google mengizinkan login');
+  assert.strictEqual(await existingDebugPort(profileDir), null);
+  assert.ok(!fs.existsSync(path.join(profileDir, 'fc-login-netlog.json')), 'log jaringan login dihapus');
 });
 
 test('Skill Foto: unggah referensi ke Flow → @ chip → generate gambar → hasil; kegagalan terdeteksi cepat', { skip: !CHROME && 'Chrome tidak ditemukan (set CHROME_PATH)', timeout: 240000 }, async (t) => {

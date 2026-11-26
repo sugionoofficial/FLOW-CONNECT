@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
-  ArrowRight, BadgeCheck, Clipboard, Download, ImageDown, Monitor, Smartphone, ExternalLink, Info, MoreVertical, Pencil, Plus, ShieldCheck, Star, Trash2, Wand2, X,
+  ArrowRight, BadgeCheck, Clipboard, Download, ImageDown, KeyRound, Monitor, Smartphone, ExternalLink, Info, MoreVertical, Pencil, Plus, ShieldCheck, Star, Trash2, Wand2, X,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { AppHeader } from '../components/AppHeader'
@@ -211,12 +211,14 @@ export default function Hub() {
             <p className="font-display text-lg font-bold">FLOW CONNECT Desktop untuk Windows</p>
             <p className="text-sm text-white/55">
               Aplikasi PC yang menjalankan Google Flow di Chrome/Edge asli di balik layar: multi-akun, kirim gambar & prompt, galeri, unduh ke folder,
-              plus Mode Otomatis (antrean prompt). Butuh Google Chrome atau Microsoft Edge.
+              plus Mode Otomatis (antrean prompt). Diaktifkan dengan kunci lisensi dan update otomatis. Butuh Google Chrome atau Microsoft Edge.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <a href={DESKTOP_SETUP_URL} className={buttonClass('primary', 'sm')}><Download className="size-4" /> Unduh installer</a>
+            <Link to="/app/lisensi" className={buttonClass('glass', 'sm')}><KeyRound className="size-4" /> Kunci lisensi</Link>
             <a href={DESKTOP_PORTABLE_URL} className="text-sm text-white/60 hover:text-white">Versi portable</a>
+            <Link to="/unduh" className="text-sm text-white/60 hover:text-white">Info & panduan</Link>
             <a href={DESKTOP_RELEASES_URL} target="_blank" rel="noreferrer" className="text-sm text-white/60 hover:text-white">Catatan rilis</a>
           </div>
         </section>

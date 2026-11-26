@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu, Notification, systemPreferences } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu, Notification, systemPreferences, safeStorage } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -7,10 +7,12 @@ const { Store } = require('./store');
 const { FlowSession, IMAGE_EXT } = require('./flow');
 const { AutomationQueue, safeName } = require('./automation');
 const browser = require('./browser');
+const { LicenseManager } = require('./license');
+const { Updater } = require('./updater');
 
 const WEB_URL = 'https://flow-connect-2qu.pages.dev';
 const REPO_URL = 'https://github.com/sugionoofficial/FLOW-CONNECT';
-const EXTERNAL_OK = [WEB_URL, REPO_URL, 'https://flow.google.com', 'https://support.google.com', 'https://www.google.com/chrome'];
+const EXTERNAL_OK = [WEB_URL, REPO_URL, 'https://github.com/sugionoofficial/FLOW-CONNECT/releases', 'https://flow.google.com', 'https://support.google.com', 'https://www.google.com/chrome'];
 
 // --smoke-test: dipakai CI untuk memastikan aplikasi hasil build benar-benar terbuka (data di folder sementara)
 const SMOKE = process.argv.includes('--smoke-test');
@@ -22,6 +24,8 @@ app.setAppUserModelId('com.flowconnect.desktop');
 let win = null;
 let store = null;
 let queue = null;
+let license = null;
+let updater = null;
 const sessions = new Map();     // accountId → FlowSession
 const statuses = new Map();     // accountId → status terakhir
 const allowedFiles = new Set(); // gambar yang dipilih pengguna (dialog / seret)
@@ -33,9 +37,18 @@ function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 }
 
-function notify(title, body) {
-  if (Notification.isSupported()) new Notification({ title, body, silent: false }).show();
+function notify(title, body, onClick) {
+  if (!Notification.isSupported()) return;
+  const n = new Notification({ title, body, silent: false });
+  n.on('click', () => { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } if (onClick) onClick(); });
+  n.show();
 }
+
+// Kunci lisensi disimpan terenkripsi (DPAPI Windows lewat safeStorage) bila tersedia
+const crypt = {
+  encrypt: (s) => (safeStorage.isEncryptionAvailable() ? 'enc:' + safeStorage.encryptString(s).toString('base64') : 'raw:' + s),
+  decrypt: (s) => (s.startsWith('enc:') ? safeStorage.decryptString(Buffer.from(s.slice(4), 'base64')) : s.replace(/^raw:/, ''))
+};
 
 function accent() {
   try {
@@ -120,18 +133,42 @@ function insideDownloads(p) {
 }
 
 // ---------- IPC ----------
+// Saluran yang boleh dipakai sebelum lisensi aktif
+const UNGATED = new Set(['app:info', 'license:activate', 'license:verify', 'license:deactivate', 'update:check', 'update:download', 'update:install', 'shell:external', 'settings:set']);
+
 function handle(channel, fn) {
   ipcMain.handle(channel, async (e, ...args) => {
     if (!win || e.sender !== win.webContents) throw new Error('FORBIDDEN');
-    try { return { ok: true, data: await fn(...args) }; } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
+    try {
+      if (!UNGATED.has(channel) && !license.licensed) throw new Error('LICENSE_REQUIRED');
+      return { ok: true, data: await fn(...args) };
+    } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
   });
 }
 
 function registerIpc() {
   handle('app:info', () => ({
     version: app.getVersion(), platform: process.platform, accent: accent(), browsers: browser.findBrowsers(),
-    settings: publicSettings(), statuses: Object.fromEntries(statuses), queue: queue.state(), webUrl: WEB_URL
+    settings: publicSettings(), statuses: Object.fromEntries(statuses), queue: queue.state(), webUrl: WEB_URL,
+    license: license.state(), update: updater.state()
   }));
+
+  // Lisensi
+  handle('license:activate', (key) => license.activate(key));
+  handle('license:verify', () => license.verify());
+  handle('license:deactivate', async () => {
+    queue.stop();
+    return license.deactivate();
+  });
+
+  // Pembaruan aplikasi
+  handle('update:check', () => updater.check());
+  handle('update:download', async () => {
+    const r = await updater.download();
+    if (r && r.url) await shell.openExternal(r.url);
+    return updater.state();
+  });
+  handle('update:install', () => updater.install(beforeUpdateQuit));
   handle('settings:set', (patch) => {
     store.set(patch || {});
     nativeTheme.themeSource = store.data.theme;
@@ -368,6 +405,7 @@ function buildMenu() {
         { label: 'Panduan penggunaan', click: go('help') },
         { label: 'Situs FLOW CONNECT', click: () => shell.openExternal(WEB_URL) },
         { label: 'Kode sumber (GitHub)', click: () => shell.openExternal(REPO_URL) },
+        { label: 'Periksa pembaruan…', click: () => { send('navigate', 'settings'); updater.check(); } },
         { type: 'separator' },
         {
           label: 'Tentang FLOW CONNECT Desktop',
@@ -409,6 +447,16 @@ function runSmoke() {
   win.webContents.once('did-finish-load', async () => {
     try {
       await new Promise((r) => setTimeout(r, 1500));
+      // 1) tanpa lisensi → layar aktivasi
+      const gate = await win.webContents.executeJavaScript(`!!document.querySelector('#gate') && !document.querySelector('[data-page="home"]')`);
+      if (!gate) return fail('layar lisensi tidak tampil');
+      // 2) kunci palsu ditolak server lisensi (cek koneksi ke Supabase; galat jaringan hanya peringatan)
+      try { await license.activate('FC-AAAAA-AAAAA-AAAAA-AAAAA-AAAAA'); return fail('kunci palsu diterima'); }
+      catch (e) { if (e.message === 'NETWORK') console.warn('SMOKE: server lisensi tidak terjangkau'); else if (e.message !== 'INVALID_KEY') return fail('respons lisensi: ' + e.message); else console.log('SMOKE: server lisensi menolak kunci palsu (OK)'); }
+      // 3) lisensi uji → tampilan utama
+      store.data.license = { key: 'raw:FC-SMOKE-TESTS-00000-00000-00000', hint: 'FC-SMOKE…00000', info: { ok: true, label: 'Uji asap', email: 'smoke@test' }, checkedAt: Date.now(), error: null };
+      license.emit('change', license.state());
+      await new Promise((r) => setTimeout(r, 500));
       const pages = [];
       for (const p of ['home', 'accounts', 'studio', 'gallery', 'auto', 'downloads', 'settings']) {
         const h1 = await win.webContents.executeJavaScript(`(async () => { document.querySelector('[data-page="${p}"]').click(); await new Promise(r => setTimeout(r, 150)); const h = document.querySelector('#page h1'); return h ? h.textContent : null; })()`);
@@ -417,7 +465,7 @@ function runSmoke() {
       }
       const hasBridge = await win.webContents.executeJavaScript('typeof window.fc === "object" && typeof require === "undefined" && typeof process === "undefined"');
       if (!hasBridge) return fail('preload/isolasi tidak sesuai');
-      console.log('SMOKE OK:', pages.join(' | '), '| browser:', browser.findBrowsers().map((b) => b.name).join(', ') || '-');
+      console.log('SMOKE OK:', pages.join(' | '), '| update:', updater.state().state, '| browser:', browser.findBrowsers().map((b) => b.name).join(', ') || '-');
       app.exit(0);
     } catch (e) { fail(e.message); }
   });
@@ -432,6 +480,15 @@ app.whenReady().then(async () => {
   queue.on('update', (st) => send('queue', st));
   queue.on('job-failed', (j) => notify('Tugas otomatis gagal', `${j.prompt.slice(0, 60)} — ${j.error}`));
   queue.on('finished', ({ done, failed }) => { if (done + failed) notify('Antrean otomatis selesai', `${done} berhasil, ${failed} gagal.`); });
+  license = new LicenseManager({ store, version: app.getVersion(), crypt });
+  license.on('change', (st) => {
+    send('license', st);
+    if (!license.licensed) queue.stop();
+  });
+  updater = new Updater({ app });
+  updater.on('change', (st) => send('update', st));
+  updater.on('available', (st) => notify('Pembaruan FLOW CONNECT tersedia', `Versi ${st.version} siap. Klik "Update sekarang" di aplikasi — tanpa instal ulang.`));
+  updater.on('ready', (st) => notify('Pembaruan siap dipasang', `Versi ${st.version} sudah diunduh. Klik "Mulai ulang & perbarui".`));
   registerIpc();
   buildMenu();
   createWindow();
@@ -445,7 +502,14 @@ app.whenReady().then(async () => {
     if (await browser.existingDebugPort(profileDir(a.id))) session(a.id).connect().catch(() => {});
   }
   setInterval(() => { pollStatuses().catch(() => {}); }, 4000);
+  if (!SMOKE) { license.start(); updater.start(); }
 });
+
+function beforeUpdateQuit() {
+  queue.stop();
+  if (store) store.flush();
+  for (const s of sessions.values()) s.disconnect();
+}
 
 app.on('window-all-closed', () => {
   // Browser Google Flow dibiarkan terbuka agar proses yang berjalan tidak terputus.

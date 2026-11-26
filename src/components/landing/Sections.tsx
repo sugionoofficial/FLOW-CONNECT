@@ -220,9 +220,9 @@ export function FilmsSection() {
               </p>
               <h3 className="mt-2 font-display text-3xl font-bold">{f.title}</h3>
               <p className="mt-2 max-w-lg text-sm text-white/70">{f.desc}</p>
-              <button className={buttonClass('glass', 'sm', 'mt-4')}>
-                <Play className="size-3.5 fill-white" /> Tonton
-              </button>
+              <Link to="/contoh" className={buttonClass('glass', 'sm', 'mt-4')}>
+                <Play className="size-3.5 fill-white" /> Lihat prompt & pengaturannya
+              </Link>
             </div>
           </div>
           <div className="flex max-h-[520px] flex-col gap-3 overflow-y-auto pr-1">
@@ -243,6 +243,11 @@ export function FilmsSection() {
             ))}
           </div>
         </div>
+        <div className="mt-10 text-center">
+          <Link to="/contoh" className={buttonClass('glass', 'lg')}>
+            Lihat semua contoh video, foto, workflow & project <ArrowRight className="size-4" />
+          </Link>
+        </div>
       </div>
     </section>
   )
@@ -254,7 +259,8 @@ const FAQ = [
   { q: 'Apakah generate video terjadi di FLOW CONNECT?', a: 'Tidak. Semua proses generate berjalan di Google Flow memakai akun Google kamu sendiri, termasuk kuota dan langganan Google AI milik akun tersebut.' },
   { q: 'Bisakah menambah lebih dari satu akun Google?', a: 'Bisa, hingga 10 akun. Tautkan lewat “Masuk dengan Google” (terverifikasi) atau cukup dengan alamat email, lalu pilih akun default.' },
   { q: 'Bisakah upload & download lewat FLOW CONNECT?', a: 'Bisa. Di komputer pakai bookmarklet (tanpa instal) atau ekstensi gratis FLOW CONNECT Bridge: gambar & prompt dikirim ke project Google Flow-mu, hasilnya bisa dilihat dan diunduh dari Studio. Di HP, Studio mengirim gambar & prompt ke aplikasi Google Flow resmi (Android & iPhone). Tanpa API key.' },
-  { q: 'Ada aplikasi untuk PC?', a: 'Ada: FLOW CONNECT Desktop untuk Windows. Aplikasi ini menjalankan Google Flow di Chrome/Edge asli milikmu di balik layar, mendukung banyak akun, kirim gambar & prompt, galeri, unduh ke folder, dan Mode Otomatis (antrean prompt, dengan peringatan risiko akun). Unduh dari halaman Hub setelah masuk.' },
+  { q: 'Ada aplikasi untuk PC?', a: 'Ada: FLOW CONNECT Desktop untuk Windows. Aplikasi ini menjalankan Google Flow di Chrome/Edge asli milikmu di balik layar, mendukung banyak akun, kirim gambar & prompt, galeri, unduh ke folder, dan Mode Otomatis (antrean prompt, dengan peringatan risiko akun). Aplikasi diaktifkan dengan kunci lisensi yang kamu buat sendiri di menu Lisensi, dan memperbarui dirinya otomatis (cukup klik “Update sekarang”). Unduh di halaman Unduh Aplikasi.' },
+  { q: 'Bagaimana cara mendapatkan kunci lisensi aplikasi PC?', a: 'Masuk ke FLOW CONNECT, buka menu Lisensi, lalu klik “Buat kunci lisensi”. Salin kuncinya dan tempel di aplikasi saat pertama dibuka. Satu kunci bisa dipakai di beberapa PC; PC lama bisa dilepas kapan saja dari halaman yang sama.' },
   { q: 'Apakah password Google saya aman?', a: 'FLOW CONNECT tidak pernah melihat atau menyimpan password Google. Login selalu dilakukan di halaman resmi Google.' },
 ]
 

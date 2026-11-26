@@ -1,18 +1,30 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, NavLink } from 'react-router-dom'
 import { Menu, X } from 'lucide-react'
 import clsx from 'clsx'
 import { Logo } from '../Logo'
 import { buttonClass } from '../Button'
 import { useAuth } from '../../context/AuthContext'
 
+// href diawali '/#' = bagian di halaman utama; selain itu = halaman tersendiri
 const LINKS = [
-  { href: '#model', label: 'Model' },
-  { href: '#alur', label: 'Alur Kerja' },
-  { href: '#tools', label: 'Tools' },
-  { href: '#karya', label: 'Karya' },
-  { href: '#faq', label: 'FAQ' },
+  { href: '/#model', label: 'Model' },
+  { href: '/#alur', label: 'Alur Kerja' },
+  { href: '/contoh', label: 'Contoh' },
+  { href: '/unduh', label: 'Unduh Aplikasi' },
+  { href: '/#faq', label: 'FAQ' },
 ]
+
+function NavItem({ href, label, className, onClick }: { href: string; label: string; className: string; onClick?: () => void }) {
+  if (href.startsWith('/#')) {
+    return <a href={href} className={className} onClick={onClick}>{label}</a>
+  }
+  return (
+    <NavLink to={href} onClick={onClick} className={({ isActive }) => clsx(className, isActive && 'text-white')}>
+      {label}
+    </NavLink>
+  )
+}
 
 export function Navbar() {
   const { user } = useAuth()
@@ -37,9 +49,7 @@ export function Navbar() {
         <Logo />
         <div className="hidden items-center gap-8 text-sm text-white/75 md:flex">
           {LINKS.map((l) => (
-            <a key={l.href} href={l.href} className="transition hover:text-white">
-              {l.label}
-            </a>
+            <NavItem key={l.href} {...l} className="transition hover:text-white" />
           ))}
         </div>
         <div className="hidden items-center gap-2 md:flex">
@@ -65,9 +75,7 @@ export function Navbar() {
       {open && (
         <div className="container-x mt-2 flex animate-fade-up flex-col gap-1 rounded-2xl p-3 glass-strong md:hidden">
           {LINKS.map((l) => (
-            <a key={l.href} href={l.href} onClick={() => setOpen(false)} className="rounded-lg px-3 py-2.5 text-white/80 hover:bg-white/5">
-              {l.label}
-            </a>
+            <NavItem key={l.href} {...l} onClick={() => setOpen(false)} className="rounded-lg px-3 py-2.5 text-white/80 hover:bg-white/5" />
           ))}
           <Link to={user ? '/app' : '/masuk'} className={buttonClass('primary', 'md', 'mt-2')}>
             {user ? 'Buka Studio' : 'Masuk / Daftar'}

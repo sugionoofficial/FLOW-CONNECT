@@ -1,7 +1,7 @@
 // Membuat src/renderer/icons.js dari paket lucide-react milik proyek web (jalankan dari root repo setelah npm ci).
 import fs from 'node:fs'
 import path from 'node:path'
-const names = ['house','users','send','images','bot','download','settings','plus','trash-2','refresh-cw','folder-open','external-link','log-in','plug','unplug','image-plus','x','play','square','triangle-alert','check','circle-check','circle-x','loader-circle','clock','info','monitor','list-plus','rotate-ccw','eye','file-image','video','pencil','chevron-right','sparkles','shield-check','zap','circle-help','arrow-right','power','app-window','wand-sparkles']
+const names = ['house','users','send','images','bot','download','settings','plus','trash-2','refresh-cw','folder-open','external-link','log-in','plug','unplug','image-plus','x','play','square','triangle-alert','check','circle-check','circle-x','loader-circle','clock','info','monitor','list-plus','rotate-ccw','eye','file-image','video','pencil','chevron-right','sparkles','shield-check','zap','circle-help','arrow-right','power','app-window','wand-sparkles','key-round','log-out','circle-arrow-down','cloud-off','badge-check','monitor-smartphone','copy']
 const out = {}
 for (const n of names) {
   let file = path.resolve(`node_modules/lucide-react/dist/esm/icons/${n}.mjs`)

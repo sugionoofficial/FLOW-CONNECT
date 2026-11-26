@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { ChevronDown, Play, Wand2 } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
+import { ChevronDown, Images, MonitorDown, Play, Wand2 } from 'lucide-react'
 import { AuroraBg } from '../AuroraBg'
 import { PROMPT_IDEAS, SHOWCASE_MEDIA } from '../../lib/catalog'
 
@@ -51,6 +51,14 @@ export function Hero() {
               Buat <Wand2 className="size-4" />
             </button>
           </form>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <Link to="/contoh" className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold glass transition hover:bg-white/10">
+              <Images className="size-4 text-aurora-cyan" /> Lihat contoh generate
+            </Link>
+            <Link to="/unduh" className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold glass transition hover:bg-white/10">
+              <MonitorDown className="size-4 text-aurora-cyan" /> Unduh aplikasi PC
+            </Link>
+          </div>
           <p className="mt-4 max-w-xl text-xs text-white/40">
             Proses generate berjalan di Google Flow dengan akun Google kamu sendiri. Fitur mengikuti langganan Google AI tiap akun. 18+.
           </p>

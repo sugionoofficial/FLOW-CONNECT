@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
-import { LogOut } from 'lucide-react'
+import { Download, Images, KeyRound, LogOut } from 'lucide-react'
 import clsx from 'clsx'
 import { Logo } from './Logo'
 import { useAuth } from '../context/AuthContext'
@@ -30,6 +30,16 @@ export function UserMenu() {
             <p className="truncate text-xs text-white/50">{user?.email}</p>
           </div>
           <div className="my-1 h-px bg-white/10" />
+          {[
+            { to: '/app/lisensi', label: 'Lisensi aplikasi PC', Icon: KeyRound },
+            { to: '/unduh', label: 'Unduh aplikasi PC', Icon: Download },
+            { to: '/contoh', label: 'Contoh generate', Icon: Images },
+          ].map(({ to, label, Icon }) => (
+            <Link key={to} to={to} onClick={() => setOpen(false)} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-white/75 hover:bg-white/5 hover:text-white">
+              <Icon className="size-4" /> {label}
+            </Link>
+          ))}
+          <div className="my-1 h-px bg-white/10" />
           <button
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-300 hover:bg-red-500/10"
             onClick={async () => { await signOut(); navigate('/') }}
@@ -53,6 +63,9 @@ export function AppHeader({ children }: { children?: ReactNode }) {
           <NavLink to="/app" end className={link}>Akun Google</NavLink>
           <NavLink to="/app/studio" className={link}>Studio</NavLink>
           <NavLink to="/app/tools" className={link}>Tools</NavLink>
+          <NavLink to="/app/lisensi" className={link}>Lisensi</NavLink>
+          <NavLink to="/contoh" className={link}>Contoh</NavLink>
+          <NavLink to="/unduh" className={link}>Unduh</NavLink>
         </nav>
         <div className="flex-1">{children}</div>
         <UserMenu />

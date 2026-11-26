@@ -14,7 +14,9 @@ const DEFAULTS = {
   autoAck: null,           // waktu pengguna menyetujui risiko Mode Otomatis
   auto: { minDelay: 45, maxDelay: 120, maxPerRun: 10, timeoutMin: 8, autoDownload: true, stopOnError: true },
   downloads: [],           // { path, name, mediaId, accountId, at }
-  queue: []                // tugas Mode Otomatis
+  queue: [],               // tugas Mode Otomatis
+  deviceId: null,          // ID acak PC ini (untuk slot perangkat lisensi)
+  license: null            // { key (terenkripsi), hint, info, checkedAt, error }
 };
 
 const LIMITS = { minDelay: [20, 3600], maxDelay: [20, 7200], maxPerRun: [1, 50], timeoutMin: [1, 30] };

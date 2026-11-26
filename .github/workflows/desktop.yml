@@ -68,13 +68,23 @@ jobs:
         run: npx electron-builder --win --publish never
       - name: Uji asap — jalankan aplikasi hasil build
         run: '"dist/win-unpacked/FLOW CONNECT Desktop.exe" --smoke-test'
+      - name: Periksa berkas pembaruan otomatis
+        run: |
+          ls -la dist
+          test -f dist/latest.yml && test -f dist/FLOW-CONNECT-Desktop-Setup.exe.blockmap
+          test -f "dist/win-unpacked/resources/app-update.yml"
+          cat dist/latest.yml
+          grep -q "version: $(node -p "require('./package.json').version")" dist/latest.yml
       - name: Versi
         id: v
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: FLOW-CONNECT-Desktop-${{ steps.v.outputs.version }}-windows
-          path: desktop/dist/*.exe
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.blockmap
+            desktop/dist/latest.yml
           if-no-files-found: error
       - name: Terbitkan rilis
         if: github.event_name != 'pull_request'
@@ -84,13 +94,18 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: FLOW CONNECT Desktop v${{ steps.v.outputs.version }}
           make_latest: true
-          files: desktop/dist/*.exe
+          files: |
+            desktop/dist/*.exe
+            desktop/dist/*.blockmap
+            desktop/dist/latest.yml
           body: |
             Aplikasi PC untuk mengendalikan Google Flow (akun Google Anda sendiri) dari satu aplikasi.
 
             **Unduh:**
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
+
+            **Baru di versi ini:** aktivasi dengan kunci lisensi dari situs FLOW CONNECT (menu Lisensi) dan pembaruan otomatis — saat ada versi baru muncul notifikasi "Update sekarang", tanpa instal ulang (versi installer).
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

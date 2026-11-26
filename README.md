@@ -144,6 +144,12 @@ menjalankan uji asap pada aplikasi hasil build, lalu menerbitkan GitHub Release 
 Unduhan tetap: `releases/latest/download/FLOW-CONNECT-Desktop-Setup.exe` (dipakai tombol di Hub).
 Aplikasi belum ditandatangani (code signing), jadi Windows SmartScreen akan memberi peringatan saat instal.
 
+### Lisensi & pembaruan otomatis (v1.1.0+)
+
+- **Lisensi** — pengguna membuat kunci `FC-XXXXX-…` di situs (`/app/lisensi`). Database hanya menyimpan hash SHA-256 kunci (`licenses`, `license_devices`, migrasi `20261127000001_desktop_licenses.sql`). Aplikasi memanggil RPC `activate_license` (anon) saat aktivasi, saat dibuka, dan tiap 6 jam; boleh offline hingga 7 hari. Kunci yang dicabut/kedaluwarsa langsung mengunci aplikasi. Default 3 PC per kunci, 5 kunci aktif per akun. Kunci disimpan terenkripsi (Windows DPAPI via `safeStorage`).
+- **Pembaruan otomatis** — `electron-updater` + GitHub Releases. Workflow mengunggah `latest.yml` + `*.blockmap` bersama `.exe`. Versi installer menampilkan notifikasi “Update sekarang” → unduh di latar → “Mulai ulang & perbarui” (pasang senyap, tanpa instal ulang). Versi portable hanya diberi tahu & diarahkan ke unduhan. Rilis baru = naikkan `version` di `desktop/package.json` lalu merge ke `main`.
+- Halaman situs: `/unduh` (unduhan + panduan), `/contoh` (galeri contoh video/foto/workflow/project beserta prompt & pengaturan).
+
 ## Setup Google OAuth (untuk tombol “Masuk dengan Google”)
 1. [Google Cloud Console](https://console.cloud.google.com/) → buat/pilih project.
 2. *APIs & Services → OAuth consent screen* → User type **External** → isi nama app `FLOW CONNECT`, email support, domain `flow-connect-2qu.pages.dev` → scopes: `openid`, `email`, `profile` → **Publish app** (agar semua akun Google bisa login, bukan hanya test users).

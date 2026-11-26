@@ -5,13 +5,14 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 const invoke = (channel) => (...args) => ipcRenderer.invoke(channel, ...args);
 const CHANNELS = [
   'app:info', 'settings:set', 'auto:ack',
+  'license:activate', 'license:verify', 'license:deactivate', 'update:check', 'update:download', 'update:install',
   'accounts:add', 'accounts:rename', 'accounts:remove', 'accounts:login', 'accounts:connect', 'accounts:disconnect',
   'flow:status', 'flow:show', 'flow:navigate', 'flow:listMedia', 'flow:thumb', 'flow:download', 'flow:send', 'flow:afterSend', 'flow:generate',
   'queue:add', 'queue:remove', 'queue:retry', 'queue:clear', 'queue:start', 'queue:stop',
   'files:pickImages', 'files:register', 'files:preview', 'files:pickFolder', 'files:pickBrowser', 'files:open', 'files:show',
   'files:openDownloads', 'files:forget', 'shell:external'
 ];
-const EVENTS = ['statuses', 'settings', 'queue', 'activity', 'navigate', 'theme', 'accent'];
+const EVENTS = ['statuses', 'settings', 'queue', 'activity', 'navigate', 'theme', 'accent', 'license', 'update'];
 
 const api = {};
 for (const c of CHANNELS) api[c] = invoke(c);

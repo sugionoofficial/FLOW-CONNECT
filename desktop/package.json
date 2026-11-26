@@ -1,7 +1,7 @@
 {
   "name": "flow-connect-desktop",
   "productName": "FLOW CONNECT Desktop",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Aplikasi PC: kendalikan Google Flow (akun Google Anda sendiri) dari satu aplikasi desktop",
   "author": "FLOW CONNECT",
   "license": "MIT",
@@ -71,6 +71,17 @@
       ],
       "category": "Graphics",
       "icon": "build/icon.png"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "sugionoofficial",
+        "repo": "FLOW-CONNECT",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
   }
 }

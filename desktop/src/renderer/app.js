@@ -36,6 +36,18 @@ const ERR = {
   QUEUE_FULL: 'Antrean penuh (maks. 500 tugas).',
   STOPPED: 'Dihentikan.',
   INVALID_URL: 'Alamat tidak diizinkan.',
+  LICENSE_REQUIRED: 'Aktifkan lisensi terlebih dahulu.',
+  INVALID_KEY: 'Kunci lisensi tidak dikenal. Periksa lagi, atau buat kunci baru di situs FLOW CONNECT.',
+  REVOKED: 'Kunci lisensi ini sudah dicabut di situs FLOW CONNECT.',
+  EXPIRED: 'Masa berlaku lisensi sudah habis.',
+  DEVICE_LIMIT: 'Kunci ini sudah dipakai di jumlah PC maksimum. Lepaskan PC lama di situs (Lisensi → Perangkat), lalu coba lagi.',
+  INVALID_DEVICE: 'ID perangkat tidak valid.',
+  NETWORK: 'Tidak bisa terhubung ke server lisensi. Periksa koneksi internet.',
+  OFFLINE_TOO_LONG: 'Lisensi perlu diverifikasi online (sudah lebih dari 7 hari offline). Sambungkan ke internet.',
+  NOT_VERIFIED: 'Lisensi perlu diverifikasi ulang. Sambungkan ke internet.',
+  NO_UPDATE: 'Tidak ada pembaruan.',
+  NOT_READY: 'Pembaruan belum selesai diunduh.',
+  UPDATE_UNSUPPORTED: 'Pembaruan otomatis hanya tersedia di versi installer Windows.',
   FORBIDDEN: 'Tidak diizinkan.'
 };
 const msg = (e) => {
@@ -55,8 +67,13 @@ const S = {
   studio: { images: [], previews: {}, prompt: '', busy: '', waitResults: true, log: [] },
   gallery: { key: '', items: [], loading: false, error: null, thumbs: {}, selected: new Set(), busy: new Set() },
   busy: new Set(),
-  activity: ''
+  activity: '',
+  license: null,
+  update: null,
+  updateHidden: null,
+  gateKey: ''
 };
+const licensed = () => !!S.license && (S.license.state === 'valid' || S.license.state === 'offline');
 const acc = () => (S.settings ? S.settings.accounts.find((a) => a.id === S.settings.activeAccountId) : null);
 const accById = (id) => S.settings.accounts.find((a) => a.id === id);
 const st = (id) => S.statuses[id] || { connected: false };
@@ -354,6 +371,10 @@ const PAGES = {
         ${tog('autoDownload', 'Unduh hasil otomatis', 'Simpan hasil ke folder unduhan, dikelompokkan per akun')}
         ${tog('stopOnError', 'Berhenti bila ada tugas gagal', 'Mencegah percobaan berulang saat ada masalah (mis. kuota habis)')}
       </div>
+      <h2>Lisensi</h2>
+      <div class="rows">${licenseRow()}</div>
+      <h2>Pembaruan</h2>
+      <div class="rows">${updateRow()}</div>
       <h2>Tentang</h2>
       <div class="rows">
         <div class="row">${icon('info', 'lg')}<div class="text"><div class="title">FLOW CONNECT Desktop ${esc(S.info.version)}</div><div class="desc">Tidak berafiliasi dengan Google. Google Flow adalah layanan Google Labs.</div></div>
@@ -361,6 +382,83 @@ const PAGES = {
       </div>`;
   }
 };
+
+// ---------- Lisensi & pembaruan ----------
+const LICENSE_URL = () => S.info.webUrl + '/app/lisensi';
+
+function gatePage() {
+  const l = S.license || {};
+  const err = l.state === 'invalid' ? (ERR[l.error] || l.error) : null;
+  return `
+    <div id="gate" class="gate">
+      <div class="gate-card card">
+        <div class="gate-brand"><img src="icon.png" alt="" width="40" height="40" /><div><h1>Aktivasi FLOW CONNECT</h1><div class="muted">Masukkan kunci lisensi dari situs FLOW CONNECT.</div></div></div>
+        ${err ? infobar('error', 'circle-x', '', esc(err)) : ''}
+        <label class="field"><span>Kunci lisensi</span>
+          <input id="license-key" class="input mono" data-input="gateKey" value="${esc(S.gateKey)}" placeholder="FC-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" spellcheck="false" autocomplete="off" maxlength="40" />
+        </label>
+        <div class="gate-actions">
+          ${btn('licenseActivate', 'Aktifkan', { ic: S.busy.has('licenseActivate') ? 'loader-circle' : 'key-round', cls: 'primary', disabled: S.busy.has('licenseActivate') })}
+          ${btn('external', 'Buat kunci di situs', { ic: 'external-link', cls: 'subtle', data: `data-url="${esc(LICENSE_URL())}"` })}
+        </div>
+        <ol class="steps small">
+          <li><div>Buka <b>${esc(S.info.webUrl.replace('https://', ''))}/app/lisensi</b> dan masuk dengan akun FLOW CONNECT Anda.</div></li>
+          <li><div>Klik <b>Buat kunci lisensi</b>, lalu salin kuncinya.</div></li>
+          <li><div>Tempel di sini dan klik <b>Aktifkan</b>. Satu kunci bisa dipakai di beberapa PC sesuai batasnya.</div></li>
+        </ol>
+        <div class="faint small mono">ID perangkat: ${esc((l.deviceId || '').slice(0, 8))} · v${esc(S.info.version)}</div>
+      </div>
+    </div>`;
+}
+
+function licenseRow() {
+  const l = S.license || {};
+  const i = l.info || {};
+  const offline = l.state === 'offline';
+  const desc = [i.email ? esc(i.email) : '', i.max_devices ? `${i.devices || 1}/${i.max_devices} PC` : '',
+    i.expires_at ? 'berlaku s.d. ' + fmtDate(Date.parse(i.expires_at)) : 'tanpa batas waktu',
+    l.checkedAt ? 'diverifikasi ' + fmtDate(l.checkedAt) : ''].filter(Boolean).join(' · ');
+  return `<div class="row">${icon(offline ? 'cloud-off' : 'badge-check', 'lg')}<div class="text"><div class="title">${esc(i.label || 'Lisensi')} <span class="mono faint">${esc(l.hint || '')}</span> ${offline ? '<span class="badge warn">Offline</span>' : '<span class="badge ok">Aktif</span>'}</div><div class="desc">${desc}${offline && l.graceUntil ? ` · bisa offline s.d. ${fmtDate(l.graceUntil)}` : ''}</div></div>
+    <div class="ctrl">${btn('licenseVerify', 'Periksa', { ic: 'refresh-cw', cls: 'subtle' })}${btn('external', 'Kelola', { ic: 'external-link', cls: 'subtle', data: `data-url="${esc(LICENSE_URL())}"` })}${btn('licenseLogout', 'Keluar', { ic: 'log-out' })}</div></div>`;
+}
+
+function updateText(u) {
+  if (!u) return '';
+  return {
+    unsupported: 'Pembaruan otomatis aktif di versi installer Windows.',
+    idle: 'Aplikasi memeriksa pembaruan secara otomatis.',
+    checking: 'Memeriksa pembaruan…',
+    none: `Anda memakai versi terbaru${u.checkedAt ? ' (diperiksa ' + fmtTime(u.checkedAt) + ')' : ''}.`,
+    available: `Versi ${esc(u.version)} tersedia.`,
+    downloading: `Mengunduh versi ${esc(u.version)}… ${u.percent}%`,
+    ready: `Versi ${esc(u.version)} siap dipasang.`,
+    error: 'Gagal memeriksa pembaruan: ' + esc(u.error || '')
+  }[u.state] || '';
+}
+
+function updateRow() {
+  const u = S.update || {};
+  const action = u.state === 'available' ? btn('updateDownload', u.portable ? 'Unduh versi baru' : 'Update sekarang', { ic: 'circle-arrow-down', cls: 'primary' })
+    : u.state === 'ready' ? btn('updateInstall', 'Mulai ulang & perbarui', { ic: 'rotate-ccw', cls: 'primary' })
+    : btn('updateCheck', 'Periksa pembaruan', { ic: u.state === 'checking' ? 'loader-circle' : 'refresh-cw', disabled: u.state === 'checking' || u.state === 'downloading' || u.state === 'unsupported' });
+  return `<div class="row">${icon('circle-arrow-down', 'lg')}<div class="text"><div class="title">Versi ${esc(S.info.version)}${u.portable ? ' (portable)' : ''}</div><div class="desc">${updateText(u)}</div>${u.state === 'downloading' ? `<progress class="progress" max="100" value="${u.percent}"></progress>` : ''}</div><div class="ctrl">${action}</div></div>`;
+}
+
+function updateBanner() {
+  const u = S.update;
+  if (!u || !['available', 'downloading', 'ready'].includes(u.state)) return '';
+  if (u.state === 'available' && S.updateHidden === u.version) return '';
+  if (u.state === 'available') {
+    return infobar('success update-bar', 'circle-arrow-down', `Pembaruan versi ${esc(u.version)} tersedia.`,
+      u.portable ? ' Anda memakai versi portable: unduh file baru lalu ganti file lama.' : ' Diunduh di latar belakang lalu dipasang otomatis — tidak perlu instal ulang.',
+      btn('updateDownload', u.portable ? 'Unduh' : 'Update sekarang', { ic: 'circle-arrow-down', cls: 'primary' }) + btn('updateHide', 'Nanti', { cls: 'subtle' }));
+  }
+  if (u.state === 'downloading') {
+    return infobar('update-bar', 'loader-circle', `Mengunduh pembaruan ${esc(u.version)}… ${u.percent}%`, `<progress class="progress" max="100" value="${u.percent}"></progress>`);
+  }
+  return infobar('success update-bar', 'circle-check', `Pembaruan ${esc(u.version)} siap.`, ' Aplikasi akan ditutup sebentar, diperbarui, lalu dibuka kembali. Pengaturan & akun tetap tersimpan.',
+    btn('updateInstall', 'Mulai ulang & perbarui', { ic: 'rotate-ccw', cls: 'primary' }));
+}
 
 // ---------- Render ----------
 function renderNav() {
@@ -383,13 +481,26 @@ function renderStatus() {
 
 function render() {
   if (!S.info) return;
+  const gated = !licensed();
+  document.body.classList.toggle('gated', gated);
+  if (gated) {
+    const ae = document.activeElement;
+    const keepFocus = ae && ae.id === 'license-key' ? { s: ae.selectionStart, e: ae.selectionEnd } : null;
+    $('#nav-items').innerHTML = '';
+    $('#nav-bottom').innerHTML = '';
+    $('#statusbar').innerHTML = `<span>FLOW CONNECT Desktop</span><span class="grow"></span><span>v${esc(S.info.version)}</span>`;
+    $('#page').innerHTML = updateBanner() + gatePage();
+    const inp = $('#license-key');
+    if (inp && (keepFocus || !ae || ae === document.body || ae === $('#page'))) { inp.focus(); if (keepFocus) inp.setSelectionRange(keepFocus.s, keepFocus.e); }
+    return;
+  }
   // pertahankan fokus & posisi kursor saat render ulang
   const ae = document.activeElement;
   const keep = ae && ae.id && $('#page').contains(ae) ? { id: ae.id, s: ae.selectionStart, e: ae.selectionEnd } : null;
   const scroll = $('#page').scrollTop;
   renderNav();
   renderStatus();
-  $('#page').innerHTML = PAGES[S.page]();
+  $('#page').innerHTML = updateBanner() + PAGES[S.page]();
   $('#page').scrollTop = scroll;
   if (keep) {
     const el = document.getElementById(keep.id);
@@ -653,6 +764,47 @@ const ACTIONS = {
   queueRemove: async (el) => { S.queue = await call('queue:remove', el.dataset.id); render(); },
   queueRetry: async (el) => { S.queue = await call('queue:retry', el.dataset.id); render(); },
 
+  // Lisensi
+  licenseActivate: () => busy('licenseActivate', async () => {
+    const key = (S.gateKey || '').trim();
+    if (!key) { toast('Tempel kunci lisensi terlebih dahulu.', 'err'); return; }
+    S.license = await call('license:activate', key);
+    S.gateKey = '';
+    S.settings = (await call('app:info')).settings;
+    toast(`Lisensi aktif${S.license.info && S.license.info.email ? ' — ' + S.license.info.email : ''}. Selamat bekerja!`, 'ok');
+    go('home');
+  }),
+  licenseVerify: () => busy('licenseVerify', async () => {
+    S.license = await call('license:verify');
+    if (S.license.state === 'valid') toast('Lisensi valid.', 'ok');
+    else if (S.license.state === 'offline') toast(ERR.NETWORK, 'err');
+    render();
+  }),
+  licenseLogout: async () => {
+    const r = await dialog({
+      title: 'Keluar dari lisensi?',
+      body: '<p>Aplikasi akan terkunci sampai kunci lisensi dimasukkan lagi. Slot PC ini dilepas sehingga kunci bisa dipakai di PC lain. Akun Google &amp; pengaturan tetap tersimpan.</p>',
+      buttons: [{ label: 'Keluar', value: 'ok', primary: true }, { label: 'Batal', value: 'cancel' }]
+    });
+    if (!r) return;
+    S.license = await call('license:deactivate');
+    render();
+  },
+
+  // Pembaruan
+  updateCheck: async () => {
+    S.update = await call('update:check');
+    if (S.update.state === 'none') toast('Anda sudah memakai versi terbaru.', 'ok');
+    render();
+  },
+  updateDownload: async () => {
+    S.update = await call('update:download');
+    if (S.update.portable) toast('Halaman unduhan dibuka di browser. Ganti file portable lama dengan yang baru.', 'info');
+    render();
+  },
+  updateHide: () => { S.updateHidden = S.update && S.update.version; render(); },
+  updateInstall: async () => { await call('update:install'); },
+
   // Pengaturan
   pickFolder: async () => { S.settings = await call('files:pickFolder'); render(); }
 };
@@ -781,6 +933,7 @@ document.addEventListener('change', (e) => {
   if (fn) Promise.resolve(fn(el)).catch((err) => toast(msg(err), 'err'));
 });
 document.addEventListener('input', (e) => {
+  if (e.target.dataset && e.target.dataset.input === 'gateKey') { S.gateKey = e.target.value; return; }
   if (e.target.dataset && e.target.dataset.input === 'prompt') {
     S.studio.prompt = e.target.value;
     const c = $('#count');
@@ -806,6 +959,7 @@ document.addEventListener('drop', (e) => {
 
 // pintasan papan ketik
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target && e.target.id === 'license-key') { e.preventDefault(); ACTIONS.licenseActivate(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && S.page === 'studio') {
     e.preventDefault();
     (isAuto() ? ACTIONS.sendGenerate : ACTIONS.send)();
@@ -833,6 +987,8 @@ async function init() {
   S.settings = S.info.settings;
   S.statuses = S.info.statuses || {};
   S.queue = S.info.queue;
+  S.license = S.info.license;
+  S.update = S.info.update;
   document.documentElement.style.setProperty('--accent', S.info.accent);
   document.body.classList.add('platform-' + S.info.platform);
   render();
@@ -847,8 +1003,24 @@ async function init() {
     render();
   });
   fc.on('activity', (t) => { S.activity = t; const el = $('#act-text'); if (el) el.textContent = t; renderStatus(); });
+  fc.on('license', (l) => {
+    const was = licensed();
+    S.license = l;
+    if (was && !licensed()) toast(ERR[l.error] || 'Lisensi tidak aktif.', 'err');
+    if (was !== licensed() || !S.busy.size) render();
+  });
+  fc.on('update', (u) => {
+    S.update = u;
+    if (u.state === 'downloading' && $('.update-bar progress')) {
+      $('.update-bar progress').value = u.percent;
+      const b = $('.update-bar .text b'); if (b) b.textContent = `Mengunduh pembaruan ${u.version}… ${u.percent}%`;
+      return;
+    }
+    render();
+  });
   fc.on('accent', (c) => document.documentElement.style.setProperty('--accent', c));
   fc.on('navigate', (p) => {
+    if (!licensed()) return;
     if (p === 'accounts:add') { go('accounts'); ACTIONS.addAccount(); }
     else if (p === 'studio:pick') { go('studio'); ACTIONS.pickImages(); }
     else if (p === 'help') helpDialog();

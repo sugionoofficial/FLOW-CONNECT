@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { Logo } from '../Logo'
 
 export function Footer() {
@@ -9,10 +10,12 @@ export function Footer() {
           <p className="mt-3 max-w-xs text-sm text-white/45">Pintu masuk ke Google Flow dengan banyak akun Google.</p>
         </div>
         <div className="flex flex-wrap gap-x-8 gap-y-3 text-sm text-white/55">
-          <a href="#model" className="hover:text-white">Model</a>
-          <a href="#tools" className="hover:text-white">Tools</a>
-          <a href="#karya" className="hover:text-white">Karya</a>
-          <a href="#faq" className="hover:text-white">FAQ</a>
+          <a href="/#model" className="hover:text-white">Model</a>
+          <a href="/#tools" className="hover:text-white">Tools</a>
+          <Link to="/contoh" className="hover:text-white">Contoh</Link>
+          <Link to="/unduh" className="hover:text-white">Unduh Aplikasi PC</Link>
+          <Link to="/app/lisensi" className="hover:text-white">Lisensi</Link>
+          <a href="/#faq" className="hover:text-white">FAQ</a>
           <span>Privasi</span>
           <span>Syarat</span>
         </div>

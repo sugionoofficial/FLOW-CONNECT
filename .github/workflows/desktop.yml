@@ -106,7 +106,7 @@ jobs:
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
 
-            **Baru di versi ini:** pemberitahuan pembaruan kini muncul otomatis (bilah di aplikasi, notifikasi Windows, lencana "Update" di Pengaturan) tanpa perlu klik "Periksa pembaruan" — diperiksa saat aplikasi dibuka, tiap 30 menit, saat jendela dibuka kembali / PC bangun, dan dicoba ulang cepat bila internet belum siap. Sebelumnya (v1.3.1): thumbnail galeri gambar tampil, referensi unggahan disembunyikan dari galeri.
+            **Baru di versi ini:** model disesuaikan dengan Google Flow saat ini — Gambar: Nano Banana 2.1 (bawaan, tanpa batas / 0 kredit), Nano Banana Pro, Nano Banana 2 Lite; Video: Omni 1.2 Flash, Omni 1.1 Flash, Veo 3.1 Lite / Fast / Quality. Video kini punya 2 mode: **Frame** (wajib foto awal & foto akhir) dan **Bahan**. Durasi otomatis mengikuti model: Omni 10 detik, Veo 8 detik. Sebelumnya (v1.3.2): notifikasi pembaruan muncul otomatis.
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

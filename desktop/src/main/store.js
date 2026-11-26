@@ -3,8 +3,10 @@
 const fs = require('fs');
 const path = require('path');
 
+const { DEFAULT_MODEL, VIDEO_SUBS, DEFAULT_SUB, modelFor, durationFor } = require('./catalog');
+
 const SCHEMA = 2;
-const STUDIO = { kind: 'video', sub: 'text', model: 'auto', ratio: '16:9', count: 1, duration: 0, apply: true };
+const STUDIO = { kind: 'video', sub: DEFAULT_SUB, model: DEFAULT_MODEL.video, models: { ...DEFAULT_MODEL }, ratio: '16:9', count: 1, duration: durationFor('video', DEFAULT_MODEL.video), apply: true };
 
 const DEFAULTS = {
   schema: SCHEMA,
@@ -26,15 +28,35 @@ const DEFAULTS = {
   license: null            // { key (terenkripsi), hint, info, checkedAt, error }
 };
 
-/** Validasi setelan Studio → setelan Flow (mode, model, rasio, jumlah, durasi). */
+const cleanModel = (m) => String(m).replace(/[<>"`]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
+
+/**
+ * Validasi setelan Studio → setelan Flow (mode, model, rasio, jumlah, durasi).
+ * - Video hanya punya mode Frame / Bahan (mode "Teks" lama → Bahan).
+ * - Model harus model yang ada di Flow; selain itu → bawaan (gambar: Nano Banana 2.1).
+ * - Model terakhir diingat per jenis (pindah Video ↔ Gambar tidak menghapus pilihan).
+ * - Durasi mengikuti model: Omni 10 dtk, Veo 8 dtk.
+ */
 function sanitizeStudio(p = {}, base = STUDIO) {
-  const o = { ...base };
+  const o = { ...STUDIO, ...base };
   if (['video', 'image'].includes(p.kind)) o.kind = p.kind;
-  if (['text', 'frames', 'ingredients'].includes(p.sub)) o.sub = p.sub;
-  if (typeof p.model === 'string') o.model = p.model.replace(/[<>"`]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60) || 'auto';
+  if (VIDEO_SUBS.includes(p.sub)) o.sub = p.sub;
+  if (!VIDEO_SUBS.includes(o.sub)) o.sub = DEFAULT_SUB;
+  const models = { ...DEFAULT_MODEL };
+  for (const src of [base.models, p.models]) {
+    if (!src || typeof src !== 'object') continue;
+    for (const k of ['image', 'video']) if (typeof src[k] === 'string') models[k] = modelFor(k, cleanModel(src[k]));
+  }
+  // model eksplisit (atau model lama) dipakai bila cocok dengan jenisnya; selain itu model terakhir jenis ini
+  const raw = typeof p.model === 'string' ? cleanModel(p.model) : (p.kind && p.kind !== base.kind ? '' : cleanModel(o.model || ''));
+  const fit = modelFor(o.kind, raw);
+  o.model = fit === DEFAULT_MODEL[o.kind] && raw.toLowerCase().replace(/[^a-z0-9]/g, '') !== fit.toLowerCase().replace(/[^a-z0-9]/g, '') ? models[o.kind] : fit;
+  models[o.kind] = o.model;
+  o.models = models;
   if (typeof p.ratio === 'string' && /^(16:9|9:16|1:1|4:3|3:4)$/.test(p.ratio)) o.ratio = p.ratio;
+  if (o.kind === 'video' && !['16:9', '9:16'].includes(o.ratio)) o.ratio = '16:9';
   if ([1, 2, 3, 4].includes(Number(p.count))) o.count = Number(p.count);
-  if ([0, 4, 6, 8].includes(Number(p.duration))) o.duration = Number(p.duration);
+  o.duration = durationFor(o.kind, o.model);
   if (typeof p.apply === 'boolean') o.apply = p.apply;
   return o;
 }

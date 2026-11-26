@@ -80,6 +80,7 @@ const ERR = {
   UPLOAD_REJECTED: 'Google Flow menolak gambar referensi (terlalu kecil, format tidak didukung, atau melanggar kebijakan).',
   REFERENCE_NOT_ATTACHED: 'Gambar referensi sudah diunggah tetapi tidak bisa ditandai dengan @ di prompt Flow. Generate dibatalkan agar tidak menghasilkan gambar kosong.',
   REFERENCE_LOST: 'Penanda @ di prompt Flow hilang saat menyusun prompt. Coba lagi.',
+  FRAMES_REQUIRED: 'Mode Frame wajib 2 foto: frame awal dan frame akhir.',
   FRAME_SLOT_NOT_FOUND: 'Slot frame awal/akhir tidak ditemukan di Google Flow.',
   FRAME_NOT_ATTACHED: 'Gambar tidak bisa dipasang sebagai frame di Google Flow.',
   GENERATE_FAILED: 'Google Flow gagal membuat hasil.',
@@ -131,10 +132,15 @@ const normText = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '')
 
 // ---------- Katalog setelan Google Flow (nama sesuai label di Flow) ----------
 const MODELS = {
-  video: [['Veo 3.1 - Fast', 'Cepat · hemat kredit'], ['Veo 3.1 - Quality', 'Kualitas tertinggi'], ['Veo 3.1 - Lite', 'Paling hemat'], ['Gemini Omni Flash', 'Klip 10 dtk · edit percakapan'], ['Veo 2 - Fast', 'Tanpa audio'], ['Veo 2 - Quality', 'Tanpa audio']],
-  image: [['Nano Banana 2', 'Bawaan · cepat'], ['Nano Banana Pro', 'Detail tinggi'], ['Imagen 4', 'Fotorealistis']]
+  video: [['Omni 1.2 Flash', 'Terbaru · 10 dtk'], ['Omni 1.1 Flash', '10 dtk · dihentikan 5 Des'], ['Veo 3.1 - Lite', 'Paling hemat · 8 dtk'], ['Veo 3.1 - Fast', '8 dtk · dihentikan 5 Des'], ['Veo 3.1 - Quality', 'Kualitas tertinggi · 8 dtk · dihentikan 5 Des']],
+  image: [['Nano Banana 2.1', 'Bawaan · tanpa batas (0 kredit)'], ['Nano Banana Pro', 'Detail tinggi'], ['Nano Banana 2 Lite', 'Ringan · cepat']]
 };
-const SUBS = [['text', 'Teks', 'type', 'Teks ke Video'], ['frames', 'Frame', 'film', 'Frame ke Video'], ['ingredients', 'Bahan', 'layers', 'Bahan ke Video']];
+const DEFAULT_MODEL = { video: 'Omni 1.2 Flash', image: 'Nano Banana 2.1' };
+const KIND_RE = { video: /veo|omni/i, image: /nano|banana/i };
+// durasi mengikuti model: semua Omni 10 detik, semua Veo 8 detik
+const durationFor = (kind, model) => (kind !== 'video' ? 0 : /omni/i.test(model) ? 10 : /veo/i.test(model) ? 8 : 0);
+const SUBS = [['frames', 'Frame', 'film', 'Frame ke Video', 'Wajib foto awal & foto akhir'], ['ingredients', 'Bahan', 'layers', 'Bahan ke Video', 'Karakter, objek, gaya']];
+const isFrames = (o) => o.kind === 'video' && o.sub === 'frames';
 const RATIOS = { video: ['16:9', '9:16'], image: ['16:9', '9:16', '1:1', '4:3', '3:4'] };
 const opts = () => S.settings.studio;
 function modelList(kind) {
@@ -143,12 +149,12 @@ function modelList(kind) {
   const list = MODELS[kind].map(([v, d]) => ({ v, d }));
   if (fo && fo.models) {
     for (const m of fo.models) {
-      if ((kind === 'image') !== /imagen|nano|banana/i.test(m)) continue;
+      if (!KIND_RE[kind].test(m)) continue;
       if (!list.some((x) => normText(x.v) === normText(m))) list.push({ v: m, d: 'Dibaca dari Flow' });
     }
   }
   const cur = opts().model;
-  if (cur !== 'auto' && !list.some((x) => x.v === cur) && (kind === 'image') === /imagen|nano|banana/i.test(cur)) list.push({ v: cur, d: '' });
+  if (cur && !list.some((x) => x.v === cur) && KIND_RE[kind].test(cur)) list.push({ v: cur, d: '' });
   return list;
 }
 
@@ -216,7 +222,7 @@ const PAGES = {
             ${btn('help', 'Cara kerja', { ic: 'circle-help', cls: 'ghost lg' })}
           </div>
         </div>
-        <div class="hero-art" aria-hidden="true"><div class="orb o1"></div><div class="orb o2"></div><div class="glass-card">${icon('clapperboard', 'xl')}<div><b>Veo 3.1</b><span>16:9 · x2 · 8 dtk</span></div></div><div class="glass-card two">${icon('image', 'xl')}<div><b>Nano Banana</b><span>Gambar · 1:1</span></div></div></div>
+        <div class="hero-art" aria-hidden="true"><div class="orb o1"></div><div class="orb o2"></div><div class="glass-card">${icon('clapperboard', 'xl')}<div><b>Omni 1.2 Flash</b><span>16:9 · x2 · 10 dtk</span></div></div><div class="glass-card two">${icon('image', 'xl')}<div><b>Nano Banana 2.1</b><span>Gambar · 1:1</span></div></div></div>
       </section>
       ${nb ? infobar('error', 'circle-x', 'Browser tidak ditemukan.', ' Instal Google Chrome atau Microsoft Edge, lalu buka ulang aplikasi.', btn('external', 'Unduh Chrome', { ic: 'external-link', data: 'data-url="https://www.google.com/chrome"' })) : ''}
       <div class="grid c3">
@@ -245,7 +251,7 @@ const PAGES = {
         <ol class="steps">
           <li><div><b>Tambah akun &amp; masuk ke Google</b><div class="muted small">Kartu login kecil berisi halaman login Google asli terbuka. Aplikasi tidak menyentuh halaman itu — kata sandi hanya Anda yang mengetik.</div></div></li>
           <li><div><b>Otomatis masuk ke Flow &amp; buat project</b><div class="muted small">Kartu tertutup sendiri, Flow dibuka di latar belakang (tanpa jendela), lalu tombol "New project" ditekan untuk Anda.</div></div></li>
-          <li><div><b>Pilih mode, model &amp; rasio di Studio</b><div class="muted small">Video (Teks / Frame / Bahan) atau Gambar, Veo 3.1 / Nano Banana / Imagen, 16:9 / 9:16, x1–x4 — diterapkan ke setelan Flow sebelum Generate.</div></div></li>
+          <li><div><b>Pilih mode, model &amp; rasio di Studio</b><div class="muted small">Video (Frame / Bahan) atau Gambar, Omni / Veo 3.1 / Nano Banana, 16:9 / 9:16, x1–x4 — diterapkan ke setelan Flow sebelum Generate.</div></div></li>
           <li><div><b>Generate &amp; lihat hasilnya di sini</b><div class="muted small">Pratinjau besar, galeri project, dan unduh otomatis ke PC.</div></div></li>
         </ol>
       </div>`;
@@ -294,9 +300,12 @@ const PAGES = {
     const busy = S.studio.busy;
     const video = o.kind === 'video';
     const chip = (k, v, label, ic, title) => `<button class="chip ${String(o[k]) === String(v) ? 'on' : ''}" data-act="studioOpt" data-k="${k}" data-v="${v}" ${title ? `title="${esc(title)}"` : ''}>${ic ? icon(ic) : ''}<span>${label}</span></button>`;
-    const refLabel = !video ? 'Gambar referensi' : o.sub === 'frames' ? 'Frame awal &amp; akhir' : o.sub === 'ingredients' ? 'Bahan (karakter, objek, gaya)' : 'Gambar referensi';
+    const frames = isFrames(o);
+    const refLabel = !video ? 'Gambar referensi' : frames ? 'Frame awal &amp; akhir <span class="badge warn">Wajib</span>' : 'Bahan (karakter, objek, gaya)';
     const tags = refTags(imgs);
-    const refHint = !video ? (imgs.length ? 'Ketik @ di prompt untuk menunjuk gambar.' : 'Opsional — untuk edit / gaya.') : o.sub === 'ingredients' && imgs.length ? 'Ketik @ di prompt untuk menunjuk bahan.' : o.sub === 'frames' ? 'Gambar ke-1 = frame awal, ke-2 = frame akhir.' : o.sub === 'ingredients' ? 'Maks. 3 bahan agar konsisten antar adegan.' : 'Opsional. Untuk animasi gambar, pilih "Frame".';
+    const refHint = !video ? (imgs.length ? 'Ketik @ di prompt untuk menunjuk gambar.' : 'Opsional — untuk edit / gaya.') : frames ? (imgs.length > 2 ? 'Mode Frame hanya memakai 2 foto — hapus foto lainnya.' : 'Foto ke-1 = frame awal, ke-2 = frame akhir.') : imgs.length ? 'Ketik @ di prompt untuk menunjuk bahan.' : 'Maks. 3 bahan agar konsisten antar adegan.';
+    const framesOk = !frames || imgs.length === 2;
+    const dur = durationFor(o.kind, o.model);
     const models = modelList(o.kind);
     const g = S.gallery;
     const items = g.key ? g.items : [];
@@ -322,38 +331,39 @@ const PAGES = {
             <button class="seg-btn ${video ? 'on' : ''}" data-act="studioOpt" data-k="kind" data-v="video" role="tab" aria-selected="${video}">${icon('clapperboard')}<span>Video</span></button>
             <button class="seg-btn ${!video ? 'on' : ''}" data-act="studioOpt" data-k="kind" data-v="image" role="tab" aria-selected="${!video}">${icon('image')}<span>Gambar</span></button>
           </div>
-          ${video ? `<div class="chips modes">${SUBS.map(([v, l, ic, t]) => chip('sub', v, l, ic, t)).join('')}</div>` : ''}
+          ${video ? `<div class="chips modes">${SUBS.map(([v, l, ic, t, d]) => chip('sub', v, l, ic, `${t} — ${d}`)).join('')}</div>` : ''}
           <div class="prompt-wrap">
             <textarea id="prompt" class="input prompt" rows="6" maxlength="8000" placeholder="${video ? 'Kamera drone perlahan maju di atas sawah terasering Bali saat matahari terbit, kabut tipis, sinematik…' : 'Foto produk kopi susu gula aren di meja kayu, cahaya pagi, gaya editorial…'}" data-input="prompt">${esc(S.studio.prompt)}</textarea>
             <div class="mention-pop" id="mention-pop" role="listbox" hidden></div>
             <div class="prompt-foot"><span class="faint small" id="count">${S.studio.prompt.length}/8000</span><span class="faint small">${imgs.length ? '@ = tandai gambar · ' : ''}Ctrl+Enter</span></div>
           </div>
           <div class="refs">
-            <div class="refs-head"><b>${refLabel}</b><span class="faint small">${refHint}</span><span class="right faint small">${imgs.length}/10</span></div>
+            <div class="refs-head"><b>${refLabel}</b><span class="faint small ${frames && !framesOk ? 'warn-text' : ''}">${refHint}</span><span class="right faint small">${imgs.length}/${frames ? 2 : 10}</span></div>
             <div class="ref-row" id="drop">
-              ${imgs.map((p, i) => `<div class="thumb" title="${esc(p)}">${S.studio.previews[p] ? `<img src="${S.studio.previews[p]}" alt="">` : icon('file-image', 'lg')}${video && o.sub === 'frames' && i < 2 ? `<span class="tag">${i ? 'Akhir' : 'Awal'}</span>` : `<button class="reftag" data-act="insertTag" data-tag="${esc(tags[i])}" title="Sisipkan @${esc(tags[i])} ke prompt">@${esc(tags[i])}</button>`}${btn('removeImage', '', { ic: 'x', cls: 'x sm', title: 'Hapus', data: `data-i="${i}"` })}</div>`).join('')}
-              <button class="thumb add" data-act="pickImages" title="Tambah gambar (atau seret ke sini)">${icon('image-plus', 'lg')}<span class="small">Tambah</span></button>
+              ${imgs.map((p, i) => `<div class="thumb ${frames && i > 1 ? 'extra' : ''}" title="${esc(p)}">${S.studio.previews[p] ? `<img src="${S.studio.previews[p]}" alt="">` : icon('file-image', 'lg')}${frames ? `<span class="tag">${i === 0 ? 'Awal' : i === 1 ? 'Akhir' : 'Tidak dipakai'}</span>` : `<button class="reftag" data-act="insertTag" data-tag="${esc(tags[i])}" title="Sisipkan @${esc(tags[i])} ke prompt">@${esc(tags[i])}</button>`}${btn('removeImage', '', { ic: 'x', cls: 'x sm', title: 'Hapus', data: `data-i="${i}"` })}</div>`).join('')}
+              ${frames
+                ? [0, 1].filter((i) => i >= imgs.length).map((i) => `<button class="thumb add slot" data-act="pickImages" title="Pilih foto ${i ? 'akhir' : 'awal'}">${icon('image-plus', 'lg')}<span class="small">Frame ${i ? 'akhir' : 'awal'}</span></button>`).join('')
+                : `<button class="thumb add" data-act="pickImages" title="Tambah gambar (atau seret ke sini)">${icon('image-plus', 'lg')}<span class="small">Tambah</span></button>`}
             </div>
           </div>
           <div class="opts ${o.apply ? '' : 'off'}">
             <div class="opt wide"><span class="opt-l">${icon('cpu')} Model</span>
               <select class="input" data-change="studioModel" ${o.apply ? '' : 'disabled'} aria-label="Model">
-                <option value="auto" ${o.model === 'auto' ? 'selected' : ''}>Bawaan Flow (tidak diubah)</option>
                 ${models.map((m) => `<option value="${esc(m.v)}" ${o.model === m.v ? 'selected' : ''}>${esc(m.v)}${m.d ? ' — ' + esc(m.d) : ''}</option>`).join('')}
               </select>
               ${a && s.connected ? btn('studioScan', '', { ic: S.busy.has('studioScan') ? 'loader-circle' : 'scan-search', cls: 'subtle icon', title: 'Baca daftar model dari Google Flow', disabled: !!busy }) : ''}
             </div>
             <div class="opt"><span class="opt-l">${icon('ratio')} Rasio</span><div class="chips">${RATIOS[o.kind].map((r) => chip('ratio', r, r)).join('')}</div></div>
             <div class="opt"><span class="opt-l">${icon('hash')} Jumlah</span><div class="chips">${[1, 2, 3, 4].map((n) => chip('count', n, 'x' + n)).join('')}</div></div>
-            ${video ? `<div class="opt"><span class="opt-l">${icon('timer')} Durasi</span><div class="chips">${chip('duration', 0, 'Bawaan', '', 'Pakai durasi bawaan Flow')}${[4, 6, 8].map((n) => chip('duration', n, n + ' dtk')).join('')}</div></div>` : ''}
+            ${video ? `<div class="opt"><span class="opt-l">${icon('timer')} Durasi</span><div class="chips dur-row">${dur ? `<span class="chip on" id="dur-chip" title="Durasi tetap untuk ${esc(o.model)}">${dur} dtk</span>` : '<span class="chip on">Bawaan Flow</span>'}<span class="faint small">${/omni/i.test(o.model) ? 'Omni selalu 10 detik' : /veo/i.test(o.model) ? 'Veo selalu 8 detik' : ''}</span></div></div>` : ''}
           </div>
           <label class="switch apply"><input type="checkbox" data-change="studioApply" ${o.apply ? 'checked' : ''}><span class="small">Terapkan setelan ini ke Google Flow sebelum ${isAuto() ? 'Generate' : 'mengirim'}</span></label>
           <div class="actionbar cta-bar">
             ${isAuto()
-              ? btn('sendGenerate', busy === 'generate' ? 'Membuat…' : 'Generate', { ic: busy === 'generate' ? 'loader-circle' : 'sparkles', cls: 'cta', disabled: !ready || !!busy }) +
+              ? btn('sendGenerate', busy === 'generate' ? 'Membuat…' : 'Generate', { ic: busy === 'generate' ? 'loader-circle' : 'sparkles', cls: 'cta', disabled: !ready || !!busy || !framesOk, title: framesOk ? '' : ERR.FRAMES_REQUIRED }) +
                 btn('queueAdd', 'Antrean', { ic: 'list-plus', disabled: !a || !!busy, title: 'Tambah ke antrean otomatis' }) +
                 `<label class="check small"><input type="checkbox" data-change="waitResults" ${S.studio.waitResults ? 'checked' : ''}> Tunggu hasil${S.settings.auto.autoDownload ? ' &amp; unduh' : ''}</label>`
-              : btn('send', busy === 'send' ? 'Mengirim…' : 'Kirim ke Flow', { ic: busy === 'send' ? 'loader-circle' : 'send', cls: 'cta', disabled: !ready || !!busy }) +
+              : btn('send', busy === 'send' ? 'Mengirim…' : 'Kirim ke Flow', { ic: busy === 'send' ? 'loader-circle' : 'send', cls: 'cta', disabled: !ready || !!busy || !framesOk, title: framesOk ? '' : ERR.FRAMES_REQUIRED }) +
                 `<span class="muted small grow">Mode Aman: jendela Flow muncul agar Anda menekan Generate. <a data-act="go" data-page="settings">Mode Otomatis</a> menjalankan semuanya tersembunyi.</span>`}
           </div>
         </div>
@@ -723,8 +733,9 @@ function log(text, k = 'info') {
 async function addImages(paths) {
   const list = await call('files:register', paths);
   if (paths.length && !list.length) { toast(ERR.INVALID_IMAGE, 'err'); return; }
+  const max = isFrames(opts()) ? 2 : 10;
   for (const p of list) {
-    if (S.studio.images.length >= 10) { toast('Maksimal 10 gambar.', 'err'); break; }
+    if (S.studio.images.length >= max) { toast(max === 2 ? 'Mode Frame hanya memakai 2 foto: frame awal & frame akhir.' : 'Maksimal 10 gambar.', 'err'); break; }
     if (!S.studio.images.includes(p)) S.studio.images.push(p);
   }
   render();
@@ -749,14 +760,20 @@ function studioSummary() {
   const o = opts();
   if (!o.apply) return 'setelan Flow apa adanya';
   const sub = o.kind === 'video' ? (SUBS.find((x) => x[0] === o.sub) || [])[3] : 'Gambar';
-  return [sub, o.model === 'auto' ? 'model bawaan' : o.model, o.ratio, 'x' + o.count, o.kind === 'video' && o.duration ? o.duration + ' dtk' : ''].filter(Boolean).join(' · ');
+  const d = durationFor(o.kind, o.model);
+  return [sub, o.model, o.ratio, 'x' + o.count, d ? d + ' dtk' : ''].filter(Boolean).join(' · ');
 }
 function setStudio(patch) {
-  const o = { ...opts(), ...patch };
-  if (patch.kind && patch.kind !== opts().kind) {
-    if (o.model !== 'auto' && !modelList(o.kind).some((m) => m.v === o.model)) o.model = 'auto';
+  const prev = opts();
+  const o = { ...prev, ...patch, models: { ...DEFAULT_MODEL, ...(prev.models || {}) } };
+  if (patch.kind && patch.kind !== prev.kind) {
+    // model terakhir per jenis diingat (Video ↔ Gambar)
+    o.model = o.models[o.kind] || DEFAULT_MODEL[o.kind];
     if (!RATIOS[o.kind].includes(o.ratio)) o.ratio = '16:9';
   }
+  if (!o.model || !KIND_RE[o.kind].test(o.model)) o.model = DEFAULT_MODEL[o.kind];
+  o.models[o.kind] = o.model;
+  o.duration = durationFor(o.kind, o.model);
   S.settings.studio = o;
   render();
   call('settings:set', { studio: o }).catch((e) => toast(msg(e), 'err'));
@@ -932,6 +949,7 @@ const ACTIONS = {
   async send() {
     const a = acc();
     if (!a || S.studio.busy) return;
+    if (isFrames(opts()) && S.studio.images.length !== 2) { toast(ERR.FRAMES_REQUIRED, 'err'); return; }
     S.studio.busy = 'send';
     S.activity = 'Mengirim ke Google Flow…';
     render();
@@ -952,6 +970,7 @@ const ACTIONS = {
     const a = acc();
     if (!a || S.studio.busy || !isAuto()) return;
     if (!S.studio.prompt.trim() && !S.studio.images.length) { toast(ERR.NOTHING_TO_SEND, 'err'); return; }
+    if (isFrames(opts()) && S.studio.images.length !== 2) { toast(ERR.FRAMES_REQUIRED, 'err'); return; }
     S.studio.busy = 'generate';
     S.activity = 'Menyiapkan Google Flow…';
     render();

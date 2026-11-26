@@ -11,6 +11,8 @@ const browser = require('./browser');
 const wire = require('./wire');
 const { NetWatch } = require('./netwatch');
 const { parsePrompt, sanitizeTags } = require('./refs');
+const { checkFrames } = require('./catalog');
+const { sanitizeStudio } = require('./store');
 
 const DEFAULT_FLOW_URL = 'https://flow.google.com/';
 const IMAGE_EXT = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.heic': 'image/heic' };
@@ -22,8 +24,16 @@ const rand = (a, b) => a + Math.random() * (b - a);
 const fail = (code, detail, extra) => { const e = new Error(code); if (detail) e.detail = String(detail).slice(0, 300); if (extra) Object.assign(e, extra); return e; };
 const KEYS = {
   Enter: { code: 'Enter', vk: 13, text: '\r' }, Escape: { code: 'Escape', vk: 27 }, Backspace: { code: 'Backspace', vk: 8 },
-  ArrowDown: { code: 'ArrowDown', vk: 40 }, ArrowUp: { code: 'ArrowUp', vk: 38 }, End: { code: 'End', vk: 35 }, Tab: { code: 'Tab', vk: 9 }
+  ArrowDown: { code: 'ArrowDown', vk: 40 }, ArrowUp: { code: 'ArrowUp', vk: 38 }, End: { code: 'End', vk: 35 }, Tab: { code: 'Tab', vk: 9 },
+  Home: { code: 'Home', vk: 36 }, ArrowLeft: { code: 'ArrowLeft', vk: 37 }, ArrowRight: { code: 'ArrowRight', vk: 39 }
 };
+
+/** Setelan tugas → setelan yang sah (model yang ada di Flow, durasi per model, mode Frame/Bahan); cek frame wajib. */
+function jobOptions(job) {
+  const options = job.options ? sanitizeStudio(job.options) : null;
+  checkFrames(options, job.images);
+  return { ...job, options };
+}
 
 const IMG_SUFFIX = /\.(png|jpe?g|webp|gif|heic|heif|avif|bmp)$/i;
 /** Indeks opsi pemilih aset yang judulnya persis `want` (dinormalisasi; ekstensi file diabaikan). -1 bila tidak ada / ganda. */
@@ -501,6 +511,29 @@ class FlowSession extends EventEmitter {
     return true;
   }
 
+  /** Durasi berupa penggeser ("Durasi 10 Dtk"): fokus lalu tombol keyboard asli (End/Home/panah). */
+  async _setDuration(target) {
+    const s0 = await this.call('durationSlider');
+    if (!s0) return false;
+    if (s0.now === target) return true;
+    if (target < s0.min || target > s0.max) return false;
+    await this.call('focusDurationSlider');
+    await sleep(rand(120, 250));
+    if (target === s0.max) await this._key('End');
+    else if (target === s0.min) await this._key('Home');
+    else {
+      for (let i = 0; i < 30; i++) {
+        const s = await this.call('durationSlider');
+        if (!s || s.now === target) break;
+        await this._key(s.now < target ? 'ArrowRight' : 'ArrowLeft');
+        await sleep(rand(80, 160));
+      }
+    }
+    await sleep(rand(250, 400));
+    const s1 = await this.call('durationSlider');
+    return !!s1 && s1.now === target;
+  }
+
   async _openPanel() {
     if (await this.call('overlayOpen')) return true;
     const t = await this.call('settingsTrigger');
@@ -526,7 +559,7 @@ class FlowSession extends EventEmitter {
 
   /**
    * Terapkan setelan Studio ke UI Flow sendiri (klik asli di panel setelan Flow) sebelum Generate.
-   * opts: { kind:'video'|'image', sub:'text'|'frames'|'ingredients', model, ratio:'16:9', count:1-4, duration:4|6|8 }
+   * opts: { kind:'video'|'image', sub:'frames'|'ingredients', model, ratio:'16:9', count:1-4, duration:8|10 }
    * Semua langkah "sebisanya": bila kontrol tidak ditemukan, dilaporkan di `missing` dan Flow memakai setelannya sendiri.
    */
   applySettings(opts = {}) {
@@ -540,7 +573,7 @@ class FlowSession extends EventEmitter {
     if (opts.model && opts.model !== 'auto') want.model = String(opts.model).slice(0, 60);
     if (/^\d{1,2}:\d{1,2}$/.test(opts.ratio || '')) want.ratio = opts.ratio;
     if (Number(opts.count) >= 1 && Number(opts.count) <= 4) want.count = Number(opts.count);
-    if (want.kind !== 'image' && [4, 5, 6, 8, 10].includes(Number(opts.duration))) want.duration = Number(opts.duration);
+    if (want.kind !== 'image' && Number(opts.duration) >= 1 && Number(opts.duration) <= 30) want.duration = Number(opts.duration);
     const applied = {};
     if (!Object.keys(want).length) return { applied, missing: [] };
 
@@ -569,12 +602,12 @@ class FlowSession extends EventEmitter {
       if (want.sub && !applied.sub) {
         const re = { text: '^(text|text to video|teks|teks ke video)$', frames: '^(frames?|frames to video|frame ke video|幀|帧)$', ingredients: '^(ingredients?|ingredients to video|bahan|bahan ke video|素材)$' }[want.sub];
         if (await this._pick({ roles: ['radio', 'tab', 'option', 'menuitemradio', 'button'], re, scope: 'overlay' })) applied.sub = want.sub;
-        else if (want.sub === 'text') applied.sub = 'text'; // UI baru tidak punya sub-mode "teks": prompt tanpa bahan = teks ke video
       }
+      // model dulu: rentang durasi (Omni 10 dtk / Veo 8 dtk) bergantung pada model
+      if (want.model && await this._pickModel(want.model)) applied.model = want.model;
       if (want.ratio && await this._pick({ roles: ['radio', 'tab', 'option', 'menuitemradio', 'button'], re: '(^|[^\\d])' + want.ratio.replace(':', '\\s?:\\s?') + '([^\\d]|$)', scope: 'overlay' })) applied.ratio = want.ratio;
       if (want.count && await this._pick({ roles: ['radio', 'tab', 'option', 'menuitemradio', 'button'], re: '^(x\\s?' + want.count + '|' + want.count + 'x|' + want.count + ' (outputs?|hasil))$', scope: 'overlay' })) applied.count = want.count;
-      if (want.duration && await this._pick({ roles: ['radio', 'tab', 'option', 'menuitemradio', 'button'], re: '^' + want.duration + '\\s?(s|sec|secs|seconds?|detik|dtk|秒)$', scope: 'overlay' })) applied.duration = want.duration;
-      if (want.model && await this._pickModel(want.model)) applied.model = want.model;
+      if (want.duration && (await this._pick({ roles: ['radio', 'tab', 'option', 'menuitemradio', 'button'], re: '^' + want.duration + '\\s?(s|sec|secs|seconds?|detik|dtk|秒)$', scope: 'overlay' }) || await this._setDuration(want.duration))) applied.duration = want.duration;
       await this._closeOverlays();
     } else if (want.model && !applied.model && await this._pickModel(want.model)) {
       applied.model = want.model;
@@ -633,6 +666,7 @@ class FlowSession extends EventEmitter {
    * hooks: { onLog, shouldStop, timeoutMs, wait, onFallback }
    */
   async generate(job, hooks = {}) {
+    job = jobOptions(job);
     const kind = job.options ? job.options.kind : null;
     if (kind === 'image') return require('./skills/image').run(this, job, hooks);
     return this.runGeneration(job, hooks, { kind: kind === 'video' ? 'video' : null });
@@ -704,6 +738,7 @@ class FlowSession extends EventEmitter {
 
   /** MODE AMAN: siapkan Flow (setelan + unggah gambar + prompt ber-"@") — pengguna sendiri yang menekan Generate. */
   async prepare(job, say = () => {}) {
+    job = jobOptions(job);
     await this.beginWork();
     const out = {};
     if (job.options && job.options.apply !== false) out.settings = await this.applySettings(job.options);

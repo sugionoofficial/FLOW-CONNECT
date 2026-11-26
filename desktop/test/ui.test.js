@@ -23,7 +23,7 @@ const MOCK = `(() => {
   ];
   const settings = {
     accounts, activeAccountId: 'a1', theme: 'dark', browser: { prefer: 'auto', customPath: '' }, browserWindow: 'hidden', autoProject: true,
-    studio: { kind: 'video', sub: 'text', model: 'Veo 3.1 - Fast', ratio: '16:9', count: 2, duration: 0, apply: true },
+    studio: { kind: 'video', sub: 'ingredients', model: 'Omni 1.2 Flash', models: { video: 'Omni 1.2 Flash', image: 'Nano Banana 2.1' }, ratio: '16:9', count: 2, duration: 10, apply: true },
     downloadDir: 'C:\\\\Users\\\\Sugiono\\\\Downloads\\\\FLOW CONNECT', mode: 'auto', autoAck: '2026-11-25T00:00:00Z',
     auto: { minDelay: 45, maxDelay: 120, maxPerRun: 10, timeoutMin: 8, autoDownload: true, stopOnError: true },
     downloads: [
@@ -141,16 +141,31 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   await ev(`document.querySelector('[data-page="studio"]').click()`);
   await sleep(300);
   assert.strictEqual(await ev('document.querySelectorAll(".seg-btn").length'), 2);
-  assert.strictEqual(await ev('document.querySelectorAll(".modes .chip").length'), 3, 'mode Teks/Frame/Bahan');
-  assert.ok(await ev('[...document.querySelectorAll("[data-change=studioModel] option")].some((o) => o.value === "Veo 3.1 - Quality")'));
+  const modelOpts = '[...document.querySelectorAll("[data-change=studioModel] option")].map((o) => o.value)';
+  assert.deepStrictEqual(await ev('[...document.querySelectorAll(".modes .chip")].map((c) => c.textContent)'), ['Frame', 'Bahan'], 'video: hanya Frame & Bahan');
+  assert.deepStrictEqual(await ev(modelOpts), ['Omni 1.2 Flash', 'Omni 1.1 Flash', 'Veo 3.1 - Lite', 'Veo 3.1 - Fast', 'Veo 3.1 - Quality'], 'model video Flow');
+  assert.strictEqual(await ev('document.querySelector("#dur-chip").textContent'), '10 dtk', 'Omni: hanya 10 detik');
+  await ev(`(() => { const s = document.querySelector('[data-change=studioModel]'); s.value = 'Omni 1.1 Flash'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await sleep(100);
+  assert.strictEqual(await ev('document.querySelector("#dur-chip").textContent'), '10 dtk');
+  await ev(`(() => { const s = document.querySelector('[data-change=studioModel]'); s.value = 'Veo 3.1 - Quality'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await sleep(100);
+  assert.strictEqual(await ev('document.querySelector("#dur-chip").textContent'), '8 dtk', 'Veo: hanya 8 detik');
+  assert.strictEqual(await ev('__settings.studio.duration'), 8);
+  // mode Frame: wajib foto awal & akhir → tombol Generate nonaktif sampai 2 foto dipilih
   await ev(`document.querySelector('[data-act=studioOpt][data-k=sub][data-v=frames]').click()`);
   await sleep(100);
   assert.strictEqual(await ev('__settings.studio.sub'), 'frames');
+  assert.deepStrictEqual(await ev('[...document.querySelectorAll(".thumb.add.slot")].map((b) => b.textContent.trim())'), ['Frame awal', 'Frame akhir']);
+  assert.ok(await ev('document.querySelector(".refs-head").textContent.includes("Wajib")'));
+  assert.ok(await ev('document.querySelector("[data-act=sendGenerate]").disabled'), 'Generate menunggu 2 foto');
+  if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'dark-studio-frames-empty.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  // gambar: hanya 3 model Nano Banana, bawaan Nano Banana 2.1
   await ev(`document.querySelector('[data-act=studioOpt][data-k=kind][data-v=image]').click()`);
   await sleep(150);
-  assert.strictEqual(await ev('JSON.stringify([__settings.studio.kind, __settings.studio.model])'), JSON.stringify(['image', 'auto']), 'model video direset saat pindah ke gambar');
+  assert.strictEqual(await ev('JSON.stringify([__settings.studio.kind, __settings.studio.model, __settings.studio.duration])'), JSON.stringify(['image', 'Nano Banana 2.1', 0]), 'gambar: bawaan Nano Banana 2.1');
   assert.strictEqual(await ev('document.querySelectorAll(".modes .chip").length'), 0);
-  assert.ok(await ev('[...document.querySelectorAll("[data-change=studioModel] option")].some((o) => o.value === "Nano Banana Pro")'));
+  assert.deepStrictEqual(await ev(modelOpts), ['Nano Banana 2.1', 'Nano Banana Pro', 'Nano Banana 2 Lite'], 'model gambar Flow');
   await ev(`document.querySelector('[data-act=studioOpt][data-k=ratio][data-v="1:1"]').click()`);
   await ev(`document.querySelector('[data-act=studioOpt][data-k=count][data-v="4"]').click()`);
   await sleep(150);
@@ -175,6 +190,11 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'dark-studio-image.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
   await ev(`document.querySelector('[data-act=studioOpt][data-k=kind][data-v=video]').click()`);
   await sleep(100);
+  assert.strictEqual(await ev('__settings.studio.model'), 'Veo 3.1 - Quality', 'model video terakhir diingat');
+  assert.deepStrictEqual(await ev('[...document.querySelectorAll(".thumb .tag")].map((t) => t.textContent)'), ['Awal', 'Akhir'], 'foto ke-1 = awal, ke-2 = akhir');
+  assert.ok(await ev('!document.querySelector("[data-act=sendGenerate]").disabled'), 'Generate aktif dengan 2 frame');
+  if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'dark-studio-frames.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  if (SHOTS) { await ev(`document.querySelector('.opts').scrollIntoView()`); await sleep(100); fs.writeFileSync(path.join(SHOTS, 'dark-studio-duration.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64')); }
   // baca model dari Flow
   await ev(`document.querySelector('[data-act=studioScan]').click()`);
   await sleep(200);

@@ -23,6 +23,7 @@ const DEFAULTS = {
   auto: { minDelay: 45, maxDelay: 120, maxPerRun: 10, timeoutMin: 8, autoDownload: true, stopOnError: true },
   downloads: [],           // { path, name, mediaId, accountId, at }
   uploads: [],             // media id gambar referensi yang diunggah ke Flow (disembunyikan dari galeri)
+  results: {},            // { projectId: [hasil generate dari balasan Flow] } → selalu tampil di galeri/pratinjau
   queue: [],               // tugas Mode Otomatis
   deviceId: null,          // ID acak PC ini (untuk slot perangkat lisensi)
   license: null            // { key (terenkripsi), hint, info, checkedAt, error }

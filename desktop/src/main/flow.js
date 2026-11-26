@@ -96,6 +96,8 @@ class FlowSession extends EventEmitter {
     this.flowHost = new URL(this.flowUrl).host;
     this.agentCfg = o.agentCfg || { mediaHosts: ['flow-content.google', 'lh3.googleusercontent.com'] };
     this.uploads = o.uploads || new Set(); // media id gambar referensi yang diunggah aplikasi (bukan hasil generate)
+    // hasil generate yang dikembalikan Flow ke aplikasi, per project → tetap tampil di galeri walau daftar Flow terlambat/berubah
+    this.known = o.known || new Map();
     this.extraArgs = o.extraArgs || [];
     this.getMode = o.getMode || (() => 'normal');
     this.loginUrl = o.loginUrl || 'https://accounts.google.com/ServiceLogin?continue=' + encodeURIComponent(this.flowUrl.replace(/[?&]hl=[^&]*/, ''));
@@ -350,10 +352,42 @@ class FlowSession extends EventEmitter {
     await this.waitReady();
   }
 
-  /** Isi project Flow: hasil generate saja (gambar referensi yang diunggah disaring), kecuali { uploads: true }. */
-  async listMedia(projectId, { uploads = false } = {}) {
-    const items = await this.call('listMedia', [projectId]);
+  /**
+   * Isi project Flow: hasil generate saja (gambar referensi yang diunggah disaring), kecuali { uploads: true }.
+   * Digabung dengan hasil yang sudah dikembalikan Flow ke aplikasi ({ known: false } untuk daftar Flow saja).
+   */
+  async listMedia(projectId, { uploads = false, known = true } = {}) {
+    let items;
+    const mine = known ? (this.known.get(projectId) || []) : [];
+    try { items = await this.call('listMedia', [projectId]); } catch (e) { if (!mine.length) throw e; items = []; }
+    if (mine.length) {
+      const byId = new Map(items.map((i) => [i.mediaId, i]));
+      for (const k of mine) {
+        const cur = byId.get(k.mediaId);
+        if (cur) { // lengkapi data daftar Flow dengan URL dari balasan generate
+          if (!cur.image && k.image) cur.image = k.image;
+          if (!cur.video && k.video) cur.video = k.video;
+          if (!cur.done && (k.image || k.video) && !cur.isVideo) cur.done = true;
+        } else items.push({ ...k });
+      }
+      items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    }
     return uploads ? items : items.filter((i) => !this.uploads.has(i.mediaId) && !UPLOAD_TITLE.test((i.title || '').trim()));
+  }
+
+  /** Catat hasil generate yang dikembalikan Flow (maks. 200 per project). */
+  _remember(projectId, items) {
+    if (!projectId || !Array.isArray(items) || !items.length) return;
+    const now = Date.now();
+    const list = (this.known.get(projectId) || []).slice();
+    items.forEach((it, i) => {
+      if (!it || !/^[A-Za-z0-9-]{1,128}$/.test(it.mediaId || '') || this.uploads.has(it.mediaId)) return;
+      const rec = { mediaId: it.mediaId, title: String(it.title || '').slice(0, 80), isVideo: !!it.isVideo, done: true, image: it.image || null, video: it.video || null, createdAt: it.createdAt || now - i };
+      const at = list.findIndex((x) => x.mediaId === rec.mediaId);
+      if (at >= 0) list[at] = { ...list[at], ...rec, createdAt: list[at].createdAt || rec.createdAt }; else list.unshift(rec);
+    });
+    this.known.set(projectId, list.slice(0, 200));
+    this.emit('results', projectId, this.known.get(projectId));
   }
   async getMedia(mediaId) { return this.call('getMedia', [mediaId]); }
 
@@ -411,7 +445,15 @@ class FlowSession extends EventEmitter {
       url = item.isVideo ? (m.video || m.image) : (m.image || m.video);
     }
     if (!url) throw new Error('MEDIA_NOT_READY');
-    const { buffer, mime } = await this.fetchMedia(url);
+    let got;
+    try { got = await this.fetchMedia(url); } catch (e) {
+      // URL bertanda tangan bisa kedaluwarsa → minta URL baru dari record media Flow
+      const m = await this.getMedia(item.mediaId).catch(() => ({}));
+      const fresh = item.isVideo ? (m.video || m.image) : (m.image || m.video);
+      if (!fresh || fresh === url) throw e;
+      got = await this.fetchMedia(fresh);
+    }
+    const { buffer, mime } = got;
     fs.mkdirSync(dir, { recursive: true });
     const ext = MIME_EXT[mime] || (item.isVideo ? '.mp4' : '.png');
     const base = (item.title || (item.isVideo ? 'video' : 'gambar')).replace(/[\\/:*?"<>|\r\n]+/g, ' ').trim().slice(0, 60) || 'flow';
@@ -741,7 +783,9 @@ class FlowSession extends EventEmitter {
         }
         throw fail(obs.error.code, obs.error.detail);
       }
-      return { ...res, items: obs.items || null, projectId: obs.projectId || res.projectId };
+      const projectId = obs.projectId || res.projectId;
+      if (obs.items) this._remember(projectId, obs.items);
+      return { ...res, items: obs.items || null, projectId };
     }
   }
 
@@ -1103,7 +1147,9 @@ class FlowSession extends EventEmitter {
           for (const [rid, payload] of wire.frames(e.text)) {
             if (rid === wire.IMAGE_SUBMIT_RPC) {
               imageReply = imageReply || { t: e.t };
-              for (const r of wire.imageRecords(payload)) if (!imgs.some((x) => x.mediaId === r.mediaId)) imgs.push(r);
+              let recs = wire.imageRecords(payload);
+              if (!recs.length) recs = wire.looseImages(payload).filter((r) => !skip.has(r.mediaId)); // bentuk balasan berubah
+              for (const r of recs) if (!imgs.some((x) => x.mediaId === r.mediaId)) imgs.push(r);
             } else if (wire.VIDEO_SUBMIT_RPCS.includes(rid)) {
               for (const r of wire.generationRecords(payload)) {
                 ours.wf.add(r.workflowId); ours.media.add(r.mediaId);

@@ -983,13 +983,13 @@ const ACTIONS = {
         log(`${r.items.length} hasil siap${r.files.length ? `, ${r.files.length} file diunduh` : ''}.`, 'ok');
         toast(`${r.items.length} hasil siap${r.files.length ? ' & sudah diunduh' : ''}.`, 'ok');
         S.studio.sel = r.items[0] ? r.items[0].mediaId : null;
-      } else toast('Generate ditekan. Hasil muncul di pratinjau saat selesai.', 'ok');
-      S.gallery.key = '';
+        galleryMerge(r.items); // langsung tampil, tanpa menunggu daftar Flow
+      } else { toast('Generate ditekan. Hasil muncul di pratinjau saat selesai.', 'ok'); galleryFollow(); }
     } catch (e) { log(msg(e), 'err'); toast(msg(e), 'err'); }
     S.studio.busy = '';
     S.activity = '';
     render();
-    galleryAutoLoad();
+    if (galleryKey()) galleryLoad(false); // muat ulang daftar (tanpa mengosongkan hasil yang sudah tampil)
   },
 
   // Galeri
@@ -1119,6 +1119,26 @@ function galleryKey() {
   const s = a ? st(a.id) : {};
   return a && s.connected && s.signedIn && s.projectId ? `${a.id}:${s.projectId}` : '';
 }
+// hasil dari balasan generate → masukkan ke galeri sekarang juga (daftar Flow menyusul)
+function galleryMerge(items) {
+  const g = S.gallery;
+  const k = galleryKey();
+  if (!k || !Array.isArray(items) || !items.length) return;
+  if (k !== g.key) { g.items = []; g.selected.clear(); g.thumbs = {}; g.key = k; }
+  const have = new Set(g.items.map((i) => i.mediaId));
+  g.items = [...items.filter((i) => i && i.mediaId && !have.has(i.mediaId)), ...g.items];
+}
+// generate dikirim tanpa menunggu hasil → muat ulang galeri beberapa kali sampai hasil muncul
+let followTimers = [];
+function galleryFollow() {
+  followTimers.forEach(clearTimeout);
+  followTimers = [20, 45, 90, 150, 240, 360].map((sec) => setTimeout(() => { if (galleryKey()) galleryLoad(false); }, sec * 1000));
+}
+let refreshSoonTimer = null;
+function galleryRefreshSoon() {
+  clearTimeout(refreshSoonTimer);
+  refreshSoonTimer = setTimeout(() => { if (galleryKey() && (S.page === 'gallery' || S.page === 'studio')) galleryLoad(false); }, 1500);
+}
 function galleryAutoLoad() {
   const k = galleryKey();
   if (k && k !== S.gallery.key) galleryLoad(false);
@@ -1126,7 +1146,8 @@ function galleryAutoLoad() {
 async function galleryLoad(force) {
   const k = galleryKey();
   const g = S.gallery;
-  if (!k || g.loading) return;
+  if (!k) return;
+  if (g.loading) { g.again = true; return; } // sedang memuat → ulangi setelah selesai (hasil terbaru)
   if (k !== g.key) { g.items = []; g.selected.clear(); g.thumbs = {}; }
   g.key = k;
   g.loading = true;
@@ -1141,6 +1162,7 @@ async function galleryLoad(force) {
   } catch (e) { g.error = e.message; }
   g.loading = false;
   render();
+  if (g.again) { g.again = false; galleryLoad(false); }
 }
 // sumber gambar pratinjau: thumbnail dari Flow, atau file hasil yang sudah diunduh
 function thumbSrc(it, local) {
@@ -1358,7 +1380,9 @@ async function init() {
   fc.on('queue', (q) => {
     const sig = (x) => x.running + '|' + x.jobs.map((j) => j.id + j.status).join(',');
     const same = sig(q) === sig(S.queue);
+    const doneBefore = (S.queue.jobs || []).filter((j) => j.status === 'done').length;
     S.queue = q;
+    if (q.jobs.filter((j) => j.status === 'done').length > doneBefore) galleryRefreshSoon(); // hasil antrean baru
     if (same && S.page === 'auto' && $('#q-act')) { $('#q-act').textContent = q.activity; renderStatus(); return; }
     render();
   });

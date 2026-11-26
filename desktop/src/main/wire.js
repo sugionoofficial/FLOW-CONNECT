@@ -129,9 +129,25 @@ function imageRecords(payload) {
   walk(payload, (n) => {
     if (n.length < 7 || typeof n[0] !== 'string' || !UUID.test(n[0]) || typeof n[2] !== 'string' || !UUID.test(n[2])) return;
     const det = at(n, 6, 0);
-    const url = Array.isArray(det) ? det.find((x) => typeof x === 'string' && /^https:\/\//.test(x)) : null;
+    if (!Array.isArray(det)) return;
+    // URL bertanda tangan ada di detail[13] (gflow-cli); cadangan: URL yang memuat media id, lalu https pertama
+    const https = (x) => typeof x === 'string' && /^https:\/\//.test(x);
+    const all = strings(n).filter(https);
+    const url = (https(det[13]) && det[13]) || all.find((x) => x.includes(n[0])) || det.find(https) || null;
     if (url) out.push({ mediaId: n[0], workflowId: n[2], url });
   });
+  return out;
+}
+
+/**
+ * Cadangan bila bentuk record berubah: setiap URL gambar bertanda tangan `…/image/<uuid>` di balasan → {mediaId, url}.
+ */
+function looseImages(payload) {
+  const out = [];
+  for (const s of strings(payload)) {
+    const m = /^https:\/\/[^/?#]+\/image\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:[?#]|$)/i.exec(s);
+    if (m && !out.some((x) => x.mediaId === m[1])) out.push({ mediaId: m[1], workflowId: null, url: s });
+  }
   return out;
 }
 
@@ -150,5 +166,5 @@ function uploadedMediaId(text, projectId) {
 
 module.exports = {
   UPLOAD_RPC, IMAGE_SUBMIT_RPC, VIDEO_SUBMIT_RPCS, SUBMIT_RPCS, STATUS_RPCS,
-  rpcidsOf, wrbRows, frames, rpcErrors, refusal, generationRecords, imageRecords, uploadedMediaId
+  rpcidsOf, wrbRows, frames, rpcErrors, refusal, generationRecords, imageRecords, looseImages, uploadedMediaId
 };

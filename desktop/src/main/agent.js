@@ -4,7 +4,7 @@
 // ambil file media, mencari kolom prompt / input file / tombol Generate.
 // Tidak pernah membuat token reCAPTCHA — Generate selalu lewat tombol UI Flow sendiri.
 
-const AGENT_VERSION = 7;
+const AGENT_VERSION = 8;
 
 /* eslint-disable */
 function fcAgent(V, cfg) {
@@ -111,35 +111,98 @@ function fcAgent(V, cfg) {
     return out;
   }
 
+  var UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+  function isUuid(x) { return typeof x === 'string' && UUID_RE.test(x); }
+  function at(n) { var c = n; for (var i = 1; i < arguments.length; i++) { if (!Array.isArray(c) || arguments[i] >= c.length) return undefined; c = c[arguments[i]]; } return c; }
+  function mediaUrl(x) { return typeof x === 'string' && x.indexOf('http') === 0 && isMediaUrl(x) ? x : null; }
+  function urlIn(n, kind, id) { // URL media di dalam simpul n (utamakan yang memuat id)
+    var best = null;
+    walk(n, function (str) {
+      var u = mediaUrl(str);
+      if (!u || (kind && mediaKind(u) !== kind)) return;
+      if (id && u.indexOf(id) >= 0) best = u;
+      else if (!best) best = u;
+    });
+    return best;
+  }
+
+  // Daftar isi project (Zzl0ze). Tiga bentuk yang dibaca & digabung (diukur komunitas gflow-cli, 2026):
+  //  - baris workflow   [workflow, _, _, [judul, [dtk], video?, _, media id utama, …], project, …]
+  //  - record GAMBAR    [media id, _, workflow, _, _, _, [[detail… url di 13], _, [lebar, tinggi]]]   (7 slot, tanpa status)
+  //  - record VIDEO     [workflow, project, media id, _, _, [DETAIL… status di 8, poster di 10], _, [[… url video di 8]]]
+  // Satu generate x4 bisa berbagi satu workflow → setiap gambar diambil dari record-nya sendiri.
   async function listMedia(pid) {
     if (!/^[A-Za-z0-9-]{1,128}$/.test(pid || '')) throw new Error('INVALID_PROJECT_ID');
     var r = await batchRead('Zzl0ze', ['projects/' + pid, null, null, null, [1]]);
-    var items = [], seen = {};
+    var items = [], byId = {}, wfMeta = {};
+    function add(it) { byId[it.mediaId] = it; items.push(it); return it; }
     (function visit(n) {
       if (!Array.isArray(n)) return;
       var d = n[3];
-      if (n.length >= 4 && Array.isArray(d) && d.length > 4 && typeof d[4] === 'string' && /^[0-9a-fA-F-]{36}$/.test(d[4])) {
-        if (!seen[d[4]]) {
-          seen[d[4]] = 1;
-          var u = r.urls[d[4]] || {};
-          items.push({
-            mediaId: d[4], title: typeof d[0] === 'string' ? d[0] : '',
-            createdAt: Array.isArray(d[1]) && typeof d[1][0] === 'number' ? d[1][0] * 1000 : null,
-            isVideo: d[2] === true || d[2] === 1, done: d.length > 6 ? !!d[6] : true,
-            image: u.image || null, video: u.video || null
-          });
+      if (n.length >= 4 && Array.isArray(d) && typeof n[0] === 'string') {
+        var meta = {
+          title: typeof d[0] === 'string' ? d[0] : '',
+          createdAt: Array.isArray(d[1]) && typeof d[1][0] === 'number' ? d[1][0] * 1000 : null,
+          isVideo: d[2] === true || d[2] === 1
+        };
+        if (typeof d[0] === 'string' && !wfMeta[n[0]]) wfMeta[n[0]] = meta;
+        if (d.length > 4 && typeof d[4] === 'string' && /^[0-9a-fA-F-]{36}$/.test(d[4])) {
+          if (!byId[d[4]]) {
+            var u = r.urls[d[4]] || {};
+            add({
+              mediaId: d[4], workflowId: n[0], title: meta.title, createdAt: meta.createdAt, isVideo: meta.isVideo,
+              // gambar tidak punya status di Flow (hanya tercatat setelah jadi); slot 6 hanya berarti untuk video
+              done: d.length > 6 ? (meta.isVideo ? !!d[6] : d[6] !== false) : true,
+              image: u.image || null, video: u.video || null
+            });
+          }
+          return;
         }
+      }
+      for (var i = 0; i < n.length; i++) visit(n[i]);
+    })(r.payload);
+
+    // record media: gambar (7 slot) & video (status) — sumber yang paling pasti untuk media id & URL
+    var recs = [];
+    (function visit(n) {
+      if (!Array.isArray(n)) return;
+      if (n.length >= 7 && isUuid(n[0]) && isUuid(n[2]) && Array.isArray(n[6]) && Array.isArray(n[6][0])) {
+        var det = n[6][0];
+        recs.push({ mediaId: n[0], workflowId: n[2], isVideo: false, done: true, image: mediaUrl(det[13]) || urlIn(det, 'image', n[0]) || urlIn(n, 'image', n[0]), video: null });
+        return;
+      }
+      if (n.length >= 6 && isUuid(n[0]) && isUuid(n[1]) && isUuid(n[2]) && Array.isArray(n[5])) {
+        var st = at(n, 5, 8, 0);
+        recs.push({ mediaId: n[2], workflowId: n[0], isVideo: true, done: typeof st === 'number' ? st === 3 : null, image: mediaUrl(at(n, 5, 10)), video: mediaUrl(at(n, 7, 0, 8)) || urlIn(n[7], 'video') });
         return;
       }
       for (var i = 0; i < n.length; i++) visit(n[i]);
     })(r.payload);
+    var recWf = {};
+    for (var q = 0; q < recs.length; q++) {
+      var rc = recs[q], cur = byId[rc.mediaId];
+      recWf[rc.workflowId] = 1;
+      if (cur) {
+        if (!cur.image) cur.image = rc.image;
+        if (!cur.video) cur.video = rc.video;
+        if (rc.done !== null) cur.done = rc.done;
+        if (!cur.workflowId) cur.workflowId = rc.workflowId;
+        continue;
+      }
+      var m = wfMeta[rc.workflowId] || {};
+      add({ mediaId: rc.mediaId, workflowId: rc.workflowId, title: m.title || '', createdAt: m.createdAt || null, isVideo: rc.isVideo, done: rc.done !== null ? rc.done : true, image: rc.image, video: rc.video, fromRecord: true });
+    }
+    // baris workflow yang "media id"-nya tidak punya record, padahal workflow-nya punya → bukan media sungguhan
+    items = items.filter(function (it) { return it.fromRecord || !it.workflowId || !recWf[it.workflowId] || recs.some(function (x) { return x.mediaId === it.mediaId; }); });
+
     var itemIds = {};
     for (var k = 0; k < items.length; k++) itemIds[items[k].mediaId] = 1;
     var near = urlsNear(r.payload, itemIds);
-    for (var m = 0; m < items.length; m++) {
-      var nu = near[items[m].mediaId] || {};
-      if (!items[m].image) items[m].image = nu.image || null;
-      if (!items[m].video) items[m].video = nu.video || null;
+    for (var j = 0; j < items.length; j++) {
+      var nu = near[items[j].mediaId] || {};
+      if (!items[j].image) items[j].image = nu.image || null;
+      if (!items[j].video) items[j].video = nu.video || null;
+      delete items[j].fromRecord;
     }
     items.sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
     return items;

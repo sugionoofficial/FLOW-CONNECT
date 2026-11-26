@@ -111,7 +111,7 @@ jobs:
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
 
-            **Baru di versi ini:** perbaikan login — Google tidak lagi menolak dengan pesan "This browser or app may not be secure" saat menambah akun. Kartu login kini dibuka sebagai Chrome/Edge biasa tanpa kendali apa pun; setelah login selesai kartu tertutup sendiri, aplikasi tersambung tersembunyi dan membuat project baru. Sebelumnya (v1.3.3): model Flow terbaru, mode Frame/Bahan, durasi otomatis (Omni 10 dtk, Veo 8 dtk).
+            **Baru di versi ini:** perbaikan galeri & pratinjau — hasil generate gambar (termasuk x2–x4 sekaligus) kini selalu tampil. Aplikasi membaca format daftar project Google Flow terbaru (satu generate berisi beberapa gambar), dan setiap hasil yang dikembalikan Flow disimpan sehingga tetap muncul walau daftar Flow terlambat. Gambar kedaluwarsa dimuat ulang otomatis. Sebelumnya (v1.3.4): login Google tidak lagi ditolak "This browser or app may not be secure".
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

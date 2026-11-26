@@ -123,7 +123,14 @@ function session(id) {
   if (!s) {
     s = new FlowSession({
       profileDir: profileDir(id), flowUrl: FLOW_URL, getBrowser: () => browser.resolveBrowser(store.data.browser),
-      getMode: () => desiredMode(id), getShowBounds: showBounds, uploads: uploadSet
+      getMode: () => desiredMode(id), getShowBounds: showBounds, uploads: uploadSet, known: knownResults()
+    });
+    s.on('results', (projectId, list) => {
+      const all = { ...(store.data.results || {}) };
+      delete all[projectId];
+      // project terbaru di depan; simpan maks. 30 project × 100 hasil
+      store.data.results = Object.fromEntries([[projectId, list.slice(0, 100)], ...Object.entries(all)].slice(0, 30));
+      store.save();
     });
     s.on('upload', (mediaId) => {
       store.data.uploads = [mediaId, ...(store.data.uploads || []).filter((x) => x !== mediaId)].slice(0, 5000);
@@ -139,6 +146,15 @@ function session(id) {
 // media id gambar referensi yang pernah diunggah aplikasi → tidak ditampilkan di galeri / pratinjau
 let uploadSet = null;
 function initUploads() { uploadSet = new Set(store.data.uploads || []); }
+// hasil generate per project (dibagi semua sesi; project id unik per akun Flow)
+let knownMap = null;
+function knownResults() {
+  if (!knownMap) {
+    const r = store.data.results && typeof store.data.results === 'object' ? store.data.results : {};
+    knownMap = new Map(Object.entries(r).filter(([, v]) => Array.isArray(v)));
+  }
+  return knownMap;
+}
 
 async function connected(id) {
   const s = session(id);
@@ -375,10 +391,14 @@ function registerIpc() {
       mime = { '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' }[path.extname(hit)] || 'image/jpeg';
     } else {
       const s = await connected(id);
-      let url = item.image;
-      if (!url) { const m = await s.getMedia(item.mediaId).catch(() => ({})); url = m.image || null; } // URL dari record media (as29s)
+      const fresh = async () => { const m = await s.getMedia(item.mediaId).catch(() => ({})); return m.image || null; }; // URL dari record media (as29s)
+      let url = item.image || await fresh();
       if (!url) return null;
-      ({ buffer, mime } = await s.fetchMedia(url));
+      try { ({ buffer, mime } = await s.fetchMedia(url)); } catch (e) {
+        const again = item.image ? await fresh() : null; // URL bertanda tangan kedaluwarsa → minta yang baru
+        if (!again || again === url) throw e;
+        ({ buffer, mime } = await s.fetchMedia(again));
+      }
       if (!/^image\//.test(mime)) return null;
       fs.writeFileSync(path.join(thumbsDir(), item.mediaId + ({ 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif' }[mime] || '.jpg')), buffer);
     }

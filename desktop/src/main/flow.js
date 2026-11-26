@@ -4,8 +4,13 @@ const fs = require('fs');
 const path = require('path');
 const { EventEmitter } = require('events');
 const { CDPConnection } = require('./cdp');
+const os = require('os');
+const crypto = require('crypto');
 const { agentExpression } = require('./agent');
 const browser = require('./browser');
+const wire = require('./wire');
+const { NetWatch } = require('./netwatch');
+const { parsePrompt, sanitizeTags } = require('./refs');
 
 const DEFAULT_FLOW_URL = 'https://flow.google.com/';
 const IMAGE_EXT = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.heic': 'image/heic' };
@@ -14,6 +19,29 @@ const MIME_EXT = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.we
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const normText = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 const rand = (a, b) => a + Math.random() * (b - a);
+const fail = (code, detail, extra) => { const e = new Error(code); if (detail) e.detail = String(detail).slice(0, 300); if (extra) Object.assign(e, extra); return e; };
+const KEYS = {
+  Enter: { code: 'Enter', vk: 13, text: '\r' }, Escape: { code: 'Escape', vk: 27 }, Backspace: { code: 'Backspace', vk: 8 },
+  ArrowDown: { code: 'ArrowDown', vk: 40 }, ArrowUp: { code: 'ArrowUp', vk: 38 }, End: { code: 'End', vk: 35 }, Tab: { code: 'Tab', vk: 9 }
+};
+
+const IMG_SUFFIX = /\.(png|jpe?g|webp|gif|heic|heif|avif|bmp)$/i;
+/** Indeks opsi pemilih aset yang judulnya persis `want` (dinormalisasi; ekstensi file diabaikan). -1 bila tidak ada / ganda. */
+function pickOption(options, want, exact = true) {
+  const norm = (t) => normText(String(t || '').trim().replace(IMG_SUFFIX, ''));
+  const hits = options.map((o, i) => (norm(o.title) === want ? i : -1)).filter((i) => i >= 0);
+  if (hits.length === 1) return hits[0];
+  if (hits.length > 1) return -1; // ganda → jangan menebak
+  if (exact) return -1;
+  const pre = options.map((o, i) => (norm(o.title).startsWith(want) ? i : -1)).filter((i) => i >= 0);
+  return pre.length === 1 ? pre[0] : -1;
+}
+
+function checkImageFile(p) {
+  if (!IMAGE_EXT[path.extname(p).toLowerCase()]) throw new Error('INVALID_IMAGE');
+  const st = fs.statSync(p);
+  if (!st.isFile() || st.size > 30 * 1024 * 1024) throw new Error('INVALID_IMAGE');
+}
 
 class FlowSession extends EventEmitter {
   /**
@@ -209,6 +237,7 @@ class FlowSession extends EventEmitter {
     if (this.page) this.page.close();
     this.page = await CDPConnection.connect(target.webSocketDebuggerUrl);
     this.pageTarget = target;
+    this.net = null;
     this.page.on('close', () => { if (this.page && this.page.closed) this.page = null; });
     if (this.mode === 'hidden') await this._stealth(!navigateTo);
     if (navigateTo) {
@@ -539,16 +568,27 @@ class FlowSession extends EventEmitter {
   }
 
   /**
-   * Jalur lengkap satu generate: (project baru bila perlu) → setelan → gambar → prompt → Generate → konfirmasi → tunggu hasil.
-   * Mode tersembunyi yang ditolak Flow otomatis diulang sekali di jendela diperkecil.
+   * Jalur lengkap satu generate. Gambar → "skill" generate foto (skills/image.js); video → runGeneration langsung.
    * hooks: { onLog, shouldStop, timeoutMs, wait, onFallback }
    */
   async generate(job, hooks = {}) {
+    const kind = job.options ? job.options.kind : null;
+    if (kind === 'image') return require('./skills/image').run(this, job, hooks);
+    return this.runGeneration(job, hooks, { kind: kind === 'video' ? 'video' : null });
+  }
+
+  /**
+   * (project baru bila perlu) → setelan → UNGGAH gambar & tunggu selesai → prompt dengan penanda "@" → periksa →
+   * Generate → amati sampai jadi / GAGAL (tidak menunggu tanpa akhir).
+   * Mode tersembunyi yang ditolak Flow otomatis diulang sekali di jendela diperkecil.
+   * spec: { kind, imageMs, startMs, check(prep) }
+   */
+  async runGeneration(job, hooks = {}, spec = {}) {
     const say = hooks.onLog || (() => {});
     const stop = () => { if (hooks.shouldStop && hooks.shouldStop()) throw new Error('STOPPED'); };
     for (let attempt = 0; ; attempt++) {
       await this.beginWork();
-      let res;
+      let res, obs;
       try {
         let st = await this.status();
         if (!st.projectId) {
@@ -559,7 +599,6 @@ class FlowSession extends EventEmitter {
           st = await this.status();
         }
         if (!st.signedIn) throw new Error('NOT_SIGNED_IN');
-        const before = st.projectId ? (await this.listMedia(st.projectId)).map((i) => i.mediaId) : [];
         stop();
         let settings = null;
         if (job.options && job.options.apply !== false) {
@@ -568,39 +607,47 @@ class FlowSession extends EventEmitter {
           await sleep(rand(400, 900));
         }
         stop();
-        if (job.images && job.images.length) {
-          say(`Melampirkan ${job.images.length} gambar…`);
-          await this.sendImages(job.images);
-          await sleep(rand(2500, 4500));
-        }
+        const prep = await this._exclusive(() => this.prepareComposer(job, say));
+        if (spec.check) spec.check(prep);
         stop();
-        if (job.prompt) {
-          say('Menulis prompt…');
-          await this.sendPrompt(job.prompt);
-          await sleep(rand(1000, 2600));
-        }
-        stop();
+        const credits = await this.call('creditsWarning').catch(() => null);
+        if (credits) throw fail('INSUFFICIENT_CREDITS', credits);
+        const before = (await this.listMedia(st.projectId).catch(() => [])).map((i) => i.mediaId);
+        const tiles0 = ((await this.call('failedTiles').catch(() => null)) || { count: 0 }).count;
+        const net = await this._net();
+        const mark = net.mark();
+        await sleep(rand(600, 1400));
         say('Menekan Generate…');
         const click = await this.clickGenerate();
+        res = { click, settings, refs: prep.refs, mentions: prep.mentions, projectId: st.projectId, mode: this.mode, fellBack: attempt > 0 };
         say('Memastikan Flow mulai membuat…');
-        const v = await this.confirmStarted(before, job.prompt);
-        if (v.error) {
-          if (this.mode === 'hidden' && v.suspect && attempt === 0) {
-            say('Flow menolak di mode tersembunyi — beralih otomatis ke jendela diperkecil…');
-            if (hooks.onFallback) await hooks.onFallback(v);
-            await this.relaunch('minimized');
-            continue;
-          }
-          const e = new Error(v.error === 'NOT_STARTED' ? 'GENERATE_NOT_STARTED' : 'FLOW_ERROR');
-          e.detail = v.error;
-          throw e;
+        // tunggu sampai permintaan generate benar-benar terkirim selagi jendela masih "aktif"
+        obs = await this.observe({ mark, before, exclude: prep.refs.map((r) => r.mediaId), kind: spec.kind, prompt: job.prompt, wait: false, startMs: spec.startMs, tiles0, shouldStop: hooks.shouldStop });
+        if (obs.ok && hooks.wait !== false) {
+          await this.endWork();
+          obs = await this.observe({ mark, before, exclude: prep.refs.map((r) => r.mediaId), kind: spec.kind, prompt: job.prompt, wait: true, timeoutMs: hooks.timeoutMs || 8 * 60000, imageMs: spec.imageMs, tiles0, onProgress: say, shouldStop: hooks.shouldStop });
         }
-        res = { click, settings, before, projectId: st.projectId, mode: this.mode, fellBack: attempt > 0 };
-        if (hooks.wait === false) return res;
       } finally { await this.endWork(); }
-      const out = await this.waitForNew(res.before, { timeoutMs: hooks.timeoutMs || 8 * 60000, onProgress: say, shouldStop: hooks.shouldStop });
-      return { ...res, items: out.items, projectId: out.projectId };
+      if (obs.error) {
+        if (this.mode === 'hidden' && obs.error.suspect && attempt === 0) {
+          say('Flow menolak di mode tersembunyi — beralih otomatis ke jendela diperkecil…');
+          if (hooks.onFallback) await hooks.onFallback({ error: obs.error.detail || obs.error.code, suspect: true });
+          await this.relaunch('minimized');
+          continue;
+        }
+        throw fail(obs.error.code, obs.error.detail);
+      }
+      return { ...res, items: obs.items || null, projectId: obs.projectId || res.projectId };
     }
+  }
+
+  /** MODE AMAN: siapkan Flow (setelan + unggah gambar + prompt ber-"@") — pengguna sendiri yang menekan Generate. */
+  async prepare(job, say = () => {}) {
+    await this.beginWork();
+    const out = {};
+    if (job.options && job.options.apply !== false) out.settings = await this.applySettings(job.options);
+    out.prep = await this._exclusive(() => this.prepareComposer(job, say));
+    return out;
   }
 
   /** Tulis prompt ke kolom prompt Flow (ketikan asli lewat Input.insertText). */
@@ -621,11 +668,7 @@ class FlowSession extends EventEmitter {
   /** Lampirkan gambar ke Flow: isi input file asli (DOM.setFileInputFiles), cadangan: paste/drop. */
   sendImages(paths) {
     if (!Array.isArray(paths) || !paths.length || paths.length > 10) throw new Error('INVALID_FILES');
-    for (const p of paths) {
-      if (!IMAGE_EXT[path.extname(p).toLowerCase()]) throw new Error('INVALID_IMAGE');
-      const st = fs.statSync(p);
-      if (!st.isFile() || st.size > 30 * 1024 * 1024) throw new Error('INVALID_IMAGE');
-    }
+    for (const p of paths) checkImageFile(p);
     return this._exclusive(async () => {
       const page = await this.ensurePage();
       if (await this.call('markFileInput')) {
@@ -639,6 +682,381 @@ class FlowSession extends EventEmitter {
       const method = await this.call('pasteFiles', [list], 120000);
       return { method, count: paths.length };
     });
+  }
+
+  // =====================================================================
+  //  Referensi gambar: unggah ke Flow dulu → tandai dengan "@" → baru Generate
+  // =====================================================================
+
+  /** Pengamat lalu lintas batchexecute tab Flow (dipasang sekali per koneksi tab). */
+  async _net() {
+    const page = await this.ensurePage();
+    if (this.net && this.net.page === page) return this.net;
+    this.net = await new NetWatch(page).enable();
+    return this.net;
+  }
+
+  /** Tombol keyboard asli (keyDown/keyUp). */
+  async _key(name, times = 1, gap = 120) {
+    const page = await this.ensurePage();
+    const k = KEYS[name];
+    for (let i = 0; i < times; i++) {
+      const base = { key: name, code: k.code, windowsVirtualKeyCode: k.vk, nativeVirtualKeyCode: k.vk };
+      await page.send('Input.dispatchKeyEvent', { type: k.text ? 'keyDown' : 'rawKeyDown', ...base, ...(k.text ? { text: k.text, unmodifiedText: k.text } : {}) });
+      await page.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+      if (times > 1) await sleep(gap);
+    }
+  }
+
+  /** Ketik per karakter dengan event tombol (plugin "@" Flow butuh event tombol, bukan insertText). */
+  async _typeKeys(str, delay = 90) {
+    const page = await this.ensurePage();
+    for (const ch of String(str)) {
+      const shift = /[A-Z@!#$%^&*()_+{}|:"<>?~]/.test(ch);
+      const code = ch === '@' ? 'Digit2' : ch === ' ' ? 'Space' : ch === '-' ? 'Minus' : ch === '_' ? 'Minus' : ch === '.' ? 'Period' : /[0-9]/.test(ch) ? 'Digit' + ch : /[a-z]/i.test(ch) ? 'Key' + ch.toUpperCase() : '';
+      const vk = ch === '@' ? 50 : ch === ' ' ? 32 : ch === '-' || ch === '_' ? 189 : ch === '.' ? 190 : /[a-z0-9]/i.test(ch) ? ch.toUpperCase().charCodeAt(0) : 0;
+      const base = { key: ch, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers: shift ? 8 : 0 };
+      await page.send('Input.dispatchKeyEvent', { type: 'keyDown', ...base, text: ch, unmodifiedText: ch });
+      await page.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+      await sleep(rand(delay * 0.6, delay * 1.4));
+    }
+  }
+
+  /** Klik elemen yang membuka dialog pilih-file, lalu isi dialog itu dengan `file` (tanpa jendela dialog OS). */
+  async _chooseFile(target, file) {
+    const page = await this.ensurePage();
+    await page.send('Page.enable').catch(() => {});
+    await page.send('Page.setInterceptFileChooserDialog', { enabled: true });
+    try {
+      const opened = new Promise((resolve) => {
+        const h = (e) => { page.off('Page.fileChooserOpened', h); resolve(e); };
+        page.on('Page.fileChooserOpened', h);
+        setTimeout(() => { page.off('Page.fileChooserOpened', h); resolve(null); }, 7000);
+      });
+      await this._click(target);
+      const ev = await opened;
+      if (!ev || !ev.backendNodeId) return false;
+      await page.send('DOM.setFileInputFiles', { files: [file], backendNodeId: ev.backendNodeId });
+      return true;
+    } finally {
+      await page.send('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {});
+    }
+  }
+
+  /** Salinan file dengan nama unik → nama itu yang dicari lagi di pemilih "@" (tidak tertukar dengan unggahan lama). */
+  _uniqueCopy(file, tag) {
+    const ext = path.extname(file).toLowerCase();
+    const dir = path.join(os.tmpdir(), 'flow-connect-refs');
+    fs.mkdirSync(dir, { recursive: true });
+    for (const f of fs.readdirSync(dir)) { try { const p = path.join(dir, f); if (Date.now() - fs.statSync(p).mtimeMs > 6 * 3600000) fs.unlinkSync(p); } catch { /* */ } }
+    const name = `${tag}-${crypto.randomBytes(3).toString('hex')}${ext}`;
+    const dest = path.join(dir, name);
+    fs.copyFileSync(file, dest);
+    return { dest, name, stem: name.slice(0, name.length - ext.length) };
+  }
+
+  /**
+   * Unggah SATU gambar referensi lewat pengunggah Flow sendiri ("+" → Upload → dialog file) dan TUNGGU sampai
+   * Flow selesai menyimpannya (balasan maseQ berisi media id). Tanpa ini Flow men-generate tanpa gambar.
+   * → { mediaId, name, tag, how }
+   */
+  async uploadReference(file, tag, { timeoutMs = 90000 } = {}) {
+    checkImageFile(file);
+    const { dest, name, stem } = this._uniqueCopy(file, tag || 'gambar');
+    const net = await this._net();
+    const st = await this.status();
+    const mark = net.mark();
+    const dialogsBefore = await this.call('dialogCount').catch(() => 0);
+    let how = null;
+    await this._closeOverlays();
+    const cookie = await this.call('cookieReject').catch(() => null);
+    if (cookie) { await this._click(cookie); await sleep(600); }
+    // 1) "+" → menu "Upload" → dialog file (dicegat, diisi file)
+    const add = await this.call('toolbarAdd');
+    if (add) {
+      await this._click(add);
+      const item = await this._waitFor(() => this.call('uploadMenuItem'), 5000, 250);
+      if (item) { if (await this._chooseFile(item, dest)) how = 'menu'; }
+      else if (await this._chooseFile(add, dest).catch(() => false)) how = 'button'; // "+" langsung membuka dialog file
+      if (!how) await this._closeOverlays();
+    }
+    // 2) cadangan: input file Flow langsung
+    if (!how && await this.call('markFileInput')) {
+      const page = await this.ensurePage();
+      const r = await page.send('Runtime.evaluate', { expression: 'document.querySelector("[data-fc-target]")' });
+      if (r.result && r.result.objectId) {
+        await page.send('DOM.setFileInputFiles', { files: [dest], objectId: r.result.objectId });
+        how = 'input';
+      }
+    }
+    if (!how) throw fail('UPLOAD_BUTTON_NOT_FOUND');
+    const isUpload = (e) => e.kind !== 'request' && e.rpcids.includes(wire.UPLOAD_RPC);
+    const ev = await net.wait(mark, isUpload, timeoutMs);
+    if (!ev) {
+      const sent = net.since(mark, (e) => e.kind === 'request' && e.rpcids.includes(wire.UPLOAD_RPC)).length > 0;
+      const dialogs = await this.call('dialogCount').catch(() => 0);
+      if (!sent && dialogs > dialogsBefore) throw fail('UPLOAD_TERMS');
+      throw fail(sent ? 'UPLOAD_TIMEOUT' : 'UPLOAD_NOT_SENT', name);
+    }
+    if (ev.kind === 'failed') throw fail('UPLOAD_FAILED', ev.error);
+    if (ev.status && ev.status !== 200) throw fail('UPLOAD_FAILED', 'HTTP ' + ev.status);
+    const ref = ev.text ? wire.refusal(ev.text, [wire.UPLOAD_RPC]) : null;
+    if (ref) throw fail('UPLOAD_REJECTED', ref.reason || ref.text);
+    const mediaId = ev.text ? wire.uploadedMediaId(ev.text, st.projectId) : null;
+    if (!mediaId) throw fail('UPLOAD_FAILED', 'tanpa media id');
+    await this._closeOverlays();
+    return { mediaId, name, stem, tag, how };
+  }
+
+  /** Kosongkan kolom prompt Flow (termasuk chip "@"). */
+  async clearPrompt() {
+    await this.call('focusPrompt');
+    await sleep(120);
+    await this._key('Backspace');
+    await sleep(250);
+    const left = await this.call('caretToEnd');
+    if ((left.text || '').trim() || left.chips) {
+      await this.call('focusPrompt');
+      await this._key('Backspace', 2, 80);
+      const again = await this.call('caretToEnd');
+      if ((again.text || '').trim() || again.chips) await this.call('setPromptFallback', ['']);
+    }
+  }
+
+  /**
+   * Tandai aset `name` dengan "@" di akhir prompt Flow: ketik @ + nama → pilih opsi yang judulnya sama → Enter.
+   * Enter HANYA ditekan bila pemilih menampilkan opsi yang cocok (tanpa pemilih, Enter = kirim generate).
+   * → true bila chip bertambah.
+   */
+  async _mention(name, { attempts = 3, exact = true } = {}) {
+    const want = normText(name);
+    let offered = [];
+    for (let a = 1; a <= attempts; a++) {
+      const before = await this.call('caretToEnd');
+      await this._typeKeys('@', 120);
+      await sleep(rand(1200, 1800));
+      await this._typeKeys(name, 70);
+      await sleep(rand(1800, 2400));
+      offered = await this.call('mentionOptions').catch(() => []);
+      const idx = pickOption(offered, want, exact);
+      if (idx >= 0) {
+        if (idx > 0) await this._key('ArrowDown', idx, 450);
+        await sleep(300);
+        await this._key('Enter');
+        await sleep(rand(1200, 1700));
+        const after = await this.call('caretToEnd');
+        if (after.chips === before.chips + 1) { await this._typeKeys(' ', 60); return true; }
+      }
+      // batal: Escape menutup pemilih; buang sisa "@nama" bila tertinggal
+      if (offered.length || await this.call('overlayOpen').catch(() => false)) await this._key('Escape');
+      await sleep(500);
+      const now = await this.call('caretToEnd');
+      if (now.chips < before.chips) throw fail('REFERENCE_LOST', name);
+      const tail = '@' + name;
+      if ((now.text || '').replace(/\s+$/, '').endsWith(tail)) await this._key('Backspace', tail.length, 25);
+      if (a < attempts) await sleep(2000);
+    }
+    this.lastOffered = offered.map((o) => o.title).slice(0, 6);
+    return false;
+  }
+
+  /** Mode Frames: pasang gambar ke slot frame kosong berikutnya (Awal, lalu Akhir) lewat pemilih aset. */
+  async _attachFrame(name) {
+    for (let a = 1; a <= 3; a++) {
+      const bound = await this.call('boundFrames').catch(() => 0);
+      const chip = await this.call('emptyFrameChip');
+      if (!chip) throw fail('FRAME_SLOT_NOT_FOUND');
+      await this._click(chip);
+      const pk = await this._waitFor(async () => { const p = await this.call('picker'); return p.open ? p : null; }, 8000, 300);
+      if (!pk) { await this._closeOverlays(); continue; }
+      if (pk.search) { await this._click(pk.search); await this.call('focusPickerSearch'); await this._typeKeys(name, 60); await sleep(2200); }
+      const opts = await this.call('mentionOptions').catch(() => []);
+      const o = opts[pickOption(opts, normText(name), true)];
+      if (o) {
+        await this._click(o);
+        await sleep(900);
+        const p2 = await this.call('picker');
+        if (p2.open && p2.confirm) { await this._click(p2.confirm); await sleep(900); }
+        const ok = await this._waitFor(async () => (await this.call('boundFrames')) > bound, 15000, 400);
+        if (ok) return true;
+      }
+      await this._closeOverlays();
+      await sleep(2000);
+    }
+    return false;
+  }
+
+  /**
+   * Siapkan kotak prompt Flow untuk satu tugas: unggah semua gambar referensi (tunggu selesai), lalu susun prompt
+   * dengan penanda "@" yang menunjuk aset hasil unggahan. Gambar yang tidak disebut di prompt tetap ditandai di awal.
+   * job: { prompt, images:[path], tags:[tag], options:{kind, sub} }
+   * → { refs:[{tag, name, mediaId}], mentions:{ok:[], missing:[]}, frames:n }
+   */
+  async prepareComposer(job, say = () => {}) {
+    const images = job.images || [];
+    const tags = sanitizeTags(job.tags, images);
+    const refs = [];
+    for (let i = 0; i < images.length; i++) {
+      say(`Mengunggah gambar ${i + 1}/${images.length} ke Google Flow…`);
+      const r = await this.uploadReference(images[i], tags[i]);
+      refs.push(r);
+      await sleep(rand(800, 1600));
+    }
+    const prompt = String(job.prompt || '');
+    const o = job.options || {};
+    const frames = o.kind === 'video' && o.sub === 'frames' && refs.length ? refs.slice(0, 2) : [];
+    const parsed = parsePrompt(prompt, tags);
+    const mentionRefs = refs.map((r, i) => i).filter((i) => !frames.includes(refs[i]));
+    // gambar yang tidak disebut → ditandai di awal prompt, agar tetap dipakai sebagai referensi
+    const lead = mentionRefs.filter((i) => !parsed.used.includes(i));
+    const segments = [...lead.map((i) => ({ ref: i })), ...parsed.segments.map((sg) => (sg.ref !== undefined && frames.includes(refs[sg.ref]) ? { text: '@' + tags[sg.ref] } : sg))];
+    const result = { refs: refs.map((r) => ({ tag: r.tag, name: r.name, mediaId: r.mediaId })), mentions: { ok: [], missing: [] }, frames: 0 };
+
+    await this.clearPrompt();
+    for (const r of frames) {
+      say(`Memasang ${frames.indexOf(r) ? 'frame akhir' : 'frame awal'} @${r.tag}…`);
+      if (!(await this._attachFrame(r.stem))) throw fail('FRAME_NOT_ATTACHED', '@' + r.tag);
+      result.frames++;
+    }
+    const needChips = segments.some((sg) => sg.ref !== undefined || sg.mention !== undefined);
+    if (!needChips) {
+      if (prompt.trim()) { say('Menulis prompt…'); await this._insertText(prompt); }
+      return result;
+    }
+    const page = await this.ensurePage();
+    let prevChip = false;
+    for (const sg of segments) {
+      if (sg.text !== undefined) {
+        const t = prevChip ? sg.text.replace(/^ /, '') : sg.text; // setelah chip sudah diketik satu spasi
+        prevChip = false;
+        if (!t) continue;
+        await this.call('caretToEnd');
+        await page.send('Input.insertText', { text: t });
+        await sleep(rand(150, 400));
+        continue;
+      } else if (sg.ref !== undefined) {
+        const r = refs[sg.ref];
+        say(`Menandai @${r.tag} di prompt…`);
+        if (!(await this._mention(r.stem))) throw fail('REFERENCE_NOT_ATTACHED', '@' + r.tag + (this.lastOffered && this.lastOffered.length ? ' (Flow menawarkan: ' + this.lastOffered.join(', ') + ')' : ''));
+        result.mentions.ok.push(r.tag);
+        prevChip = true;
+      } else {
+        say(`Menandai @${sg.mention} di prompt…`);
+        if (await this._mention(sg.mention, { attempts: 1, exact: false })) { result.mentions.ok.push(sg.mention); prevChip = true; } else { await this.call('caretToEnd'); await page.send('Input.insertText', { text: '@' + sg.mention }); result.mentions.missing.push(sg.mention); }
+      }
+    }
+    // periksa: setiap gambar referensi harus terpasang sebagai chip sebelum Generate
+    const chips = await this.call('mentionChips');
+    const want = result.mentions.ok.length;
+    if (chips.length < want) throw fail('REFERENCE_NOT_ATTACHED', `${chips.length}/${want} chip`);
+    return result;
+  }
+
+  async _insertText(text) {
+    const page = await this.ensurePage();
+    await this.call('caretToEnd');
+    await page.send('Input.insertText', { text });
+    await sleep(200);
+    const now = await this.call('promptText');
+    if (!now || now.replace(/\s+/g, ' ').trim() !== text.replace(/\s+/g, ' ').trim()) await this.call('setPromptFallback', [text]);
+  }
+
+  /**
+   * Amati hasil setelah tombol Generate diklik — tidak menunggu tanpa akhir:
+   *  • balasan kirim (ogiZ0b gambar / YhhmEf… video) berisi penolakan → gagal seketika
+   *  • status video (jwpduf/Zzl0ze) gagal → gagal seketika (dengan pesan Flow)
+   *  • peringatan / kartu "Failed" di halaman → gagal
+   *  • tidak ada permintaan generate yang keluar → GENERATE_NOT_STARTED
+   *  • gambar: balasan tidak datang dalam batas waktu → GENERATE_TIMEOUT
+   * → { ok:true, items, projectId } | { error:{code, detail, suspect} }
+   */
+  async observe({ mark, before, exclude = [], kind, prompt, wait = true, timeoutMs = 8 * 60000, startMs = 25000, imageMs = 180000, tiles0 = 0, onProgress, shouldStop }) {
+    const net = await this._net();
+    const say = onProgress || (() => {});
+    const skip = new Set([...(before || []), ...exclude]);
+    const t0 = Date.now();
+    let cursor = mark, submitted = null, imageReply = null, lastList = 0, firstSeen = 0, lastSay = '';
+    const ours = { wf: new Set(), media: new Set() };
+    const imgs = [];
+    const status = (t) => { if (t !== lastSay) { lastSay = t; say(t); } };
+    const errOut = (code, detail, suspect = false) => ({ error: { code, detail: detail ? String(detail).slice(0, 300) : null, suspect } });
+    while (true) {
+      if (shouldStop && shouldStop()) throw new Error('STOPPED');
+      // 1) lalu lintas Flow
+      for (const e of net.since(cursor)) {
+        cursor = e.seq;
+        const isSubmit = e.rpcids.some((r) => wire.SUBMIT_RPCS.includes(r));
+        if (isSubmit) {
+          if (e.kind === 'request') { submitted = submitted || { t: e.t, rpc: e.rpcids[0] }; status('Flow menerima permintaan, sedang membuat…'); continue; }
+          if (e.kind === 'failed') return errOut('FLOW_ERROR', e.error || 'jaringan');
+          if (e.status && e.status !== 200) return errOut('FLOW_ERROR', 'HTTP ' + e.status);
+          if (!e.text) continue;
+          const ref = wire.refusal(e.text, wire.SUBMIT_RPCS);
+          if (ref) return errOut(ref.code, ref.text, ref.suspect);
+          for (const [rid, payload] of wire.frames(e.text)) {
+            if (rid === wire.IMAGE_SUBMIT_RPC) {
+              imageReply = imageReply || { t: e.t };
+              for (const r of wire.imageRecords(payload)) if (!imgs.some((x) => x.mediaId === r.mediaId)) imgs.push(r);
+            } else if (wire.VIDEO_SUBMIT_RPCS.includes(rid)) {
+              for (const r of wire.generationRecords(payload)) {
+                ours.wf.add(r.workflowId); ours.media.add(r.mediaId);
+                if (r.failed) return errOut('GENERATE_FAILED', r.errorText || 'status ' + r.status);
+              }
+            }
+          }
+        } else if (e.kind === 'reply' && e.text && e.rpcids.some((r) => wire.STATUS_RPCS.includes(r)) && (ours.wf.size || ours.media.size)) {
+          for (const [, payload] of wire.frames(e.text)) {
+            for (const r of wire.generationRecords(payload)) {
+              if (!ours.wf.has(r.workflowId) && !ours.media.has(r.mediaId)) continue;
+              if (r.failed) return errOut('GENERATE_FAILED', r.errorText || 'status ' + r.status);
+            }
+          }
+        }
+      }
+      // 2) pesan galat di halaman
+      const perr = await this.call('pageError').catch(() => null);
+      if (perr) return errOut(perr.suspect ? 'FLOW_UNUSUAL_ACTIVITY' : 'GENERATE_FAILED', perr.text, perr.suspect);
+      const tiles = await this.call('failedTiles').catch(() => null);
+      if (tiles && tiles.count > tiles0) return errOut('GENERATE_FAILED', tiles.texts[tiles.texts.length - 1]);
+      // 3) daftar project: hasil baru siap?
+      let fresh = null;
+      if (Date.now() - lastList > 4000 || imageReply) {
+        lastList = Date.now();
+        const st = await this.status();
+        if (st.projectId) {
+          try {
+            const items = await this.listMedia(st.projectId);
+            fresh = items.filter((it) => !skip.has(it.mediaId));
+            if (imgs.length) { const mine = fresh.filter((it) => imgs.some((x) => x.mediaId === it.mediaId)); if (mine.length) fresh = mine; }
+            if (fresh.length && !firstSeen) firstSeen = Date.now();
+            const ready = fresh.filter((it) => it.done && (it.image || it.video));
+            if (fresh.length) status(`Hasil: ${ready.length}/${fresh.length} siap`);
+            if (!wait && (submitted || fresh.length)) return { ok: true, started: true, projectId: st.projectId };
+            if (fresh.length && (ready.length === fresh.length || (ready.length && Date.now() - firstSeen > 90000))) return { ok: true, items: ready, projectId: st.projectId };
+            if (imgs.length && imageReply && Date.now() - imageReply.t > 15000) {
+              // gambar sudah jadi menurut balasan Flow, tetapi belum muncul di daftar → pakai data balasan
+              const hosts = this.agentCfg.mediaHosts;
+              const okUrl = (u) => { try { return hosts.includes(new URL(u).hostname) ? u : null; } catch { return null; } };
+              return { ok: true, items: imgs.map((r) => ({ mediaId: r.mediaId, title: String(prompt || 'gambar').slice(0, 40), isVideo: false, done: true, image: okUrl(r.url), video: null })), projectId: st.projectId };
+            }
+          } catch (e) { status('Membaca galeri gagal (' + e.message + '), mencoba lagi…'); }
+        }
+      }
+      // 4) batas waktu
+      const el = Date.now() - t0;
+      if (!submitted && !firstSeen && el > startMs) {
+        const left = await this.call('promptText').catch(() => null);
+        const stuck = prompt && left && left.replace(/\s+/g, ' ').trim() === String(prompt).replace(/\s+/g, ' ').trim();
+        const credits = await this.call('creditsWarning').catch(() => null);
+        if (credits) return errOut('INSUFFICIENT_CREDITS', credits);
+        return errOut('GENERATE_NOT_STARTED', null, !!stuck);
+      }
+      if (imageReply && !imgs.length && Date.now() - imageReply.t > 20000 && !(fresh && fresh.length)) return errOut('GENERATE_FAILED', 'Flow tidak mengembalikan gambar (kemungkinan diblokir filter keamanan)');
+      if (kind === 'image' && submitted && !imageReply && !firstSeen && Date.now() - submitted.t > imageMs) return errOut('GENERATE_TIMEOUT', 'Flow tidak menjawab dalam ' + Math.round(imageMs / 1000) + ' dtk');
+      if (el > timeoutMs) return errOut('GENERATE_TIMEOUT');
+      if (!submitted && !firstSeen) status('Menunggu Flow memulai…');
+      await sleep(1000);
+    }
   }
 
   /** MODE OTOMATIS: klik tombol Generate Flow (klik mouse asli), cadangan: tombol Enter di kolom prompt. */
@@ -695,4 +1113,4 @@ class FlowSession extends EventEmitter {
   }
 }
 
-module.exports = { FlowSession, DEFAULT_FLOW_URL, IMAGE_EXT, sleep, rand };
+module.exports = { FlowSession, DEFAULT_FLOW_URL, IMAGE_EXT, sleep, rand, fail };

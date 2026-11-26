@@ -5,6 +5,19 @@ const fc = window.fc;
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
+// Tag "@" gambar referensi — algoritme SAMA dengan src/main/refs.js (yang ditampilkan = yang dipakai)
+function baseTag(file) {
+  const name = String(file).split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+  let t = name.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').replace(/-{2,}/g, '-').slice(0, 20).replace(/-+$/, '');
+  if (!t) t = 'gambar';
+  if (/^[0-9]/.test(t)) t = 'img' + t;
+  return t;
+}
+function refTags(paths) {
+  const seen = new Map();
+  return paths.map((p) => { const b = baseTag(p); const n = (seen.get(b) || 0) + 1; seen.set(b, n); return n === 1 ? b : b + n; });
+}
+
 async function call(channel, ...args) {
   const r = await fc.call(channel, ...args);
   if (!r || !r.ok) {
@@ -58,11 +71,28 @@ const ERR = {
   QUEUE_RUNNING: 'Hentikan antrean otomatis terlebih dahulu.',
   NEW_PROJECT_NOT_FOUND: 'Tombol "New project" di Google Flow tidak ditemukan. Klik "Lihat Flow" lalu buat project secara manual.',
   GENERATE_NOT_STARTED: 'Flow tidak memulai pembuatan setelah Generate ditekan. Periksa kuota/kredit, lalu coba lagi.',
-  FLOW_ERROR: 'Google Flow menolak permintaan ini.'
+  FLOW_ERROR: 'Google Flow menolak permintaan ini.',
+  UPLOAD_BUTTON_NOT_FOUND: 'Tombol unggah gambar di Google Flow tidak ditemukan. Buka sebuah project di Flow lalu coba lagi.',
+  UPLOAD_TERMS: 'Google Flow meminta persetujuan sekali saat pertama kali mengunggah gambar. Klik "Lihat Flow", setujui dialognya, lalu coba lagi.',
+  UPLOAD_NOT_SENT: 'Gambar tidak terunggah ke Google Flow (dialog unggah tidak merespons).',
+  UPLOAD_TIMEOUT: 'Unggahan gambar ke Google Flow tidak selesai dalam 90 detik. Periksa koneksi lalu coba lagi.',
+  UPLOAD_FAILED: 'Google Flow gagal menyimpan gambar referensi.',
+  UPLOAD_REJECTED: 'Google Flow menolak gambar referensi (terlalu kecil, format tidak didukung, atau melanggar kebijakan).',
+  REFERENCE_NOT_ATTACHED: 'Gambar referensi sudah diunggah tetapi tidak bisa ditandai dengan @ di prompt Flow. Generate dibatalkan agar tidak menghasilkan gambar kosong.',
+  REFERENCE_LOST: 'Penanda @ di prompt Flow hilang saat menyusun prompt. Coba lagi.',
+  FRAME_SLOT_NOT_FOUND: 'Slot frame awal/akhir tidak ditemukan di Google Flow.',
+  FRAME_NOT_ATTACHED: 'Gambar tidak bisa dipasang sebagai frame di Google Flow.',
+  GENERATE_FAILED: 'Google Flow gagal membuat hasil.',
+  FLOW_UNUSUAL_ACTIVITY: 'Google Flow mendeteksi "aktivitas tidak biasa" dan menolak permintaan. Tunggu beberapa menit, perpanjang jeda antrean, lalu coba lagi.',
+  FLOW_CONTENT_POLICY: 'Ditolak filter keamanan Google Flow (prompt atau gambar dianggap melanggar kebijakan). Ubah prompt / gambar lalu coba lagi.',
+  FLOW_REFUSED: 'Google Flow menolak permintaan ini.',
+  INSUFFICIENT_CREDITS: 'Kredit Google Flow tidak cukup untuk setelan ini. Kurangi jumlah / pilih model lebih murah, atau isi ulang kredit.',
+  NO_RESULTS: 'Flow tidak mengembalikan hasil.'
 };
+const DETAIL = new Set(['FLOW_ERROR', 'GENERATE_FAILED', 'FLOW_REFUSED', 'UPLOAD_FAILED', 'UPLOAD_REJECTED', 'REFERENCE_NOT_ATTACHED', 'FRAME_NOT_ATTACHED', 'GENERATE_TIMEOUT', 'GENERATE_NOT_STARTED', 'INSUFFICIENT_CREDITS', 'FLOW_CONTENT_POLICY']);
 const msg = (e) => {
   const k = (e && e.message) || String(e);
-  if (k === 'FLOW_ERROR' && e.detail) return ERR[k] + ' ' + e.detail;
+  if (ERR[k] && DETAIL.has(k) && e.detail) return `${ERR[k]} (${e.detail})`;
   if (ERR[k]) return ERR[k];
   if (/^HTTP_\d+$/.test(k)) return `Google Flow membalas error ${k.slice(5)}.`;
   return k;
@@ -265,7 +295,8 @@ const PAGES = {
     const video = o.kind === 'video';
     const chip = (k, v, label, ic, title) => `<button class="chip ${String(o[k]) === String(v) ? 'on' : ''}" data-act="studioOpt" data-k="${k}" data-v="${v}" ${title ? `title="${esc(title)}"` : ''}>${ic ? icon(ic) : ''}<span>${label}</span></button>`;
     const refLabel = !video ? 'Gambar referensi' : o.sub === 'frames' ? 'Frame awal &amp; akhir' : o.sub === 'ingredients' ? 'Bahan (karakter, objek, gaya)' : 'Gambar referensi';
-    const refHint = !video ? 'Opsional — untuk edit / gaya.' : o.sub === 'frames' ? 'Gambar ke-1 = frame awal, ke-2 = frame akhir.' : o.sub === 'ingredients' ? 'Maks. 3 bahan agar konsisten antar adegan.' : 'Opsional. Untuk animasi gambar, pilih "Frame".';
+    const tags = refTags(imgs);
+    const refHint = !video ? (imgs.length ? 'Ketik @ di prompt untuk menunjuk gambar.' : 'Opsional — untuk edit / gaya.') : o.sub === 'ingredients' && imgs.length ? 'Ketik @ di prompt untuk menunjuk bahan.' : o.sub === 'frames' ? 'Gambar ke-1 = frame awal, ke-2 = frame akhir.' : o.sub === 'ingredients' ? 'Maks. 3 bahan agar konsisten antar adegan.' : 'Opsional. Untuk animasi gambar, pilih "Frame".';
     const models = modelList(o.kind);
     const g = S.gallery;
     const items = g.key ? g.items : [];
@@ -293,12 +324,13 @@ const PAGES = {
           ${video ? `<div class="chips modes">${SUBS.map(([v, l, ic, t]) => chip('sub', v, l, ic, t)).join('')}</div>` : ''}
           <div class="prompt-wrap">
             <textarea id="prompt" class="input prompt" rows="6" maxlength="8000" placeholder="${video ? 'Kamera drone perlahan maju di atas sawah terasering Bali saat matahari terbit, kabut tipis, sinematik…' : 'Foto produk kopi susu gula aren di meja kayu, cahaya pagi, gaya editorial…'}" data-input="prompt">${esc(S.studio.prompt)}</textarea>
-            <div class="prompt-foot"><span class="faint small" id="count">${S.studio.prompt.length}/8000</span><span class="faint small">Ctrl+Enter</span></div>
+            <div class="mention-pop" id="mention-pop" role="listbox" hidden></div>
+            <div class="prompt-foot"><span class="faint small" id="count">${S.studio.prompt.length}/8000</span><span class="faint small">${imgs.length ? '@ = tandai gambar · ' : ''}Ctrl+Enter</span></div>
           </div>
           <div class="refs">
             <div class="refs-head"><b>${refLabel}</b><span class="faint small">${refHint}</span><span class="right faint small">${imgs.length}/10</span></div>
             <div class="ref-row" id="drop">
-              ${imgs.map((p, i) => `<div class="thumb" title="${esc(p)}">${S.studio.previews[p] ? `<img src="${S.studio.previews[p]}" alt="">` : icon('file-image', 'lg')}${video && o.sub === 'frames' && i < 2 ? `<span class="tag">${i ? 'Akhir' : 'Awal'}</span>` : ''}${btn('removeImage', '', { ic: 'x', cls: 'x sm', title: 'Hapus', data: `data-i="${i}"` })}</div>`).join('')}
+              ${imgs.map((p, i) => `<div class="thumb" title="${esc(p)}">${S.studio.previews[p] ? `<img src="${S.studio.previews[p]}" alt="">` : icon('file-image', 'lg')}${video && o.sub === 'frames' && i < 2 ? `<span class="tag">${i ? 'Akhir' : 'Awal'}</span>` : `<button class="reftag" data-act="insertTag" data-tag="${esc(tags[i])}" title="Sisipkan @${esc(tags[i])} ke prompt">@${esc(tags[i])}</button>`}${btn('removeImage', '', { ic: 'x', cls: 'x sm', title: 'Hapus', data: `data-i="${i}"` })}</div>`).join('')}
               <button class="thumb add" data-act="pickImages" title="Tambah gambar (atau seret ke sini)">${icon('image-plus', 'lg')}<span class="small">Tambah</span></button>
             </div>
           </div>
@@ -395,7 +427,7 @@ const PAGES = {
       ${total ? `<table class="table"><thead><tr><th class="num">#</th><th>Prompt</th><th>Gambar</th><th>Akun</th><th>Status</th><th>Hasil</th><th class="act"></th></tr></thead><tbody>
         ${q.jobs.map((j, i) => `<tr>
           <td class="num">${i + 1}</td>
-          <td class="prompt"><div class="ellipsis" title="${esc(j.prompt)}">${esc(j.prompt)}</div>${j.error ? `<div class="small err-text">${esc(msg({ message: j.error }))}</div>` : ''}</td>
+          <td class="prompt"><div class="ellipsis" title="${esc(j.prompt)}">${esc(j.prompt)}</div>${j.error ? `<div class="small err-text">${esc(msg({ message: j.error, detail: j.detail }))}</div>` : ''}</td>
           <td>${j.images.length || '—'}</td>
           <td class="ellipsis">${esc((accById(j.accountId) || {}).label || '—')}</td>
           <td>${label[j.status] || j.status}</td>
@@ -702,6 +734,9 @@ async function addImages(paths) {
   render();
 }
 
+function mentionNote(m) {
+  return m && m.missing && m.missing.length ? ` Tidak ditemukan di Flow: ${m.missing.map((x) => '@' + x).join(', ')} (ditulis sebagai teks).` : '';
+}
 function settingsNote(r) {
   if (!r) return '';
   const names = { kind: 'jenis', sub: 'mode', model: 'model', ratio: 'rasio', count: 'jumlah', duration: 'durasi' };
@@ -890,6 +925,7 @@ const ACTIONS = {
   // Studio
   pickImages: async () => { const list = await call('files:pickImages'); if (list.length) addImages(list); },
   removeImage: (el) => { S.studio.images.splice(Number(el.dataset.i), 1); render(); },
+  insertTag: (el) => insertMention(el.dataset.tag, false),
   clearImages: () => { S.studio.images = []; render(); },
   async send() {
     const a = acc();
@@ -898,11 +934,11 @@ const ACTIONS = {
     S.activity = 'Mengirim ke Google Flow…';
     render();
     try {
-      const r = await call('flow:send', a.id, { prompt: S.studio.prompt, images: S.studio.images, options: opts() });
+      const r = await call('flow:send', a.id, { prompt: S.studio.prompt, images: S.studio.images, tags: refTags(S.studio.images), options: opts() });
       const parts = [];
-      if (r.images) parts.push(`${r.images.count} gambar`);
-      if (r.prompt) parts.push('prompt');
-      log(`Terkirim ke Flow: ${parts.join(' + ')}.${settingsNote(r.settings)}`, 'ok');
+      if (r.refs && r.refs.length) parts.push(`${r.refs.length} gambar diunggah (${r.refs.map((x) => '@' + x.tag).join(', ')})`);
+      if (S.studio.prompt.trim()) parts.push('prompt');
+      log(`Terkirim ke Flow: ${parts.join(' + ')}.${settingsNote(r.settings)}${mentionNote(r.mentions)}`, 'ok');
       await call('flow:afterSend', a.id, true);
       toast('Terkirim. Tekan Generate di jendela Google Flow.', 'ok');
     } catch (e) { log(msg(e), 'err'); toast(msg(e), 'err'); }
@@ -918,8 +954,9 @@ const ACTIONS = {
     S.activity = 'Menyiapkan Google Flow…';
     render();
     try {
-      const r = await call('flow:run', a.id, { prompt: S.studio.prompt, images: S.studio.images, options: opts(), waitResults: S.studio.waitResults });
-      log(`Generate ditekan${r.click && r.click.label ? ' ("' + r.click.label + '")' : ''}.${settingsNote(r.settings)}${r.fellBack ? ' Mode tersembunyi ditolak — beralih ke jendela diperkecil.' : ''}`, 'ok');
+      const r = await call('flow:run', a.id, { prompt: S.studio.prompt, images: S.studio.images, tags: refTags(S.studio.images), options: opts(), waitResults: S.studio.waitResults });
+      if (r.refs && r.refs.length) log(`${r.refs.length} gambar referensi terunggah di Flow & ditandai: ${r.refs.map((x) => '@' + x.tag).join(', ')}.`, 'ok');
+      log(`Generate ditekan${r.click && r.click.label ? ' ("' + r.click.label + '")' : ''}.${settingsNote(r.settings)}${mentionNote(r.mentions)}${r.fellBack ? ' Mode tersembunyi ditolak — beralih ke jendela diperkecil.' : ''}`, 'ok');
       if (r.items) {
         log(`${r.items.length} hasil siap${r.files.length ? `, ${r.files.length} file diunduh` : ''}.`, 'ok');
         toast(`${r.items.length} hasil siap${r.files.length ? ' & sudah diunduh' : ''}.`, 'ok');
@@ -969,7 +1006,7 @@ const ACTIONS = {
     if (!r) return;
     const prompts = r.el.querySelector('[name=prompts]').value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
     try {
-      S.queue = await call('queue:add', { prompts, images, accountId: r.el.querySelector('[name=acc]').value, options: opts() });
+      S.queue = await call('queue:add', { prompts, images, tags: refTags(images), accountId: r.el.querySelector('[name=acc]').value, options: opts() });
       toast(`${prompts.length} tugas ditambahkan.`, 'ok');
       if (S.page !== 'auto') go('auto'); else render();
     } catch (e) { toast(msg(e), 'err'); }
@@ -1157,8 +1194,66 @@ document.addEventListener('input', (e) => {
     S.studio.prompt = e.target.value;
     const c = $('#count');
     if (c) c.textContent = `${S.studio.prompt.length}/8000`;
+    mentionUpdate(e.target);
   }
 });
+
+// ---------- Autocomplete "@" di kolom prompt Studio ----------
+const MP = { open: false, list: [], i: 0, start: -1 };
+function mentionQuery(ta) {
+  const upto = ta.value.slice(0, ta.selectionStart);
+  const m = /(^|[\s([{"'“‘,;:])@([A-Za-z0-9_-]{0,40})$/.exec(upto);
+  return m ? { start: upto.length - m[2].length - 1, q: m[2].toLowerCase() } : null;
+}
+function mentionUpdate(ta) {
+  const pop = $('#mention-pop');
+  if (!pop) return;
+  const imgs = S.studio.images;
+  const q = imgs.length ? mentionQuery(ta) : null;
+  const tags = refTags(imgs);
+  const list = q ? tags.map((t, i) => ({ t, i })).filter((x) => x.t.startsWith(q.q) || (q.q.length > 1 && x.t.includes(q.q))) : [];
+  if (!list.length) { mentionClose(); return; }
+  MP.open = true; MP.list = list; MP.start = q.start; MP.i = Math.min(MP.i, list.length - 1);
+  pop.innerHTML = `<div class="mp-head faint small">Tandai gambar referensi</div>` + list.map((x, k) => `<button type="button" class="mp-item ${k === MP.i ? 'on' : ''}" role="option" aria-selected="${k === MP.i}" data-mp="${k}">${S.studio.previews[imgs[x.i]] ? `<img src="${S.studio.previews[imgs[x.i]]}" alt="">` : icon('file-image')}<span>@${esc(x.t)}</span></button>`).join('');
+  pop.hidden = false;
+}
+function mentionClose() { MP.open = false; MP.i = 0; const pop = $('#mention-pop'); if (pop) { pop.hidden = true; pop.innerHTML = ''; } }
+function insertMention(tag, fromQuery) {
+  const ta = $('#prompt');
+  if (!ta || !tag) return;
+  const v = ta.value;
+  let a = ta.selectionStart, b = ta.selectionEnd;
+  if (fromQuery && MP.start >= 0) a = MP.start;
+  else if (document.activeElement !== ta) { a = b = v.length; }
+  const before = v.slice(0, a), after = v.slice(b);
+  const pre = !fromQuery && before && !/[\s([{"'“‘,;:]$/.test(before) ? ' ' : '';
+  const ins = pre + '@' + tag + (/^\s/.test(after) ? '' : ' ');
+  ta.value = (before + ins + after).slice(0, 8000);
+  const pos = Math.min(before.length + ins.length, ta.value.length);
+  ta.focus();
+  ta.setSelectionRange(pos, pos);
+  S.studio.prompt = ta.value;
+  const c = $('#count');
+  if (c) c.textContent = `${S.studio.prompt.length}/8000`;
+  mentionClose();
+}
+document.addEventListener('mousedown', (e) => {
+  const it = e.target.closest && e.target.closest('[data-mp]');
+  if (it) { e.preventDefault(); const x = MP.list[Number(it.dataset.mp)]; if (x) insertMention(x.t, true); return; }
+  if (MP.open && !(e.target.closest && e.target.closest('#mention-pop, #prompt'))) mentionClose();
+});
+document.addEventListener('keydown', (e) => {
+  if (!MP.open || !e.target || e.target.id !== 'prompt') return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault(); e.stopImmediatePropagation();
+    MP.i = (MP.i + (e.key === 'ArrowDown' ? 1 : MP.list.length - 1)) % MP.list.length;
+    mentionUpdate(e.target);
+  } else if ((e.key === 'Enter' && !e.ctrlKey && !e.metaKey) || e.key === 'Tab') {
+    e.preventDefault(); e.stopImmediatePropagation();
+    const x = MP.list[MP.i]; if (x) insertMention(x.t, true);
+  } else if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); mentionClose(); }
+}, true);
+document.addEventListener('selectionchange', () => { const ta = $('#prompt'); if (MP.open && ta && document.activeElement === ta) mentionUpdate(ta); });
 
 // seret & lepas gambar (di halaman Studio)
 document.addEventListener('dragover', (e) => {

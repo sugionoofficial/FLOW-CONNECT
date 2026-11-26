@@ -4,7 +4,7 @@
 // ambil file media, mencari kolom prompt / input file / tombol Generate.
 // Tidak pernah membuat token reCAPTCHA — Generate selalu lewat tombol UI Flow sendiri.
 
-const AGENT_VERSION = 4;
+const AGENT_VERSION = 5;
 
 /* eslint-disable */
 function fcAgent(V, cfg) {
@@ -125,7 +125,7 @@ function fcAgent(V, cfg) {
     return r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none';
   }
   function editor() {
-    var sels = ['[contenteditable="true"][role="textbox"]', 'textarea', '[contenteditable="true"]', 'input[type="text"][aria-label]'];
+    var sels = ['flow-prompt-box [contenteditable="true"]', '[contenteditable="true"][role="textbox"]', 'textarea', '[contenteditable="true"]', 'input[type="text"][aria-label]'];
     for (var i = 0; i < sels.length; i++) {
       var list = document.querySelectorAll(sels[i]);
       for (var j = list.length - 1; j >= 0; j--) if (visible(list[j]) && !list[j].disabled && !list[j].readOnly) return list[j];
@@ -220,6 +220,8 @@ function fcAgent(V, cfg) {
         if (/^(add|add_2|tune|settings)$/.test(it)) { score -= 3; break; }
       }
       if (el.type === 'submit') score += 2;
+      if (el.closest && el.closest('flow-prompt-box') && hasLig(el, 'arrow_forward')) score += 4;
+      if (el.classList && (el.classList.contains('prompt-warning-button') || el.classList.contains('mention-chip'))) score -= 10;
       if (ed) {
         var a = ed;
         for (var lvl = 0; lvl < 6 && a; lvl++, a = a.parentElement) if (a.contains(el)) { score += (6 - lvl) / 2; break; }
@@ -304,6 +306,7 @@ function fcAgent(V, cfg) {
         if (ex && ex.test(lab)) continue;
         var score = 0;
         if (re && re.test(lab)) score = 10;
+        if (spec.lig && hasLig(el, spec.lig)) score = Math.max(score, 15);
         if (target) {
           var n = norm(lab);
           if (n === target || norm(primaryText(el)) === target) score = 12;
@@ -349,6 +352,7 @@ function fcAgent(V, cfg) {
       var lab = labelOf(el), all = (el.getAttribute('aria-label') || '') + ' ' + (el.innerText || '');
       var score = 0;
       if (/settings trigger|generation settings|setelan (pembuatan|generate)/i.test(all)) score += 10;
+      if (el.classList && el.classList.contains('settings-trigger-button')) score += 20;
       if (/(^|[\s·•|])x[1-4]([\s·•|]|$)/i.test(all)) score += 4;
       if (/\b(video|image|images|gambar|视频|图片|圖片)\b/i.test(all)) score += 2;
       if (/\b\d{1,2}\s?s\b|16:9|9:16/.test(all)) score += 2;
@@ -395,12 +399,147 @@ function fcAgent(V, cfg) {
     return null;
   }
 
+  // ---------- Referensi gambar: unggah, pemilih "@", chip, slot frame ----------
+  function ligs(el) {
+    var out = [], ic = el.querySelectorAll(ICON_SEL);
+    for (var i = 0; i < ic.length; i++) out.push((ic[i].textContent || '').trim());
+    return out;
+  }
+  function hasLig(el, lig) { return ligs(el).indexOf(lig) >= 0; }
+  function promptBox() {
+    var ed = editor();
+    if (!ed) return null;
+    return (ed.closest && ed.closest('flow-prompt-box')) || ed.parentElement;
+  }
+  function inOverlay(el) { return !!(el.closest && el.closest(OVERLAY_SEL)); }
+  // tombol "+" untuk menambah media: toolbar Flow (di luar kotak prompt) lebih dulu, lalu "+" di kotak prompt
+  function toolbarAdd() {
+    var els = document.querySelectorAll('button, [role="button"]');
+    var best = null, bestScore = 0;
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (!visible(el) || inOverlay(el)) continue;
+      var lab = labelOf(el), score = 0, insideBox = !!(el.closest && el.closest('flow-prompt-box'));
+      if (hasLig(el, 'add') && !insideBox) score = 10;
+      else if (hasLig(el, 'add_2') || hasLig(el, 'add')) score = 7;
+      if (/^(add( media| ingredients?( to the prompt box)?| images?)?|upload( media)?|tambah( media| gambar| bahan)?|unggah( media)?)$/i.test(lab)) score = Math.max(score, 8);
+      if (/new project|project baru|proyek baru/i.test(lab)) score = 0;
+      if (score > bestScore) { bestScore = score; best = el; }
+    }
+    return best ? box(best) : null;
+  }
+  // entri "Upload" di menu yang terbuka setelah "+"
+  function uploadMenuItem() {
+    var ov = overlays();
+    for (var j = ov.length - 1; j >= 0; j--) {
+      var els = ov[j].querySelectorAll('[role="menuitem"], [role="option"], button, [role="button"]');
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        if (!visible(el)) continue;
+        if (hasLig(el, 'upload') || hasLig(el, 'upload_file') || /^(upload( media| image| from (computer|device))?|unggah( media| gambar)?|dari perangkat)$/i.test(labelOf(el))) return box(el);
+      }
+    }
+    return null;
+  }
+  function dialogCount() {
+    return Array.prototype.filter.call(document.querySelectorAll('[role="dialog"], [role="alertdialog"]'), visible).length;
+  }
+  // pilihan aset di pemilih "@" (dan pemilih frame)
+  function mentionOptions() {
+    var els = Array.prototype.filter.call(document.querySelectorAll('button.asset-item[role="option"], .asset-item[role="option"]'), visible);
+    if (!els.length) {
+      var ov = overlays();
+      for (var j = ov.length - 1; j >= 0 && !els.length; j--) els = Array.prototype.filter.call(ov[j].querySelectorAll('[role="option"]'), visible);
+    }
+    return els.map(function (el, i) {
+      var t = el.querySelector('.asset-title');
+      var title = ((t && t.textContent) || primaryText(el) || labelOf(el) || '').replace(/\s+/g, ' ').trim();
+      var b = box(el);
+      return { i: i, title: title.slice(0, 120), x: b.x, y: b.y, w: b.w, h: b.h };
+    });
+  }
+  function mentionChips() {
+    var root = promptBox() || document;
+    var els = root.querySelectorAll('.mention-chip');
+    return Array.prototype.map.call(els, function (c) {
+      return { text: (c.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120), type: c.getAttribute('data-reference-type') || '', id: c.getAttribute('data-entity-id') || '' };
+    });
+  }
+  function caretToEnd() {
+    var ed = editor();
+    if (!ed) throw new Error('PROMPT_BOX_NOT_FOUND');
+    ed.focus();
+    if (typeof ed.setSelectionRange === 'function') { var n = ed.value.length; ed.setSelectionRange(n, n); }
+    else {
+      var r = document.createRange();
+      r.selectNodeContents(ed);
+      r.collapse(false);
+      var sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(r);
+    }
+    return { chips: mentionChips().length, text: promptText() };
+  }
+  // slot frame kosong (Awal / Akhir) pada mode Frames to Video
+  function emptyFrameChip() {
+    var els = Array.prototype.filter.call(document.querySelectorAll('flow-prompt-box button.empty-chip, button.empty-chip'), visible);
+    if (els.length) return box(els[0]);
+    return find({ roles: ['button'], re: '^(start|end|first|last|awal|akhir)( frame)?$', scope: 'page' });
+  }
+  function boundFrames() {
+    return Array.prototype.filter.call(document.querySelectorAll('flow-prompt-box button.chip-container'), function (b) { return visible(b) && !!b.querySelector('img'); }).length;
+  }
+  function picker() {
+    var p = Array.prototype.filter.call(document.querySelectorAll('flow-add-menu-popover-content'), visible).pop();
+    if (!p) return { open: false };
+    var input = Array.prototype.filter.call(p.querySelectorAll('input[type="text"], input:not([type]), input[type="search"]'), visible)[0];
+    var confirm = Array.prototype.filter.call(document.querySelectorAll('button.detail-add-to-prompt-btn'), visible)[0];
+    return { open: true, search: input ? box(input) : null, confirm: confirm ? box(confirm) : null };
+  }
+  function focusPickerSearch() {
+    var p = Array.prototype.filter.call(document.querySelectorAll('flow-add-menu-popover-content'), visible).pop();
+    var input = p && p.querySelector('input');
+    if (!input) return false;
+    input.focus();
+    input.select();
+    return true;
+  }
+  // Flow mengganti tombol kirim dengan peringatan kredit tidak cukup
+  function creditsWarning() {
+    var el = Array.prototype.filter.call(document.querySelectorAll('button.prompt-warning-button'), visible)[0];
+    return el ? (labelOf(el) || 'credits').slice(0, 120) : null;
+  }
+  // kartu hasil yang gagal di grid project
+  var TILE_FAIL = /^(failed|generation failed|failed to generate|couldn.t (generate|create)[^]*|could not (generate|create)[^]*|something went wrong[^]*|we noticed some unusual activity[^]*|[^]*violat[^]*polic[^]*|[^]*might violate[^]*|gagal|gagal (membuat|menghasilkan)[^]*|tidak dapat (membuat|menghasilkan)[^]*)$/i;
+  function failedTiles() {
+    var texts = [], box0 = promptBox();
+    var els = document.querySelectorAll('main *, [role="main"] *, body > div *');
+    for (var i = 0; i < els.length && texts.length < 50; i++) {
+      var el = els[i];
+      if (el.children.length > 2) continue;
+      var raw = el.textContent || '';
+      if (!raw || raw.length > 400) continue;
+      var t = raw.replace(/\s+/g, ' ').trim();
+      if (!t || t.length > 200 || !TILE_FAIL.test(t) || (box0 && box0.contains(el)) || inOverlay(el) || !visible(el)) continue;
+      if (texts.indexOf(t) < 0 || el.children.length === 0) texts.push(t);
+    }
+    return { count: texts.length, texts: texts.slice(0, 5) };
+  }
+  // bilah persetujuan cookie Google menutupi kotak prompt → pilih "Tolak"
+  function cookieReject() {
+    var el = Array.prototype.filter.call(document.querySelectorAll('button.glue-cookie-notification-bar__reject'), visible)[0];
+    return el ? box(el) : null;
+  }
+
   var api = {
     status: status, listMedia: listMedia, getMedia: getMedia, fetchB64: fetchB64, focusPrompt: focusPrompt,
     promptText: promptText, setPromptFallback: setPromptFallback, markFileInput: markFileInput, pasteFiles: pasteFiles,
     findGenerate: findGenerate, find: find, newProjectTarget: newProjectTarget, settingsTrigger: settingsTrigger,
     legacyModeTrigger: legacyModeTrigger, modelTrigger: modelTrigger, overlayOpen: overlayOpen, optionLabels: optionLabels,
-    pageError: pageError
+    pageError: pageError, toolbarAdd: toolbarAdd, uploadMenuItem: uploadMenuItem, dialogCount: dialogCount,
+    mentionOptions: mentionOptions, mentionChips: mentionChips, caretToEnd: caretToEnd, emptyFrameChip: emptyFrameChip,
+    boundFrames: boundFrames, picker: picker, focusPickerSearch: focusPickerSearch, creditsWarning: creditsWarning,
+    failedTiles: failedTiles, cookieReject: cookieReject
   };
   Object.defineProperty(window, '__fcDesktop', {
     configurable: true, enumerable: false,

@@ -69,6 +69,7 @@ const MOCK = `(() => {
     'accounts:resetHeadless': (id) => { const a = accounts.find((x) => x.id === id); delete a.headlessFailedAt; return settings; },
     'flow:listMedia': () => items,
     'flow:thumb': (id, it) => it.image,
+    'files:pickImages': () => ['/foto/Kucing Oren.png', '/foto/latar.jpg'],
     'files:register': (p) => p,
     'files:preview': () => svg(['#888', '#ccc'])
   };
@@ -155,6 +156,22 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   await sleep(150);
   assert.strictEqual(await ev('__settings.studio.ratio + "/" + __settings.studio.count'), '1:1/4');
   assert.ok(await ev('!!document.querySelector(".stage.r-1-1")'));
+  // gambar referensi: tag @ di setiap thumbnail + autocomplete @ di prompt
+  await ev(`document.querySelector('[data-act=pickImages]').click()`);
+  await sleep(300);
+  assert.deepStrictEqual(await ev('[...document.querySelectorAll(".reftag")].map((b) => b.textContent)'), ['@kucing-oren', '@latar']);
+  await ev(`(() => { const t = document.querySelector('#prompt'); t.focus(); t.value = 'Foto @ku'; t.setSelectionRange(8, 8); t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await sleep(100);
+  assert.strictEqual(await ev('document.querySelector("#mention-pop").hidden'), false, 'popup @ tampil');
+  assert.strictEqual(await ev('document.querySelectorAll("#mention-pop .mp-item").length'), 1);
+  if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'dark-studio-mention.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  await ev(`document.querySelector('#prompt').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))`);
+  await sleep(100);
+  assert.strictEqual(await ev('document.querySelector("#prompt").value'), 'Foto @kucing-oren ');
+  assert.strictEqual(await ev('document.querySelector("#mention-pop").hidden'), true);
+  await ev(`document.querySelectorAll('.reftag')[1].click()`);
+  await sleep(100);
+  assert.strictEqual(await ev('document.querySelector("#prompt").value'), 'Foto @kucing-oren @latar ');
   if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'dark-studio-image.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
   await ev(`document.querySelector('[data-act=studioOpt][data-k=kind][data-v=video]').click()`);
   await sleep(100);

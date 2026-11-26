@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const { EventEmitter } = require('events');
 const { sleep, rand } = require('./flow');
 const { sanitizeStudio } = require('./store');
+const { sanitizeTags } = require('./refs');
 
 class AutomationQueue extends EventEmitter {
   /**
@@ -38,14 +39,14 @@ class AutomationQueue extends EventEmitter {
 
   _log(text) { this.activity = text; this._emit(); }
 
-  add({ prompts, images = [], accountId, options }) {
+  add({ prompts, images = [], tags, accountId, options }) {
     const list = (Array.isArray(prompts) ? prompts : [prompts]).map((p) => String(p || '').trim()).filter(Boolean);
     if (!list.length) throw new Error('INVALID_PROMPT');
     if (list.length > 200 || this.jobs.length + list.length > 500) throw new Error('QUEUE_FULL');
     if (!this.store.data.accounts.some((a) => a.id === accountId)) throw new Error('UNKNOWN_ACCOUNT');
     for (const prompt of list) {
       if (prompt.length > 8000) throw new Error('INVALID_PROMPT');
-      this.jobs.push({ id: crypto.randomUUID(), prompt, images: images.slice(0, 10), accountId, options: options ? sanitizeStudio(options) : null, status: 'pending', results: [], error: null, createdAt: Date.now() });
+      this.jobs.push({ id: crypto.randomUUID(), prompt, images: images.slice(0, 10), tags: sanitizeTags(tags, images.slice(0, 10)), accountId, options: options ? sanitizeStudio(options) : null, status: 'pending', results: [], error: null, createdAt: Date.now() });
     }
     this._emit();
   }
@@ -102,7 +103,7 @@ class AutomationQueue extends EventEmitter {
           await this._wait(wait);
           if (this.stopRequested) break;
         }
-        job.status = 'running'; job.error = null; job.startedAt = Date.now();
+        job.status = 'running'; job.error = null; job.detail = null; job.startedAt = Date.now();
         try {
           await this._runJob(job, cfg);
           job.status = 'done'; done++;
@@ -111,6 +112,7 @@ class AutomationQueue extends EventEmitter {
           const stopped = e.message === 'STOPPED';
           job.status = stopped ? 'stopped' : 'failed';
           job.error = stopped ? null : e.message;
+          job.detail = stopped ? null : (e.detail || null);
           if (!stopped) { failed++; this.emit('job-failed', job); }
           if (!stopped && cfg.stopOnError) { this._log('Dihentikan karena tugas gagal: ' + e.message); break; }
         }
@@ -132,12 +134,13 @@ class AutomationQueue extends EventEmitter {
     const tag = acc ? acc.label : 'akun';
     this._log(`[${tag}] Menyambungkan ke Google Flow…`);
     const session = await this.getSession(job.accountId);
-    const res = await session.generate({ prompt: job.prompt, images: job.images, options: job.options }, {
+    const res = await session.generate({ prompt: job.prompt, images: job.images, tags: job.tags, options: job.options }, {
       onLog: (t) => this._log(`[${tag}] ${t}`),
       shouldStop: () => this._shouldStop(),
       timeoutMs: cfg.timeoutMin * 60000,
       onFallback: (v) => this.onFallback(job.accountId, v)
     });
+    if (!res.items || !res.items.length) throw new Error('NO_RESULTS');
     if (res.settings && res.settings.missing.length) job.note = 'Setelan tidak ditemukan di Flow: ' + res.settings.missing.join(', ');
     job.projectId = res.projectId;
     job.results = [];

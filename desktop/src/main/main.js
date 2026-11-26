@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const { Store } = require('./store');
 const { FlowSession, IMAGE_EXT } = require('./flow');
 const { AutomationQueue, safeName } = require('./automation');
+const { sanitizeTags } = require('./refs');
 const browser = require('./browser');
 const { LicenseManager } = require('./license');
 const { Updater } = require('./updater');
@@ -384,16 +385,13 @@ function registerIpc() {
     return flowOptions.get(id);
   });
   // MODE AMAN: masukkan setelan, gambar & prompt ke Flow; pengguna sendiri yang menekan Generate
-  handle('flow:send', async (id, { prompt, images, options }) => {
+  // gambar diunggah ke Flow dulu (ditunggu sampai tersimpan), lalu prompt ditulis dengan chip "@" ke gambar itu
+  handle('flow:send', async (id, { prompt, images, tags, options }) => {
     const imgs = checkImages(images);
     if (!imgs.length && !(prompt || '').trim()) throw new Error('NOTHING_TO_SEND');
     const s = await connectAccount(id, { project: true });
-    await s.beginWork();
-    const out = {};
-    if (options && options.apply !== false) out.settings = await s.applySettings(options);
-    if (imgs.length) out.images = await s.sendImages(imgs);
-    if ((prompt || '').trim()) { await new Promise((r) => setTimeout(r, imgs.length ? 2500 : 0)); out.prompt = await s.sendPrompt(prompt); }
-    return out;
+    const r = await s.prepare({ prompt: (prompt || '').trim(), images: imgs, tags: sanitizeTags(tags, imgs), options: options || null }, (t) => send('activity', t));
+    return { settings: r.settings, refs: r.prep.refs, mentions: r.prep.mentions };
   });
   handle('flow:afterSend', async (id, show) => {
     const s = session(id);
@@ -401,12 +399,12 @@ function registerIpc() {
     if (show) await s.bringToFront(); else await s.endWork();
   });
   // MODE OTOMATIS: setelan → gambar → prompt → Generate → (tunggu & unduh), dengan cadangan headless → jendela diperkecil
-  handle('flow:run', async (id, { prompt, images, options, waitResults }) => {
+  handle('flow:run', async (id, { prompt, images, tags, options, waitResults }) => {
     if (store.data.mode !== 'auto' || !store.data.autoAck) throw new Error('AUTO_MODE_DISABLED');
     const imgs = checkImages(images);
     if (!imgs.length && !(prompt || '').trim()) throw new Error('NOTHING_TO_SEND');
     const s = await connectAccount(id);
-    const res = await s.generate({ prompt: (prompt || '').trim(), images: imgs, options: options || null }, {
+    const res = await s.generate({ prompt: (prompt || '').trim(), images: imgs, tags: sanitizeTags(tags, imgs), options: options || null }, {
       onLog: (t) => send('activity', t), wait: !!waitResults, timeoutMs: store.data.auto.timeoutMin * 60000,
       onFallback: (v) => markHeadlessFailed(id, v.error)
     });
@@ -421,14 +419,14 @@ function registerIpc() {
     }
     if (res.items) notify('Hasil Google Flow siap', `${res.items.length} hasil${files.length ? ' sudah diunduh' : ''}.`);
     refreshStatus(id).catch(() => {});
-    return { click: res.click, settings: res.settings, items: res.items || null, files, fellBack: res.fellBack, mode: res.mode, projectId: res.projectId };
+    return { click: res.click, settings: res.settings, refs: res.refs, mentions: res.mentions, items: res.items || null, files, fellBack: res.fellBack, mode: res.mode, projectId: res.projectId };
   });
 
   // Antrean Mode Otomatis
   handle('queue:add', (job) => {
     const imgs = (job.images || []).filter((p) => allowedFiles.has(p) && checkImage(p));
     if ((job.images || []).length !== imgs.length) throw new Error('INVALID_IMAGE');
-    queue.add({ prompts: job.prompts, images: imgs, accountId: job.accountId, options: job.options || null });
+    queue.add({ prompts: job.prompts, images: imgs, tags: sanitizeTags(job.tags, imgs), accountId: job.accountId, options: job.options || null });
     return queue.state();
   });
   handle('queue:remove', (id) => { queue.remove(id); return queue.state(); });

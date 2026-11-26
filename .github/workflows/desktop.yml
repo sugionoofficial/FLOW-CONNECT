@@ -23,6 +23,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: desktop
@@ -41,7 +42,7 @@ jobs:
       - name: Uji integrasi (mesin CDP + tampilan)
         run: |
           set -o pipefail
-          node --test --test-reporter=spec test/*.test.js 2>&1 | tee test.log
+          node --test --test-reporter=spec --test-force-exit --test-timeout=300000 test/*.test.js 2>&1 | tee test.log
       - name: Ringkasan uji
         if: always()
         run: node scripts/test-annotate.js test.log
@@ -105,7 +106,7 @@ jobs:
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
 
-            **Baru di versi ini:** aktivasi dengan kunci lisensi dari situs FLOW CONNECT (menu Lisensi) dan pembaruan otomatis — saat ada versi baru muncul notifikasi "Update sekarang", tanpa instal ulang (versi installer).
+            **Baru di versi ini:** gambar referensi benar-benar diunggah ke Google Flow (ditunggu sampai tersimpan) sebelum Generate; penanda **@nama** di prompt menunjuk gambar referensi; skill **Generate Foto**; kegagalan generate (ditolak filter, aktivitas tidak biasa, kredit habis, video gagal) langsung terdeteksi dan dilaporkan — tidak menunggu tanpa akhir. Pembaruan otomatis tetap aktif (versi installer).
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

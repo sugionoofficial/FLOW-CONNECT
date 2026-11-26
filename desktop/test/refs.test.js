@@ -52,6 +52,14 @@ test('wire: penolakan, record video, gambar, unggahan', () => {
 
   const imgs = wire.imageRecords(['proj', [[M, null, W, null, null, null, [['https://flow-content.google/image/1', 1024]]]]]);
   assert.deepStrictEqual(imgs, [{ mediaId: M, workflowId: W, url: 'https://flow-content.google/image/1' }]);
+  // x4 dalam satu workflow; URL bertanda tangan di detail[13] diutamakan (bukan URL referensi di slot awal)
+  const ids = [1, 2, 3, 4].map((i) => `${i}${i}${i}${i}${i}${i}${i}${i}-aaaa-4aaa-8aaa-aaaaaaaaaaaa`);
+  const x4 = wire.imageRecords(['proj', ids.map((id) => { const d = Array(14).fill(null); d[0] = 'https://lh3.googleusercontent.com/ref'; d[13] = 'https://flow-content.google/image/' + id + '?Expires=1'; return [id, null, W, null, null, null, [d, null, [1376, 768]]]; }), [[W, null, null, ['judul'], P]]]);
+  assert.deepStrictEqual(x4.map((r) => r.mediaId), ids);
+  assert.ok(x4.every((r) => r.url === 'https://flow-content.google/image/' + r.mediaId + '?Expires=1'));
+  // bentuk record tidak dikenal → cadangan: URL /image/<uuid>
+  assert.deepStrictEqual(wire.imageRecords([['https://flow-content.google/image/' + M]]), []);
+  assert.deepStrictEqual(wire.looseImages([['https://flow-content.google/image/' + M + '?s=1', 'https://flow-content.google/video/' + W]]), [{ mediaId: M, workflowId: null, url: 'https://flow-content.google/image/' + M + '?s=1' }]);
 
   const upl = env([['wrb.fr', 'maseQ', JSON.stringify([[P, M], 'x.png']), null, null, null, 'generic']]);
   assert.strictEqual(wire.uploadedMediaId(upl, P), M);

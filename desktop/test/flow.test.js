@@ -226,6 +226,22 @@ ${genJs}
         if (rpcName === 'ogiZ0b' && state.unsafeNext > 0) { state.unsafeNext--; return refuse(3, 'PUBLIC_ERROR_UNSAFE_GENERATION'); }
         const fail = rpcName === 'YhhmEf' && state.failNext > 0;
         if (fail) state.failNext--;
+        if (rpcName === 'ogiZ0b' && state.v2) {
+          // Flow 2026-11: satu generate xN → N record gambar berbagi SATU workflow; URL bertanda tangan di detail[13]
+          const count = Math.max(1, Number((j.settings || {}).count) || 1);
+          const wf = uuid(generated.length + 1, 'ffff');
+          const pid = j.project || 'p-test-1';
+          const tuples = [];
+          for (let i = 0; i < count; i++) {
+            const id = uuid(media.length + 1, 'abcd');
+            const det = Array(14).fill(null);
+            det[1] = 1000 + i; det[7] = j.prompt; det[13] = `https://flow-content.google/image/${id}?Expires=1&Signature=x`;
+            media.push({ id, wf, v2: true, hidden: !!state.lag, prompt: j.prompt, files: j.refs, at: Date.now() - 5000 });
+            tuples.push([id, null, wf, null, null, null, [det, null, [1376, 768]]]);
+          }
+          generated.push({ ...j, wf, mediaId: tuples[0][0] });
+          return out([['wrb.fr', 'ogiZ0b', JSON.stringify([pid, tuples, [[wf, null, null, [j.prompt.slice(0, 30), [Math.floor(Date.now() / 1000), 0], false], pid]]]), null, null, null, 'generic']]);
+        }
         const n = generated.length + 1;
         const id = '0000000' + n + '-aaaa-bbbb-cccc-111122223333';
         const wf = uuid(n, 'ffff');
@@ -241,10 +257,18 @@ ${genJs}
         const rpc = u.searchParams.get('rpcids');
         let payload;
         if (rpc === 'Zzl0ze') {
-          const rows = media.map((m) => ['asset-' + m.id, 'f', null, [m.prompt.slice(0, 30), [Math.floor(m.at / 1000), 0], false, null, m.id, 'op', Date.now() - m.at > 1500], 'p-test-1']);
+          const rows = media.filter((m) => !m.v2).map((m) => ['asset-' + m.id, 'f', null, [m.prompt.slice(0, 30), [Math.floor(m.at / 1000), 0], false, null, m.id, 'op', Date.now() - m.at > 1500], 'p-test-1']);
+          // format 2026-11: baris workflow TANPA media id + record gambar 7 slot (tanpa status) per gambar
+          const v2 = media.filter((m) => m.v2 && !m.hidden);
+          for (const wf of [...new Set(v2.map((m) => m.wf))]) {
+            const first = v2.find((m) => m.wf === wf);
+            rows.push([wf, null, null, [first.prompt.slice(0, 30), [Math.floor(first.at / 1000), 0], false], 'p-test-1']);
+          }
+          for (const m of v2) { const det = Array(14).fill(null); det[13] = `http://127.0.0.1:${port}/image/${m.id}?sig=1`; rows.push([m.id, null, m.wf, null, null, null, [det, null, [1376, 768]]]); }
           if (state.rpc) {
             // Flow 2026: poster di dalam record sebagai /asb/<token> (tanpa media id, butuh cookie) + unggahan ikut terdaftar
-            rows.forEach((r, i) => r.push([[null, `http://127.0.0.1:${port}/asb/tok${i}x${media[i].id.slice(0, 8)}=w512`]]));
+            const old = media.filter((m) => !m.v2);
+            rows.slice(0, old.length).forEach((r, i) => r.push([[null, `http://127.0.0.1:${port}/asb/tok${i}x${old[i].id.slice(0, 8)}=w512`]]));
             for (const a of state.assets) rows.push(['asset-' + a.id, 'f', null, [a.name, [Math.floor(a.at / 1000), 0], false, null, a.id, 'op', true], 'p-test-1', [[null, `http://127.0.0.1:${port}/asb/up${a.id.slice(0, 8)}=w512`]]]);
             payload = [rows, []];
           } else payload = [rows, media.map((m) => `http://127.0.0.1:${port}/image/${m.id}?sig=1`)];
@@ -513,6 +537,53 @@ test('Kartu login (Chrome asli berjendela): tanpa port debug → navigator.webdr
   assert.strictEqual(mock.state.webdriver, 'false', 'navigator.webdriver harus false agar Google mengizinkan login');
   assert.strictEqual(await existingDebugPort(profileDir), null);
   assert.ok(!fs.existsSync(path.join(profileDir, 'fc-login-netlog.json')), 'log jaringan login dihapus');
+});
+
+test('Gambar x4 (format Flow terbaru): semua hasil tampil di galeri & pratinjau, juga saat daftar Flow terlambat', { skip: !CHROME && 'Chrome tidak ditemukan (set CHROME_PATH)', timeout: 180000 }, async (t) => {
+  const mock = await mockFlow();
+  mock.state.rpc = true;
+  mock.state.v2 = true;
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fc-x4-'));
+  const base = `http://127.0.0.1:${mock.port}`;
+  const known = new Map();
+  const s = new FlowSession({
+    profileDir: path.join(tmp, 'profile'), getBrowser: () => ({ path: CHROME }), known,
+    flowUrl: `${base}/?ce=1`, agentCfg: { mediaHosts: ['127.0.0.1', 'flow-content.google'], allowHttp: true }, extraArgs: EXTRA
+  });
+  t.after(async () => { await Promise.race([s.closeBrowser().catch(() => {}), new Promise((r) => setTimeout(r, 15000))]); mock.server.closeAllConnections(); mock.server.close(); try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* Windows */ } });
+  const events = [];
+  s.on('results', (pid, list) => events.push([pid, list.length]));
+  await s.connect();
+  await s.navigate(`${base}/project/p-test-1?ce=1`);
+  await new Promise((r) => setTimeout(r, 800));
+
+  // 1) 4 gambar dalam satu generate (satu workflow) → keempatnya terbaca dari record gambar di daftar Flow
+  const res = await s.generate({ prompt: "Candi Borobudur saat kabut pagi", options: { kind: "image", model: "Nano Banana 2.1", ratio: "16:9", count: 4 } }, { timeoutMs: 60000 });
+  assert.strictEqual(mock.generated[mock.generated.length - 1].settings.count, '4');
+  assert.strictEqual(res.items.length, 4, '4 hasil');
+  assert.ok(res.items.every((i) => i.done && i.image && i.image.includes('/image/' + i.mediaId)), 'setiap hasil punya URL gambarnya sendiri');
+  const gal = await s.listMedia('p-test-1', { known: false });
+  assert.deepStrictEqual(gal.map((i) => i.mediaId).sort(), res.items.map((i) => i.mediaId).sort(), 'galeri Flow memuat keempat gambar (tanpa baris workflow palsu)');
+  assert.ok(gal.every((i) => i.done && i.image && i.title.startsWith('Candi Borobudur')), 'gambar siap + judul dari workflow');
+  const th = await s.fetchMedia(gal[0].image);
+  assert.match(th.mime, /^image\//);
+
+  // 2) daftar Flow terlambat (gambar belum terdaftar) → hasil dari balasan generate tetap tampil di galeri
+  mock.state.lag = true;
+  const res2 = await s.generate({ prompt: "Pantai Kuta saat senja", options: { kind: "image", count: 4 } }, { timeoutMs: 60000 });
+  assert.strictEqual(res2.items.length, 4);
+  const flowOnly = (await s.listMedia('p-test-1', { known: false })).map((i) => i.mediaId);
+  assert.ok(res2.items.every((i) => !flowOnly.includes(i.mediaId)), 'daftar Flow memang belum memuatnya');
+  const all = await s.listMedia('p-test-1');
+  assert.strictEqual(all.length, 8, 'galeri aplikasi: 8 hasil');
+  assert.ok(res2.items.every((i) => all.some((x) => x.mediaId === i.mediaId && x.done && x.image)), 'hasil terbaru tampil & siap');
+  assert.ok(all.slice(0, 4).every((x) => res2.items.some((i) => i.mediaId === x.mediaId)), 'hasil terbaru di depan (pratinjau)');
+  assert.deepStrictEqual(events.map((e) => e[1]), [4, 8], 'hasil dicatat untuk disimpan');
+  assert.strictEqual(known.get('p-test-1').length, 8);
+
+  // 3) setelah Flow mendaftarkannya: tidak ganda
+  mock.media.forEach((m) => { m.hidden = false; });
+  assert.strictEqual((await s.listMedia('p-test-1')).length, 8, 'tanpa duplikat');
 });
 
 test('Skill Foto: unggah referensi ke Flow → @ chip → generate gambar → hasil; kegagalan terdeteksi cepat', { skip: !CHROME && 'Chrome tidak ditemukan (set CHROME_PATH)', timeout: 240000 }, async (t) => {

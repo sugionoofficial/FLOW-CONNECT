@@ -244,7 +244,7 @@ test('FlowSession mengendalikan browser asli lewat CDP', { skip: !CHROME && 'Chr
     agentCfg: { mediaHosts: ['127.0.0.1'], allowHttp: true },
     extraArgs: EXTRA
   });
-  t.after(async () => { await s.closeBrowser(); mock.server.close(); try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* Windows: file terkunci */ } });
+  t.after(async () => { await Promise.race([s.closeBrowser().catch(() => {}), new Promise((r) => setTimeout(r, 15000))]); mock.server.closeAllConnections(); mock.server.close(); try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* Windows: file terkunci */ } });
 
   await s.connect();
   assert.ok(s.connected, 'tersambung');
@@ -327,7 +327,7 @@ test('Mode Otomatis: antrean berjalan end-to-end (kolom prompt contenteditable)'
     profileDir: path.join(tmp, 'profile'), getBrowser: () => ({ path: CHROME }),
     flowUrl: `http://127.0.0.1:${mock.port}/?ce=1`, agentCfg: { mediaHosts: ['127.0.0.1'], allowHttp: true }, extraArgs: EXTRA
   });
-  t.after(async () => { await s.closeBrowser(); mock.server.close(); try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* Windows */ } });
+  t.after(async () => { await Promise.race([s.closeBrowser().catch(() => {}), new Promise((r) => setTimeout(r, 15000))]); mock.server.closeAllConnections(); mock.server.close(); try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* Windows */ } });
   await s.connect();
   // project sudah ada sebelumnya
   await s.navigate(`http://127.0.0.1:${mock.port}/project/p-test-1?ce=1`);
@@ -384,7 +384,7 @@ test('Kartu login → mode tersembunyi → project baru → setelan Flow → cad
     loginUrl: `${base}/mock-login?continue=${encodeURIComponent(flowUrl)}`,
     agentCfg: { mediaHosts: ['127.0.0.1'], allowHttp: true }, extraArgs: EXTRA
   });
-  t.after(async () => { await s.closeBrowser(); mock.server.close(); try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* Windows */ } });
+  t.after(async () => { await Promise.race([s.closeBrowser().catch(() => {}), new Promise((r) => setTimeout(r, 15000))]); mock.server.closeAllConnections(); mock.server.close(); try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* Windows */ } });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // 1) kartu login: jendela --app, tidak dikendalikan; selesai saat Google mengalihkan ke Flow → kartu ditutup
@@ -455,7 +455,7 @@ test('Skill Foto: unggah referensi ke Flow → @ chip → generate gambar → ha
     profileDir: path.join(tmp, 'profile'), getBrowser: () => ({ path: CHROME }),
     flowUrl: `${base}/?ce=1`, agentCfg: { mediaHosts: ['127.0.0.1', 'flow-content.google'], allowHttp: true }, extraArgs: EXTRA
   });
-  t.after(async () => { await s.closeBrowser(); mock.server.close(); try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* Windows */ } });
+  t.after(async () => { await Promise.race([s.closeBrowser().catch(() => {}), new Promise((r) => setTimeout(r, 15000))]); mock.server.closeAllConnections(); mock.server.close(); try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* Windows */ } });
   await s.connect();
   await s.navigate(`${base}/project/p-test-1?ce=1`);
   await new Promise((r) => setTimeout(r, 800));

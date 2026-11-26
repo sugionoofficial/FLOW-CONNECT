@@ -111,6 +111,39 @@ iPhone memakai link `https://flow.google.com/` (Universal Link). Hub di HP juga 
 
 > Catatan: apakah Google Flow muncul di menu *Bagikan* ditentukan oleh aplikasi Flow sendiri — jika tidak muncul, pakai jalur simpan ke galeri.
 
+## FLOW CONNECT Desktop (aplikasi Windows) — `desktop/`
+Aplikasi PC (Electron) dengan tampilan aplikasi sistem biasa (gaya Windows 11: font sistem, warna aksen Windows,
+tema terang/gelap mengikuti sistem, menu bar & dialog bawaan). **Google Flow berjalan di Chrome/Edge asli** milik pengguna
+di balik layar; aplikasi mengendalikannya lewat Chrome DevTools Protocol lokal (127.0.0.1).
+
+- **Kenapa tidak webview?** Google memblokir login di browser tertanam. Jadi tiap akun = satu profil Chrome/Edge asli
+  (`--user-data-dir`), login dilakukan di browser biasa **tanpa** kendali aplikasi ("Masuk ke Google"), lalu "Hubungkan"
+  membuka browser yang sama dengan `--remote-debugging-port=0` (tanpa `--enable-automation`, tanpa `Runtime.enable`).
+- **Fitur:** multi-akun, status akun/project, kirim gambar (`DOM.setFileInputFiles` ke input file Flow) & prompt
+  (`Input.insertText`), galeri (RPC baca-saja `Zzl0ze`/`as29s`), unduh ke folder per akun, daftar unduhan.
+- **Mode Aman (bawaan):** aplikasi mengisi gambar & prompt, lalu menampilkan jendela Flow — pengguna menekan Generate.
+- **Mode Otomatis (opsional, wajib setuju peringatan risiko):** aplikasi mengklik tombol Generate Flow (klik mouse asli via CDP),
+  menunggu hasil, mengunduh; **antrean** banyak prompt dengan jeda acak (min. 20 dtk), batas tugas per sesi, berhenti saat gagal.
+  Tidak pernah membuat token reCAPTCHA atau memanggil RPC generate langsung. Risiko pembatasan akun Google tetap ada.
+- Jendela browser: biasa / di belakang aplikasi / diperkecil (tidak bisa disembunyikan total).
+
+| Studio (terang) | Galeri (gelap) |
+|---|---|
+| ![Studio](desktop/docs/studio-terang.png) | ![Galeri](desktop/docs/galeri-gelap.png) |
+
+```bash
+cd desktop
+npm ci              # ELECTRON_SKIP_BINARY_DOWNLOAD=1 bila hanya menjalankan uji
+npm start           # jalankan aplikasi (butuh layar)
+npm test            # uji integrasi dengan Chrome asli + server tiruan Google Flow (CHROME_PATH=…)
+npm run dist:win    # installer NSIS + portable → desktop/dist
+```
+
+Rilis otomatis: workflow `.github/workflows/desktop.yml` menguji di Ubuntu & Windows (Chrome asli), membangun `.exe`,
+menjalankan uji asap pada aplikasi hasil build, lalu menerbitkan GitHub Release `desktop-v<versi>` setiap push ke `main`.
+Unduhan tetap: `releases/latest/download/FLOW-CONNECT-Desktop-Setup.exe` (dipakai tombol di Hub).
+Aplikasi belum ditandatangani (code signing), jadi Windows SmartScreen akan memberi peringatan saat instal.
+
 ## Setup Google OAuth (untuk tombol “Masuk dengan Google”)
 1. [Google Cloud Console](https://console.cloud.google.com/) → buat/pilih project.
 2. *APIs & Services → OAuth consent screen* → User type **External** → isi nama app `FLOW CONNECT`, email support, domain `flow-connect-2qu.pages.dev` → scopes: `openid`, `email`, `profile` → **Publish app** (agar semua akun Google bisa login, bukan hanya test users).
@@ -139,6 +172,7 @@ src/
   pages/           Landing, Login, Hub, Studio, Tools
 design/            Pilihan template dark (referensi)
 supabase/migrations, supabase/functions
+desktop/            FLOW CONNECT Desktop (Electron, Windows) — main/ (browser, cdp, agent, flow, automation), renderer/ (UI)
 extension/          FLOW CONNECT Bridge (Chrome MV3)
 src/bookmarklet/    sumber bookmarklet Flow
 scripts/            build-extension.mjs (zip ekstensi)

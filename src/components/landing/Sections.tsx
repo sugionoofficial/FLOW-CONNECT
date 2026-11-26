@@ -254,6 +254,7 @@ const FAQ = [
   { q: 'Apakah generate video terjadi di FLOW CONNECT?', a: 'Tidak. Semua proses generate berjalan di Google Flow memakai akun Google kamu sendiri, termasuk kuota dan langganan Google AI milik akun tersebut.' },
   { q: 'Bisakah menambah lebih dari satu akun Google?', a: 'Bisa, hingga 10 akun. Tautkan lewat “Masuk dengan Google” (terverifikasi) atau cukup dengan alamat email, lalu pilih akun default.' },
   { q: 'Bisakah upload & download lewat FLOW CONNECT?', a: 'Bisa. Di komputer pakai bookmarklet (tanpa instal) atau ekstensi gratis FLOW CONNECT Bridge: gambar & prompt dikirim ke project Google Flow-mu, hasilnya bisa dilihat dan diunduh dari Studio. Di HP, Studio mengirim gambar & prompt ke aplikasi Google Flow resmi (Android & iPhone). Tanpa API key.' },
+  { q: 'Ada aplikasi untuk PC?', a: 'Ada: FLOW CONNECT Desktop untuk Windows. Aplikasi ini menjalankan Google Flow di Chrome/Edge asli milikmu di balik layar, mendukung banyak akun, kirim gambar & prompt, galeri, unduh ke folder, dan Mode Otomatis (antrean prompt, dengan peringatan risiko akun). Unduh dari halaman Hub setelah masuk.' },
   { q: 'Apakah password Google saya aman?', a: 'FLOW CONNECT tidak pernah melihat atau menyimpan password Google. Login selalu dilakukan di halaman resmi Google.' },
 ]
 

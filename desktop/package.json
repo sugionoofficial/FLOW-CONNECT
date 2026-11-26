@@ -1,0 +1,76 @@
+{
+  "name": "flow-connect-desktop",
+  "productName": "FLOW CONNECT Desktop",
+  "version": "1.0.0",
+  "description": "Aplikasi PC: kendalikan Google Flow (akun Google Anda sendiri) dari satu aplikasi desktop",
+  "author": "FLOW CONNECT",
+  "license": "MIT",
+  "private": true,
+  "type": "commonjs",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux --publish never"
+  },
+  "devDependencies": {
+    "electron": "^45.5.0",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.flowconnect.desktop",
+    "productName": "FLOW CONNECT Desktop",
+    "copyright": "FLOW CONNECT — tidak berafiliasi dengan Google",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "FLOW CONNECT",
+      "artifactName": "FLOW-CONNECT-Desktop-Setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "FLOW-CONNECT-Desktop-Portable.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.graphics-design",
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Graphics",
+      "icon": "build/icon.png"
+    }
+  }
+}

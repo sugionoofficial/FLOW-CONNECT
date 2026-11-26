@@ -658,3 +658,11 @@ body.has-titlebar .stage { max-height: calc(100vh - 370px); }
 .mention-pop .mp-item img, .mention-pop .mp-item svg { width: 28px; height: 28px; flex: none; border-radius: 5px; object-fit: cover; }
 .mention-pop .mp-item.on, .mention-pop .mp-item:hover { background: var(--accent-soft); }
 .mention-pop .mp-item span { font-family: var(--mono, ui-monospace, Consolas, monospace); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Bilah pembaruan: sorot sebentar saat notifikasi Windows diklik */
+.update-bar.attn { animation: attn 1.2s ease-out 2; }
+@keyframes attn {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+  100% { box-shadow: 0 0 0 14px transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .update-bar.attn { animation: none; } }

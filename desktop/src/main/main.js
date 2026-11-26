@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu, Notification, systemPreferences, safeStorage, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu, Notification, systemPreferences, safeStorage, screen, powerMonitor } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -46,11 +46,22 @@ function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 }
 
+const liveNotes = new Set(); // simpan referensi agar notifikasi tidak dibuang GC sebelum diklik
 function notify(title, body, onClick) {
   if (!Notification.isSupported()) return;
   const n = new Notification({ title, body, silent: false });
-  n.on('click', () => { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } if (onClick) onClick(); });
+  liveNotes.add(n);
+  const drop = () => liveNotes.delete(n);
+  n.on('click', () => { drop(); if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } if (onClick) onClick(); });
+  n.on('close', drop);
+  setTimeout(drop, 10 * 60 * 1000);
   n.show();
+}
+
+/** Pemberitahuan pembaruan: notifikasi Windows + kedipkan ikon taskbar bila jendela tidak sedang aktif. */
+function notifyUpdate(title, body, st) {
+  notify(title, body, () => send('update-show', st));
+  if (win && !win.isDestroyed() && !win.isFocused()) { try { win.flashFrame(true); } catch { /* tidak didukung */ } }
 }
 
 // Kunci lisensi disimpan terenkripsi (DPAPI Windows lewat safeStorage) bila tersedia
@@ -596,6 +607,8 @@ function createWindow() {
     return { action: 'deny' };
   });
   win.on('closed', () => { win = null; });
+  // kembali ke aplikasi → periksa pembaruan bila sudah lama (tanpa harus klik "Periksa pembaruan")
+  win.on('focus', () => { try { win.flashFrame(false); } catch { /* tidak didukung */ } if (updater) updater.nudge(); });
 }
 
 function runSmoke() {
@@ -646,8 +659,9 @@ app.whenReady().then(async () => {
   });
   updater = new Updater({ app });
   updater.on('change', (st) => send('update', st));
-  updater.on('available', (st) => notify('Pembaruan FLOW CONNECT tersedia', `Versi ${st.version} siap. Klik "Update sekarang" di aplikasi — tanpa instal ulang.`));
-  updater.on('ready', (st) => notify('Pembaruan siap dipasang', `Versi ${st.version} sudah diunduh. Klik "Mulai ulang & perbarui".`));
+  updater.on('available', (st) => notifyUpdate('Pembaruan FLOW CONNECT tersedia', st.portable ? `Versi ${st.version} tersedia. Klik untuk mengunduh versi baru.` : `Versi ${st.version} siap. Klik "Update sekarang" — tanpa instal ulang.`, st));
+  updater.on('ready', (st) => notifyUpdate('Pembaruan siap dipasang', `Versi ${st.version} sudah diunduh. Klik "Mulai ulang & perbarui".`, st));
+  for (const ev of ['resume', 'unlock-screen']) { try { powerMonitor.on(ev, () => setTimeout(() => updater.nudge(), 15000)); } catch { /* tidak didukung */ } }
   registerIpc();
   buildMenu();
   createWindow();

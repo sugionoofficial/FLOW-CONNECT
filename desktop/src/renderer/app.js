@@ -598,7 +598,8 @@ function updateBanner() {
 function renderNav() {
   const item = ([id, label, ic]) => `<button class="nav-item ${S.page === id ? 'active' : ''}" data-act="go" data-page="${id}">${icon(ic, 'lg')}<span>${label}</span>${id === 'auto' && S.queue.running ? '<span class="badge accent">Berjalan</span>' : ''}</button>`;
   $('#nav-items').innerHTML = NAV.map(item).join('');
-  $('#nav-bottom').innerHTML = item(['settings', 'Pengaturan', 'settings']);
+  const upd = S.update && ['available', 'ready'].includes(S.update.state);
+  $('#nav-bottom').innerHTML = item(['settings', 'Pengaturan', 'settings']).replace('</span></button>', `</span>${upd ? `<span class="badge ok" title="Pembaruan ${esc(S.update.version)} tersedia">Update</span>` : ''}</button>`);
   const a = acc();
   const si = a ? statusInfo(a.id) : null;
   $('#nav-account').innerHTML = a
@@ -1048,7 +1049,8 @@ const ACTIONS = {
 
   // Pembaruan
   updateCheck: async () => {
-    S.update = await call('update:check');
+    S.updateChecking = true;
+    try { S.update = await call('update:check'); } finally { S.updateChecking = false; }
     if (S.update.state === 'none') toast('Anda sudah memakai versi terbaru.', 'ok');
     render();
   },
@@ -1348,13 +1350,26 @@ async function init() {
     if (was !== licensed() || !S.busy.size) render();
   });
   fc.on('update', (u) => {
+    const prev = S.update || {};
     S.update = u;
+    // pembaruan baru terdeteksi otomatis (tanpa klik "Periksa pembaruan") → beri tahu langsung di aplikasi
+    if (u.state === 'available' && u.version && S.updateToasted !== u.version && prev.state !== 'downloading') {
+      S.updateToasted = u.version;
+      if (!S.updateChecking && S.updateHidden !== u.version) toast(`Pembaruan versi ${u.version} tersedia — lihat bilah di atas halaman.`, 'ok');
+    }
     if (u.state === 'downloading' && $('.update-bar progress')) {
       $('.update-bar progress').value = u.percent;
       const b = $('.update-bar .text b'); if (b) b.textContent = `Mengunduh pembaruan ${u.version}… ${u.percent}%`;
       return;
     }
     render();
+  });
+  fc.on('update-show', (u) => {
+    if (u) S.update = u;
+    S.updateHidden = null;
+    render();
+    $('#page').scrollTop = 0;
+    const bar = $('.update-bar'); if (bar) bar.classList.add('attn');
   });
   fc.on('accent', (c) => document.documentElement.style.setProperty('--accent', c));
   fc.on('login', (l) => {

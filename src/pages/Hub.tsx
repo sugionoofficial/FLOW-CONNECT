@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
-  ArrowRight, BadgeCheck, Clipboard, ImageDown, Smartphone, ExternalLink, Info, MoreVertical, Pencil, Plus, ShieldCheck, Star, Trash2, Wand2, X,
+  ArrowRight, BadgeCheck, Clipboard, Download, ImageDown, Monitor, Smartphone, ExternalLink, Info, MoreVertical, Pencil, Plus, ShieldCheck, Star, Trash2, Wand2, X,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { AppHeader } from '../components/AppHeader'
@@ -10,6 +10,7 @@ import { Button, buttonClass } from '../components/Button'
 import { Loader } from '../components/Loader'
 import { Modal } from '../components/Modal'
 import { AccountAvatar, accountTitle } from '../components/hub/AccountAvatar'
+import { DESKTOP_PORTABLE_URL, DESKTOP_RELEASES_URL, DESKTOP_SETUP_URL } from '../lib/desktop'
 import { AccountPicker } from '../components/hub/AccountPicker'
 import { AddAccountModal } from '../components/hub/AddAccountModal'
 import { GoogleG } from '../components/hub/GoogleG'
@@ -202,6 +203,23 @@ export default function Hub() {
           </div>
           <span className="flex items-center gap-1 text-sm font-semibold text-aurora-cyan">Buka Studio <ArrowRight className="size-4 transition group-hover:translate-x-1" /></span>
         </Link>
+
+        {/* ───── aplikasi PC ───── */}
+        <section className="mt-4 flex flex-wrap items-center gap-5 rounded-3xl p-5 glass">
+          <span className="grid size-12 place-items-center rounded-2xl bg-gradient-to-br from-blue-500 to-sky-600"><Monitor className="size-6" /></span>
+          <div className="min-w-56 flex-1">
+            <p className="font-display text-lg font-bold">FLOW CONNECT Desktop untuk Windows</p>
+            <p className="text-sm text-white/55">
+              Aplikasi PC yang menjalankan Google Flow di Chrome/Edge asli di balik layar: multi-akun, kirim gambar & prompt, galeri, unduh ke folder,
+              plus Mode Otomatis (antrean prompt). Butuh Google Chrome atau Microsoft Edge.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <a href={DESKTOP_SETUP_URL} className={buttonClass('primary', 'sm')}><Download className="size-4" /> Unduh installer</a>
+            <a href={DESKTOP_PORTABLE_URL} className="text-sm text-white/60 hover:text-white">Versi portable</a>
+            <a href={DESKTOP_RELEASES_URL} target="_blank" rel="noreferrer" className="text-sm text-white/60 hover:text-white">Catatan rilis</a>
+          </div>
+        </section>
 
         {/* ───── daftar akun ───── */}
         <section className="mt-12">

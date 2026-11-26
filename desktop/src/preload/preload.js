@@ -1,0 +1,31 @@
+'use strict';
+// Jembatan aman antara tampilan (renderer, tanpa akses Node) dan proses utama.
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
+
+const invoke = (channel) => (...args) => ipcRenderer.invoke(channel, ...args);
+const CHANNELS = [
+  'app:info', 'settings:set', 'auto:ack',
+  'accounts:add', 'accounts:rename', 'accounts:remove', 'accounts:login', 'accounts:connect', 'accounts:disconnect',
+  'flow:status', 'flow:show', 'flow:navigate', 'flow:listMedia', 'flow:thumb', 'flow:download', 'flow:send', 'flow:afterSend', 'flow:generate',
+  'queue:add', 'queue:remove', 'queue:retry', 'queue:clear', 'queue:start', 'queue:stop',
+  'files:pickImages', 'files:register', 'files:preview', 'files:pickFolder', 'files:pickBrowser', 'files:open', 'files:show',
+  'files:openDownloads', 'files:forget', 'shell:external'
+];
+const EVENTS = ['statuses', 'settings', 'queue', 'activity', 'navigate', 'theme', 'accent'];
+
+const api = {};
+for (const c of CHANNELS) api[c] = invoke(c);
+
+contextBridge.exposeInMainWorld('fc', {
+  call: (channel, ...args) => {
+    if (!api[channel]) return Promise.resolve({ ok: false, error: 'UNKNOWN_CHANNEL' });
+    return api[channel](...args);
+  },
+  on: (event, fn) => {
+    if (!EVENTS.includes(event)) return () => {};
+    const h = (_e, payload) => fn(payload);
+    ipcRenderer.on(event, h);
+    return () => ipcRenderer.removeListener(event, h);
+  },
+  pathForFile: (file) => { try { return webUtils.getPathForFile(file); } catch { return ''; } }
+});

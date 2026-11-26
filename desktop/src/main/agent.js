@@ -4,7 +4,7 @@
 // ambil file media, mencari kolom prompt / input file / tombol Generate.
 // Tidak pernah membuat token reCAPTCHA — Generate selalu lewat tombol UI Flow sendiri.
 
-const AGENT_VERSION = 6;
+const AGENT_VERSION = 7;
 
 /* eslint-disable */
 function fcAgent(V, cfg) {
@@ -526,6 +526,33 @@ function fcAgent(V, cfg) {
     }
     return { chips: mentionChips().length, text: promptText() };
   }
+  // penggeser durasi di panel setelan ("Durasi 10 Dtk")
+  function sliderEl() {
+    var ov = overlays();
+    for (var j = ov.length - 1; j >= 0; j--) {
+      var els = Array.prototype.filter.call(ov[j].querySelectorAll('input[type="range"], [role="slider"]'), visible);
+      if (els.length) return els[0];
+    }
+    return null;
+  }
+  function durationSlider() {
+    var el = sliderEl();
+    if (!el) return null;
+    var num = function (a, d) { var v = parseFloat(a); return isNaN(v) ? d : v; };
+    var range = el.tagName === 'INPUT';
+    return {
+      now: num(range ? el.value : el.getAttribute('aria-valuenow'), null),
+      min: num(range ? el.min : el.getAttribute('aria-valuemin'), 0),
+      max: num(range ? el.max : el.getAttribute('aria-valuemax'), 100)
+    };
+  }
+  function focusDurationSlider() {
+    var el = sliderEl();
+    if (!el) return false;
+    el.scrollIntoView({ block: 'nearest' });
+    el.focus();
+    return document.activeElement === el;
+  }
   // slot frame kosong (Awal / Akhir) pada mode Frames to Video
   function emptyFrameChip() {
     var els = Array.prototype.filter.call(document.querySelectorAll('flow-prompt-box button.empty-chip, button.empty-chip'), visible);
@@ -585,7 +612,7 @@ function fcAgent(V, cfg) {
     pageError: pageError, toolbarAdd: toolbarAdd, uploadMenuItem: uploadMenuItem, dialogCount: dialogCount,
     mentionOptions: mentionOptions, mentionChips: mentionChips, caretToEnd: caretToEnd, emptyFrameChip: emptyFrameChip,
     boundFrames: boundFrames, picker: picker, focusPickerSearch: focusPickerSearch, creditsWarning: creditsWarning,
-    failedTiles: failedTiles, cookieReject: cookieReject
+    failedTiles: failedTiles, cookieReject: cookieReject, durationSlider: durationSlider, focusDurationSlider: focusDurationSlider
   };
   Object.defineProperty(window, '__fcDesktop', {
     configurable: true, enumerable: false,

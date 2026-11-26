@@ -63,8 +63,10 @@ test('wire: penolakan, record video, gambar, unggahan', () => {
 test('skill foto: mode gambar dipaksa, rencana tag', () => {
   const j = image.normalize({ prompt: ' Foto @kucing ', images: ['/a/kucing.png', '/b/latar.jpg'], options: { kind: 'video', sub: 'frames', duration: 8 } });
   assert.strictEqual(j.options.kind, 'image');
-  assert.strictEqual(j.options.sub, 'text');
   assert.strictEqual(j.options.duration, 0);
+  assert.strictEqual(j.options.model, 'Nano Banana 2.1', 'bawaan Nano Banana 2.1');
+  assert.strictEqual(image.normalize({ prompt: 'x', options: { model: 'Imagen 4' } }).options.model, 'Nano Banana 2.1', 'model yang tidak ada di Flow');
+  assert.strictEqual(image.normalize({ prompt: 'x', options: { model: 'Nano Banana Pro' } }).options.model, 'Nano Banana Pro');
   assert.deepStrictEqual(j.tags, ['kucing', 'latar']);
   assert.deepStrictEqual(image.plan(j), { tags: ['kucing', 'latar'], mentioned: ['kucing'], autoTagged: ['latar'], otherMentions: [] });
   assert.throws(() => image.normalize({ prompt: '  ', images: [] }), /INVALID_PROMPT/);

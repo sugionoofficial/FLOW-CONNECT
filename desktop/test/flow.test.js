@@ -44,14 +44,20 @@ function mockFlow() {
     <div role="radiogroup" id="subs"><button role="radio" data-g="sub" data-v="frames">Frames</button><button role="radio" data-g="sub" data-v="ingredients">Ingredients</button></div>
     <div role="radiogroup"><button role="radio" data-g="ratio" data-v="9:16"><i>crop_9_16</i>9:16</button><button role="radio" data-g="ratio" data-v="16:9"><i>crop_16_9</i>16:9</button><button role="radio" data-g="ratio" data-v="1:1"><i>crop_square</i>1:1</button></div>
     <div role="radiogroup"><button role="radio" data-g="count" data-v="1">x1</button><button role="radio" data-g="count" data-v="2">x2</button><button role="radio" data-g="count" data-v="3">x3</button><button role="radio" data-g="count" data-v="4">x4</button></div>
-    <div role="radiogroup" id="durs"><button role="radio" data-g="duration" data-v="4">4s</button><button role="radio" data-g="duration" data-v="6">6s</button><button role="radio" data-g="duration" data-v="8">8s</button></div>
+    <div id="durs"><span>Durasi</span> <b id="durlab"></b><input type="range" id="dur" min="4" max="8" step="1" aria-label="Durasi"></div>
     <button id="modelbtn" aria-haspopup="listbox"><span id="modeltext">Veo 3.1 - Fast</span><i>arrow_drop_down</i></button>
   </div>
   <div id="models" role="listbox" style="display:none;position:fixed;right:20px;bottom:40px;background:#fff;border:1px solid #ccc"></div>`;
   const settingsJs = `
-var S={kind:'video',sub:'ingredients',ratio:'16:9',count:'2',duration:'8',model:'Veo 3.1 - Fast'};window.__settings=S;
-var MODELS={video:['Veo 3.1 - Lite','Veo 3.1 - Fast','Veo 3.1 - Quality'],image:['🍌 Nano Banana 2','🍌 Nano Banana Pro','Imagen 4']};
+var S={kind:'video',sub:'ingredients',ratio:'16:9',count:'2',duration:'6',model:'Veo 3.1 - Fast'};window.__settings=S;
+var MODELS={video:['Omni 1.2 Flash','Omni 1.1 Flash','Veo 3.1 - Lite','Veo 3.1 - Fast','Veo 3.1 - Quality'],image:['🍌 Nano Banana Pro','🍌 Nano Banana 2 Lite','🍌 Nano Banana 2.1']};
+// durasi = penggeser seperti Flow ("Durasi 10 Dtk"): Omni maks. 10 dtk, Veo maks. 8 dtk
+var dur=document.getElementById('dur');
+function durMax(){return /Omni/.test(S.model)?10:8}
+dur.addEventListener('input',function(e){if(!e.isTrusted)return;S.duration=dur.value;paint()});
 function paint(){document.querySelectorAll('[data-g]').forEach(function(b){b.setAttribute('aria-checked',String(S[b.dataset.g]===b.dataset.v))});
+  dur.max=String(durMax());if(Number(S.duration)>durMax())S.duration=String(durMax());dur.value=S.duration;document.getElementById('durlab').textContent=S.duration+' Dtk';
+  if(window.paintFrames)paintFrames();
   document.getElementById('subs').style.display=document.getElementById('durs').style.display=S.kind==='video'?'':'none';
   document.getElementById('modeltext').textContent=S.model;document.getElementById('chiptext').textContent=(S.kind==='video'?'Video · '+S.duration+'s':'Image')+' · x'+S.count;}
 paint();
@@ -59,7 +65,17 @@ document.getElementById('chip').addEventListener('click',function(e){if(!e.isTru
 document.querySelectorAll('[data-g]').forEach(function(b){b.addEventListener('click',function(e){if(!e.isTrusted)return;S[b.dataset.g]=b.dataset.v;if(b.dataset.g==='kind')S.model=MODELS[S.kind][1].replace('🍌 ','');paint()})});
 document.getElementById('modelbtn').addEventListener('click',function(e){if(!e.isTrusted)return;var l=document.getElementById('models');l.innerHTML=MODELS[S.kind].map(function(m){return '<div role="option" tabindex="0">'+m+'<small style="display:block">Beta Audio</small></div>'}).join('');l.style.display='';
   l.querySelectorAll('[role=option]').forEach(function(o){o.addEventListener('click',function(ev){if(!ev.isTrusted)return;S.model=o.firstChild.nodeValue.replace('🍌 ','');l.style.display='none';paint()})})});
-document.addEventListener('keydown',function(e){if(e.key!=='Escape')return;var am=document.getElementById('addmenu');if(am&&am.style.display!=='none'){am.style.display='none';return}var l=document.getElementById('models');if(l.style.display!=='none'){l.style.display='none';return}document.getElementById('panel').style.display='none'});`;
+document.addEventListener('keydown',function(e){if(e.key!=='Escape')return;var fp=document.getElementById('fpop');if(fp&&fp.style.display!=='none'){fp.style.display='none';return}var am=document.getElementById('addmenu');if(am&&am.style.display!=='none'){am.style.display='none';return}var l=document.getElementById('models');if(l.style.display!=='none'){l.style.display='none';return}document.getElementById('panel').style.display='none'});`;
+  // mode Frames: slot "Start"/"End" → pemilih aset (cari nama) → gambar terpasang sebagai frame
+  const framesJs = String.raw`var FR=[null,null],fslot=0;
+function paintFrames(){if(!FR)return;var w=document.getElementById('frames');w.style.display=S.kind==='video'&&S.sub==='frames'?'':'none';
+  w.innerHTML=FR.map(function(id,i){return id?'<button class="chip-container" data-id="'+id+'"><img alt=""></button>':'<button class="empty-chip" data-i="'+i+'">'+(i?'End':'Start')+'</button>'}).join('');
+  w.querySelectorAll('.empty-chip').forEach(function(b){b.addEventListener('click',function(e){if(!e.isTrusted)return;fslot=Number(b.dataset.i);var fp=document.getElementById('fpop');fp.style.display='';document.getElementById('fq').value='';flist()})})}
+function flist(){var q=document.getElementById('fq').value.toLowerCase(),l=document.getElementById('flist');
+  l.innerHTML=assets.filter(function(a){return a.title.toLowerCase().indexOf(q)===0}).map(function(a){return '<button class="asset-item" role="option" data-id="'+a.id+'"><img alt=""><span class="asset-title">'+a.title+'</span></button>'}).join('');
+  l.querySelectorAll('[role=option]').forEach(function(o){o.addEventListener('click',function(e){if(!e.isTrusted)return;FR[fslot]=o.dataset.id;document.getElementById('fpop').style.display='none';paintFrames()})})}
+document.getElementById('fq').addEventListener('input',function(e){if(e.isTrusted)setTimeout(flist,200)});
+paintFrames();`;
   // unggah lewat "+" → Upload, pemilih "@" yang membuat .mention-chip, kirim lewat batchexecute
   const refsJs = String.raw`var files=[], assets=[], pick={open:false,i:0,opts:[]};
 // "+" → menu → "Upload media" → dialog file → unggah (maseQ)
@@ -94,7 +110,7 @@ document.getElementById('prompt').addEventListener('keydown',function(e){if(!pic
   const genJs = String.raw`document.getElementById('gen').addEventListener('click',function(e){
   if(!e.isTrusted) return; // klik harus asli
   var refs=[].map.call(document.querySelectorAll('.mention-chip'),function(c){return c.getAttribute('data-entity-id')});
-  var body={prompt:val(),files:files,refs:refs,settings:Object.assign({},S),ua:navigator.userAgent,project:(/\/project\/([\w-]+)/.exec(location.pathname)||[])[1]||null};
+  var body={prompt:val(),files:files,refs:refs,frames:FR.filter(Boolean),settings:Object.assign({},S),ua:navigator.userAgent,project:(/\/project\/([\w-]+)/.exec(location.pathname)||[])[1]||null};
   var done=function(pid){
     if(location.pathname==='/') history.pushState({},'', '/project/'+pid+location.search);
     var p=document.getElementById('prompt'); if(p.tagName==='TEXTAREA') p.value=''; else p.textContent=''; document.getElementById('gen').disabled=true; files=[]; document.getElementById('chips').textContent='';
@@ -120,11 +136,13 @@ document.getElementById('prompt').addEventListener('keydown',function(e){if(!pic
 <script>window.WIZ_global_data=${JSON.stringify(signedIn ? { SNlM0e: 'AT_TOKEN', oPEP7c: 'kreator@gmail.com', cfb2h: 'bl1', FdrFJe: 'sid' } : {})};window.__rpc=${state.rpc};window.__terms=${state.terms};</script>
 <header><button aria-label="Setelan"><i>settings</i></button><button aria-label="Tambah media" id="add"><i>add</i></button></header>
 <div class="cdk-overlay-pane" id="addmenu" role="menu" style="display:none;position:fixed;left:20px;top:50px;background:#fff;border:1px solid #ccc"><button role="menuitem" id="upitem"><i>upload</i>Upload media</button><button role="menuitem"><i>photo_library</i>Library</button></div>
+<flow-add-menu-popover-content id="fpop" style="display:none;position:fixed;left:20px;bottom:200px;background:#fff;border:1px solid #ccc"><input type="text" id="fq" aria-label="Search assets"><div id="flist"></div></flow-add-menu-popover-content>
 <div class="cdk-overlay-pane" id="pk" style="display:none;position:fixed;left:20px;bottom:160px;background:#fff;border:1px solid #ccc"></div>
 <div id="tiles"></div>
 <main><flow-prompt-box class="composer">
   <input type="file" accept="image/*" multiple style="display:none" id="file">
   <div id="chips"></div>
+  <div id="frames"></div>
   ${ce ? '<div contenteditable="true" role="textbox" aria-label="Prompt" id="prompt" style="min-height:40px;border:1px solid #ccc"></div>' : '<textarea aria-label="Prompt" id="prompt" rows="3"></textarea>'}
   ${settingsUi}
   <button id="gen" aria-label="Buat" disabled><i>arrow_forward</i></button>
@@ -133,6 +151,7 @@ document.getElementById('prompt').addEventListener('keydown',function(e){if(!pic
 <script>
 ${settingsJs}
 ${refsJs}
+${framesJs}
 document.getElementById('file').addEventListener('change',function(e){files=[].map.call(e.target.files,function(f){return f.name});document.getElementById('chips').textContent=files.join(',')});
 function val(){var p=document.getElementById('prompt');return p.tagName==='TEXTAREA'?p.value:p.innerText}
 document.getElementById('prompt').addEventListener('input',function(){document.getElementById('gen').disabled=!val().trim()});
@@ -427,10 +446,10 @@ test('Kartu login → mode tersembunyi → project baru → setelan Flow → cad
   const r1 = await s.applySettings({ kind: 'image', model: 'Nano Banana Pro', ratio: '9:16', count: 3 });
   assert.deepStrictEqual(r1.missing, []);
   let cur = (await page.send('Runtime.evaluate', { expression: 'JSON.stringify(window.__settings)', returnByValue: true })).result.value;
-  assert.deepStrictEqual(JSON.parse(cur), { kind: 'image', sub: 'ingredients', ratio: '9:16', count: '3', duration: '8', model: 'Nano Banana Pro' });
+  assert.deepStrictEqual(JSON.parse(cur), { kind: 'image', sub: 'ingredients', ratio: '9:16', count: '3', duration: '6', model: 'Nano Banana Pro' });
   assert.strictEqual(await s.call('overlayOpen'), false, 'panel setelan ditutup lagi');
   const scan = await s.scanSettings();
-  assert.deepStrictEqual(scan.models, ['Nano Banana 2', 'Nano Banana Pro', 'Imagen 4']);
+  assert.deepStrictEqual(scan.models, ['Nano Banana Pro', 'Nano Banana 2 Lite', 'Nano Banana 2.1']);
 
   // 5) generate: Flow menolak di mode tersembunyi → otomatis pindah ke jendela diperkecil lalu ulang sekali
   mock.state.blockNext = 1;
@@ -439,7 +458,7 @@ test('Kartu login → mode tersembunyi → project baru → setelan Flow → cad
   const logs = [];
   let fell = null;
   const res = await s.generate(
-    { prompt: 'Penari kecak saat senja, sinematik', options: { kind: 'video', sub: 'frames', model: 'Veo 3.1 - Quality', ratio: '16:9', count: 1, duration: 6 } },
+    { prompt: 'Penari kecak saat senja, sinematik', options: { kind: 'video', sub: 'ingredients', model: 'Veo 3.1 - Quality', ratio: '16:9', count: 1, duration: 6 } },
     { onLog: (x) => logs.push(x), timeoutMs: 30000, onFallback: (v) => { fell = v; } }
   );
   assert.ok(fell && fell.suspect && /unusual activity/.test(fell.error), 'penolakan terdeteksi');
@@ -450,13 +469,20 @@ test('Kartu login → mode tersembunyi → project baru → setelan Flow → cad
   assert.ok(logs.some((l) => /jendela diperkecil/.test(l)));
   const g = mock.generated[mock.generated.length - 1];
   assert.strictEqual(g.prompt, 'Penari kecak saat senja, sinematik');
-  assert.deepStrictEqual(g.settings, { kind: 'video', sub: 'frames', ratio: '16:9', count: '1', duration: '6', model: 'Veo 3.1 - Quality' });
+  // Veo → durasi 8 detik (penggeser Flow digeser dengan tombol End), durasi lain yang diminta diabaikan
+  assert.deepStrictEqual(g.settings, { kind: 'video', sub: 'ingredients', ratio: '16:9', count: '1', duration: '8', model: 'Veo 3.1 - Quality' });
 
-  // 6) tanpa penolakan: generate berikutnya langsung jalan
+  // mode Frame tanpa foto awal & akhir → ditolak sebelum menyentuh Flow
+  const n0 = mock.generated.length;
+  await assert.rejects(() => s.generate({ prompt: 'x', options: { kind: 'video', sub: 'frames', model: 'Omni 1.2 Flash' } }, { timeoutMs: 30000 }), /FRAMES_REQUIRED/);
+  await assert.rejects(() => s.prepare({ prompt: 'x', images: ['/a.png'], options: { kind: 'video', sub: 'frames' } }), /FRAMES_REQUIRED/);
+  assert.strictEqual(mock.generated.length, n0);
+
+  // 6) tanpa penolakan: generate berikutnya langsung jalan; model yang tidak ada di Flow → Nano Banana 2.1
   const res2 = await s.generate({ prompt: 'Sawah terasering Bali, drone', options: { kind: 'image', model: 'Imagen 4', ratio: '1:1', count: 1 } }, { timeoutMs: 30000 });
   assert.strictEqual(res2.fellBack, false);
   assert.strictEqual(res2.settings.missing.length, 0);
-  assert.strictEqual(mock.generated[mock.generated.length - 1].settings.model, 'Imagen 4');
+  assert.strictEqual(mock.generated[mock.generated.length - 1].settings.model, 'Nano Banana 2.1');
   await sleep(10);
 });
 
@@ -539,6 +565,18 @@ test('Skill Foto: unggah referensi ke Flow → @ chip → generate gambar → ha
     (e) => e.message === 'GENERATE_FAILED' && /Audio generation failed|Failed/.test(e.detail || '')
   );
   assert.ok(Date.now() - t0 < 60000, 'kegagalan video terdeteksi cepat');
+
+  // 4b) mode Frame: foto awal & akhir diunggah lalu dipasang ke slot Start/End; Omni → durasi 10 detik
+  const fr = await s.generate(
+    { prompt: 'Kucing berlari ke arah kamera', images: [kucing, latar], tags: ['kucing-oren', 'latar'], options: { kind: 'video', sub: 'frames', model: 'Omni 1.2 Flash', ratio: '16:9', count: 1 } },
+    { timeoutMs: 60000 }
+  );
+  const gf = mock.generated[mock.generated.length - 1];
+  assert.deepStrictEqual(gf.settings, { kind: 'video', sub: 'frames', ratio: '16:9', count: '1', duration: '10', model: 'Omni 1.2 Flash' });
+  assert.deepStrictEqual(gf.frames, fr.refs.map((r) => r.mediaId), 'frame awal = foto ke-1, frame akhir = foto ke-2');
+  assert.strictEqual(gf.refs.length, 0, 'frame tidak ditandai sebagai bahan @');
+  assert.strictEqual(gf.prompt.trim(), 'Kucing berlari ke arah kamera');
+  assert.deepStrictEqual(fr.settings.missing, []);
 
   // 5) @ yang menunjuk gambar yang tidak bisa ditemukan di Flow → Generate dibatalkan
   const n0 = mock.generated.length;

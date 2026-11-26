@@ -7,8 +7,7 @@
 //  4. Sebelum Generate diperiksa: semua foto terpasang. Bila tidak → berhenti (tidak menghasilkan gambar kosong).
 //  5. Setelah Generate: balasan Flow diamati → ditolak / gagal / kredit habis langsung dilaporkan.
 const { refTags, sanitizeTags, parsePrompt } = require('../refs');
-
-const IMAGE_MODELS = ['Nano Banana 2', 'Nano Banana Pro', 'Nano Banana 2 Lite', 'Imagen 4'];
+const { IMAGE_MODELS, modelFor } = require('../catalog');
 const MAX_REFS = 10;
 
 /** Normalisasi tugas foto (dipakai juga oleh antrean & UI untuk validasi awal). */
@@ -17,9 +16,8 @@ function normalize(job) {
   const tags = sanitizeTags(job.tags, images);
   const o = { ...(job.options || {}) };
   o.kind = 'image';
-  o.sub = 'text';
   o.duration = 0;
-  if (!o.model || o.model === 'auto') o.model = 'auto';
+  o.model = modelFor('image', o.model); // hanya model Nano Banana yang ada di Flow; bawaan Nano Banana 2.1
   const prompt = String(job.prompt || '').trim();
   if (!prompt && !images.length) throw new Error('INVALID_PROMPT');
   return { ...job, prompt, images, tags, options: o };

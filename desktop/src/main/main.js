@@ -4,10 +4,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { Store } = require('./store');
+const { Store, sanitizeStudio } = require('./store');
 const { FlowSession, IMAGE_EXT } = require('./flow');
 const { AutomationQueue, safeName } = require('./automation');
 const { sanitizeTags } = require('./refs');
+const { checkFrames } = require('./catalog');
 const browser = require('./browser');
 const { LicenseManager } = require('./license');
 const { Updater } = require('./updater');
@@ -410,6 +411,7 @@ function registerIpc() {
   handle('flow:send', async (id, { prompt, images, tags, options }) => {
     const imgs = checkImages(images);
     if (!imgs.length && !(prompt || '').trim()) throw new Error('NOTHING_TO_SEND');
+    checkFrames(options ? sanitizeStudio(options) : null, imgs);
     const s = await connectAccount(id, { project: true });
     const r = await s.prepare({ prompt: (prompt || '').trim(), images: imgs, tags: sanitizeTags(tags, imgs), options: options || null }, (t) => send('activity', t));
     return { settings: r.settings, refs: r.prep.refs, mentions: r.prep.mentions };
@@ -424,6 +426,7 @@ function registerIpc() {
     if (store.data.mode !== 'auto' || !store.data.autoAck) throw new Error('AUTO_MODE_DISABLED');
     const imgs = checkImages(images);
     if (!imgs.length && !(prompt || '').trim()) throw new Error('NOTHING_TO_SEND');
+    checkFrames(options ? sanitizeStudio(options) : null, imgs);
     const s = await connectAccount(id);
     const res = await s.generate({ prompt: (prompt || '').trim(), images: imgs, tags: sanitizeTags(tags, imgs), options: options || null }, {
       onLog: (t) => send('activity', t), wait: !!waitResults, timeoutMs: store.data.auto.timeoutMin * 60000,

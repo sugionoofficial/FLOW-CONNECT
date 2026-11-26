@@ -8,6 +8,7 @@ const { EventEmitter } = require('events');
 const { sleep, rand } = require('./flow');
 const { sanitizeStudio } = require('./store');
 const { sanitizeTags } = require('./refs');
+const { checkFrames } = require('./catalog');
 
 class AutomationQueue extends EventEmitter {
   /**
@@ -44,6 +45,7 @@ class AutomationQueue extends EventEmitter {
     if (!list.length) throw new Error('INVALID_PROMPT');
     if (list.length > 200 || this.jobs.length + list.length > 500) throw new Error('QUEUE_FULL');
     if (!this.store.data.accounts.some((a) => a.id === accountId)) throw new Error('UNKNOWN_ACCOUNT');
+    checkFrames(options ? sanitizeStudio(options) : null, images);
     for (const prompt of list) {
       if (prompt.length > 8000) throw new Error('INVALID_PROMPT');
       this.jobs.push({ id: crypto.randomUUID(), prompt, images: images.slice(0, 10), tags: sanitizeTags(tags, images.slice(0, 10)), accountId, options: options ? sanitizeStudio(options) : null, status: 'pending', results: [], error: null, createdAt: Date.now() });

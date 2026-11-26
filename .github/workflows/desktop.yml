@@ -106,7 +106,7 @@ jobs:
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
 
-            **Baru di versi ini:** pratinjau & thumbnail galeri gambar hasil generate kini tampil (poster Flow terbaru dikenali dan diambil dengan sesi akun), gambar referensi yang diunggah tidak lagi muncul di galeri/pratinjau. Sebelumnya (v1.3.0): unggah referensi terkonfirmasi, penanda @nama, skill Generate Foto, deteksi generate gagal.
+            **Baru di versi ini:** pemberitahuan pembaruan kini muncul otomatis (bilah di aplikasi, notifikasi Windows, lencana "Update" di Pengaturan) tanpa perlu klik "Periksa pembaruan" — diperiksa saat aplikasi dibuka, tiap 30 menit, saat jendela dibuka kembali / PC bangun, dan dicoba ulang cepat bila internet belum siap. Sebelumnya (v1.3.1): thumbnail galeri gambar tampil, referensi unggahan disembunyikan dari galeri.
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

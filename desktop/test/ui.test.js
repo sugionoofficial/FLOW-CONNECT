@@ -245,5 +245,27 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   await sleep(400);
   assert.ok(await ev('!document.querySelector("#gate") && document.querySelectorAll("[data-page]").length >= 7'), 'masuk setelah aktivasi');
   assert.ok(await ev('!!document.querySelector("#page .hero")'), 'beranda tampil');
+
+  // pembaruan ditemukan otomatis di latar (tanpa klik "Periksa pembaruan") → bilah + toast + lencana langsung muncul
+  assert.ok(await ev('!document.querySelector(".update-bar")'), 'belum ada pembaruan');
+  await ev(`window.__ev.update({ state: 'checking', current: '1.2.0', version: null, percent: 0, portable: false })`);
+  await ev(`window.__ev.update({ state: 'available', current: '1.2.0', version: '1.3.2', notes: 'Baru', percent: 0, portable: false })`);
+  await sleep(200);
+  assert.ok(await ev('!!document.querySelector(".update-bar [data-act=updateDownload]")'), 'bilah pembaruan muncul sendiri');
+  assert.ok(await ev('[...document.querySelectorAll(".toast")].some((t) => t.textContent.includes("1.3.2"))'), 'toast pembaruan');
+  assert.ok(await ev('document.querySelector("[data-page=settings]").textContent.includes("Update")'), 'lencana di Pengaturan');
+  assert.ok(await ev('!window.__calls.includes("update:check")'), 'tanpa pemeriksaan manual');
+  if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'dark-update-auto.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  // pemeriksaan berkala berikutnya (versi sama) tidak memunculkan toast lagi
+  const toasts = await ev('document.querySelectorAll(".toast").length');
+  await ev(`window.__ev.update({ state: 'available', current: '1.2.0', version: '1.3.2', notes: 'Baru', percent: 0, portable: false })`);
+  assert.ok(await ev('document.querySelectorAll(".toast").length') <= toasts, 'tidak dobel');
+  // "Nanti" menyembunyikan; klik notifikasi Windows menampilkannya lagi
+  await ev(`document.querySelector('.update-bar [data-act=updateHide]').click()`);
+  await sleep(150);
+  assert.ok(await ev('!document.querySelector(".update-bar")'), 'disembunyikan');
+  await ev(`window.__ev['update-show']({ state: 'available', current: '1.2.0', version: '1.3.2', percent: 0, portable: false })`);
+  await sleep(150);
+  assert.ok(await ev('!!document.querySelector(".update-bar.attn")'), 'tampil lagi setelah notifikasi diklik');
   assert.deepStrictEqual(errors, [], 'tanpa error JS/CSP');
 });

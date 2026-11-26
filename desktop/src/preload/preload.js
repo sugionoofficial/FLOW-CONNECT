@@ -14,7 +14,7 @@ const CHANNELS = [
   'files:pickImages', 'files:register', 'files:preview', 'files:pickFolder', 'files:pickBrowser', 'files:open', 'files:show',
   'files:openDownloads', 'files:forget', 'shell:external'
 ];
-const EVENTS = ['statuses', 'settings', 'queue', 'activity', 'navigate', 'theme', 'accent', 'license', 'update', 'login'];
+const EVENTS = ['statuses', 'settings', 'queue', 'activity', 'navigate', 'theme', 'accent', 'license', 'update', 'update-show', 'login'];
 
 const api = {};
 for (const c of CHANNELS) api[c] = invoke(c);

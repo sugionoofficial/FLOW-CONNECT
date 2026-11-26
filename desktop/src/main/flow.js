@@ -489,13 +489,18 @@ class FlowSession extends EventEmitter {
         const st0 = await this.status();
         // dari dalam project: kembali ke beranda Flow dulu
         if (st0.projectId) await this.navigate(this.flowUrl);
+        const opened = async (ms) => this._waitFor(async () => { const x = await this.status(); return x.projectId ? x : null; }, ms, 500);
+        let clicked = false;
         for (let attempt = 0; attempt < 4; attempt++) {
+          // klik sebelumnya mungkin masih diproses (PC/jaringan lambat) → jangan sampai membuat 2 project
+          if (clicked) { const late = await opened(4000); if (late) { await this.ensurePage(); await this.waitReady(); return { projectId: late.projectId, projectTitle: late.projectTitle }; } }
           const t = await this._waitFor(() => this.call('newProjectTarget'), 8000, 400);
           if (!t) break;
           await sleep(rand(250, 600));
           await this._click(t);
           if (t.kind === 'cta') { await sleep(2500); await this.waitReady(); continue; }
-          const st = await this._waitFor(async () => { const x = await this.status(); return x.projectId ? x : null; }, timeoutMs, 500);
+          clicked = true;
+          const st = await opened(timeoutMs);
           if (st) { await this.ensurePage(); await this.waitReady(); return { projectId: st.projectId, projectTitle: st.projectTitle }; }
         }
         throw new Error((await this.status()).signedIn ? 'NEW_PROJECT_NOT_FOUND' : 'NOT_SIGNED_IN');

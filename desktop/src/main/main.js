@@ -1,6 +1,7 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu, Notification, systemPreferences, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu, Notification, systemPreferences, safeStorage, screen } = require('electron');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { Store } = require('./store');
@@ -11,6 +12,11 @@ const { LicenseManager } = require('./license');
 const { Updater } = require('./updater');
 
 const WEB_URL = 'https://flow-connect-2qu.pages.dev';
+const FLOW_URL = 'https://flow.google.com/?hl=en'; // label UI Flow berbahasa Inggris → otomasi setelan lebih andal
+// Windows 11: bahan Mica + bilah judul khusus (tombol jendela tetap milik Windows)
+const WIN_BUILD = process.platform === 'win32' ? Number(os.release().split('.')[2] || 0) : 0;
+const CUSTOM_TITLEBAR = process.platform === 'win32';
+const MICA = WIN_BUILD >= 22621;
 const REPO_URL = 'https://github.com/sugionoofficial/FLOW-CONNECT';
 const EXTERNAL_OK = [WEB_URL, REPO_URL, 'https://github.com/sugionoofficial/FLOW-CONNECT/releases', 'https://flow.google.com', 'https://support.google.com', 'https://www.google.com/chrome'];
 
@@ -29,6 +35,8 @@ let updater = null;
 const sessions = new Map();     // accountId → FlowSession
 const statuses = new Map();     // accountId → status terakhir
 const allowedFiles = new Set(); // gambar yang dipilih pengguna (dialog / seret)
+const logins = new Map();       // accountId → { stop } kartu login yang sedang terbuka
+const flowOptions = new Map();  // accountId → pilihan model/rasio yang dibaca dari Flow
 
 const profileDir = (id) => path.join(app.getPath('userData'), 'profiles', id);
 const thumbsDir = () => path.join(app.getPath('userData'), 'thumbs');
@@ -64,12 +72,48 @@ function account(id) {
   return a;
 }
 
+function workArea() {
+  try { return (win ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay()).workArea; } catch { return { x: 0, y: 0, width: 1366, height: 768 }; }
+}
+// kartu login: kecil, di tengah jendela aplikasi
+function cardBounds() {
+  const wa = workArea();
+  const width = 460, height = Math.min(700, wa.height - 40);
+  const c = win ? win.getBounds() : wa;
+  const x = Math.min(Math.max(wa.x, c.x + (c.width - width) / 2), wa.x + wa.width - width);
+  const y = Math.min(Math.max(wa.y, c.y + (c.height - height) / 2), wa.y + wa.height - height);
+  return { x, y, width, height };
+}
+function showBounds() {
+  const wa = workArea();
+  const width = Math.round(wa.width * 0.8), height = Math.round(wa.height * 0.85);
+  return { x: wa.x + (wa.width - width) / 2, y: wa.y + (wa.height - height) / 2, width, height };
+}
+
+/**
+ * Mode tampilan browser untuk akun ini:
+ *  - Pengaturan "Tersembunyi" + Mode Otomatis → headless (eksperimental)
+ *  - Mode Aman perlu jendela Flow untuk ditekan Generate → jendela diperkecil, ditampilkan saat dibutuhkan
+ *  - Headless pernah ditolak Flow untuk akun ini → jendela diperkecil (cadangan otomatis)
+ */
+function desiredMode(id) {
+  const w = store.data.browserWindow;
+  if (w !== 'hidden') return w === 'normal' ? 'normal' : 'minimized';
+  const a = store.data.accounts.find((x) => x.id === id);
+  if (store.data.mode !== 'auto' || !store.data.autoAck || (a && a.headlessFailedAt)) return 'minimized';
+  return 'hidden';
+}
+
 function session(id) {
   account(id);
   let s = sessions.get(id);
   if (!s) {
-    s = new FlowSession({ profileDir: profileDir(id), getBrowser: () => browser.resolveBrowser(store.data.browser) });
+    s = new FlowSession({
+      profileDir: profileDir(id), flowUrl: FLOW_URL, getBrowser: () => browser.resolveBrowser(store.data.browser),
+      getMode: () => desiredMode(id), getShowBounds: showBounds
+    });
     s.on('change', () => refreshStatus(id));
+    s.on('login', (state) => send('login', { id, state }));
     sessions.set(id, s);
   }
   return s;
@@ -79,6 +123,42 @@ async function connected(id) {
   const s = session(id);
   if (!s.connected) await s.connect();
   else await s.ensurePage();
+  return s;
+}
+
+function markHeadlessFailed(id, reason) {
+  const a = store.data.accounts.find((x) => x.id === id);
+  if (!a || a.headlessFailedAt) return;
+  a.headlessFailedAt = Date.now();
+  a.headlessReason = String(reason || '').slice(0, 200);
+  store.save();
+  send('settings', publicSettings());
+  send('activity', 'Mode tersembunyi ditolak Google Flow — akun ini memakai jendela diperkecil.');
+}
+
+/**
+ * Sambungkan akun dengan mode yang benar; cadangan otomatis bila Flow tampak keluar akun di mode tersembunyi;
+ * buat project baru bila belum ada (opsi project).
+ */
+async function connectAccount(id, { project = false } = {}) {
+  const s = session(id);
+  const want = desiredMode(id);
+  if (!s.connected) await s.connect();
+  else if (s.mode && s.mode !== want && !(queue.running && want === 'minimized' && s.mode === 'hidden')) await s.relaunch(want);
+  else await s.ensurePage();
+  const a = account(id);
+  let st = await s.status();
+  if (s.mode === 'hidden' && !st.signedIn && a.signedInAt) {
+    send('activity', 'Flow tidak terbaca di mode tersembunyi — mencoba jendela diperkecil…');
+    await s.relaunch('minimized');
+    st = await s.status();
+    if (st.signedIn) markHeadlessFailed(id, 'Flow keluar akun di mode tersembunyi');
+  }
+  if (st.signedIn && !a.signedInAt) { a.signedInAt = Date.now(); store.save(); }
+  if (project && st.signedIn && !st.projectId && store.data.autoProject) {
+    send('activity', 'Membuat project baru di Google Flow…');
+    await s.newProject().catch((e) => send('activity', 'Project baru belum dibuat: ' + e.message));
+  }
   return s;
 }
 
@@ -99,18 +179,12 @@ async function pollStatuses() {
   }
 }
 
-// Jendela browser: normal / di belakang aplikasi / diperkecil
-async function beforeUi(s) { if (store.data.browserWindow === 'minimized') await s.restore(); }
-async function afterUi(s, { show } = {}) {
-  if (show) { await s.bringToFront(); return; }
-  if (store.data.browserWindow === 'minimized') await s.minimize();
-  else if (store.data.browserWindow === 'background' && win) win.focus();
-}
 
 function publicSettings() {
   const d = store.data;
   return {
     accounts: d.accounts, activeAccountId: d.activeAccountId, theme: d.theme, browser: d.browser, browserWindow: d.browserWindow,
+    autoProject: d.autoProject, studio: d.studio,
     downloadDir: d.downloadDir, mode: d.mode, autoAck: d.autoAck, auto: d.auto, downloads: d.downloads.slice(0, 300)
   };
 }
@@ -142,7 +216,7 @@ function handle(channel, fn) {
     try {
       if (!UNGATED.has(channel) && !license.licensed) throw new Error('LICENSE_REQUIRED');
       return { ok: true, data: await fn(...args) };
-    } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
+    } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err), detail: err && err.detail ? String(err.detail).slice(0, 300) : undefined }; }
   });
 }
 
@@ -150,7 +224,8 @@ function registerIpc() {
   handle('app:info', () => ({
     version: app.getVersion(), platform: process.platform, accent: accent(), browsers: browser.findBrowsers(),
     settings: publicSettings(), statuses: Object.fromEntries(statuses), queue: queue.state(), webUrl: WEB_URL,
-    license: license.state(), update: updater.state()
+    license: license.state(), update: updater.state(), chrome: { customTitlebar: CUSTOM_TITLEBAR, mica: MICA },
+    flowOptions: Object.fromEntries(flowOptions)
   }));
 
   // Lisensi
@@ -172,6 +247,7 @@ function registerIpc() {
   handle('settings:set', (patch) => {
     store.set(patch || {});
     nativeTheme.themeSource = store.data.theme;
+    updateTitlebar();
     return publicSettings();
   });
   handle('auto:ack', (agree) => {
@@ -212,10 +288,49 @@ function registerIpc() {
     send('statuses', Object.fromEntries(statuses));
     return publicSettings();
   });
-  handle('accounts:login', (id) => { session(id).openForLogin(); });
+  // Kartu login Google → (otomatis) sambung tersembunyi → project baru
+  handle('accounts:login', async (id) => {
+    const s = session(id);
+    if (logins.has(id)) throw new Error('LOGIN_IN_PROGRESS');
+    if (queue.running) throw new Error('QUEUE_RUNNING');
+    const ctl = { stop: false };
+    logins.set(id, ctl);
+    try {
+      const r = await s.loginCard({ card: cardBounds(), shouldStop: () => ctl.stop });
+      if (!r.ok) { send('login', { id, state: 'closed' }); return { ok: false, status: await refreshStatus(id) }; }
+      send('login', { id, state: 'connecting' });
+      await connectAccount(id);
+      const st = await s.status();
+      if (st.signedIn) { const a = account(id); a.signedInAt = Date.now(); delete a.headlessFailedAt; store.save(); }
+      if (store.data.autoProject && !st.projectId) {
+        send('login', { id, state: 'project' });
+        await s.newProject().catch((e) => send('activity', 'Project baru belum dibuat: ' + e.message));
+      }
+      const fin = await refreshStatus(id);
+      send('login', { id, state: fin.signedIn ? 'done' : 'not-signed-in' });
+      return { ok: !!fin.signedIn, status: fin };
+    } catch (e) {
+      send('login', { id, state: 'error', error: e.message });
+      throw e;
+    } finally { logins.delete(id); }
+  });
+  handle('accounts:loginCancel', (id) => { const c = logins.get(id); if (c) c.stop = true; });
+  // cadangan: jendela browser biasa tanpa kendali (bila kartu login bermasalah)
+  handle('accounts:loginWindow', async (id) => {
+    const s = session(id);
+    if (s.connected) await s.closeBrowser();
+    await browser.waitForExit(profileDir(id));
+    s.openForLogin();
+  });
+  handle('accounts:resetHeadless', (id) => {
+    const a = account(id);
+    delete a.headlessFailedAt;
+    delete a.headlessReason;
+    store.save();
+    return publicSettings();
+  });
   handle('accounts:connect', async (id) => {
-    const s = await connected(id);
-    await afterUi(s);
+    await connectAccount(id, { project: true });
     return refreshStatus(id);
   });
   handle('accounts:disconnect', async (id, close) => {
@@ -252,45 +367,68 @@ function registerIpc() {
     addDownload({ path: file, name: path.basename(file), mediaId: item.mediaId, accountId: id, at: Date.now() });
     return file;
   });
-  handle('flow:send', async (id, { prompt, images }) => {
+  const checkImages = (images) => {
     const imgs = (images || []).filter((p) => allowedFiles.has(p) && checkImage(p));
     if ((images || []).length !== imgs.length) throw new Error('INVALID_IMAGE');
+    return imgs;
+  };
+  handle('flow:newProject', async (id) => {
+    const s = await connectAccount(id);
+    await s.newProject();
+    return refreshStatus(id);
+  });
+  handle('flow:scan', async (id) => {
+    const s = await connectAccount(id);
+    const r = await s.scanSettings();
+    flowOptions.set(id, { ...r, at: Date.now() });
+    return flowOptions.get(id);
+  });
+  // MODE AMAN: masukkan setelan, gambar & prompt ke Flow; pengguna sendiri yang menekan Generate
+  handle('flow:send', async (id, { prompt, images, options }) => {
+    const imgs = checkImages(images);
     if (!imgs.length && !(prompt || '').trim()) throw new Error('NOTHING_TO_SEND');
-    const s = await connected(id);
-    await beforeUi(s);
+    const s = await connectAccount(id, { project: true });
+    await s.beginWork();
     const out = {};
+    if (options && options.apply !== false) out.settings = await s.applySettings(options);
     if (imgs.length) out.images = await s.sendImages(imgs);
     if ((prompt || '').trim()) { await new Promise((r) => setTimeout(r, imgs.length ? 2500 : 0)); out.prompt = await s.sendPrompt(prompt); }
     return out;
   });
-  handle('flow:afterSend', async (id, show) => { const s = session(id); if (s.connected) await afterUi(s, { show }); });
-  handle('flow:generate', async (id, { waitResults }) => {
+  handle('flow:afterSend', async (id, show) => {
+    const s = session(id);
+    if (!s.connected) return;
+    if (show) await s.bringToFront(); else await s.endWork();
+  });
+  // MODE OTOMATIS: setelan → gambar → prompt → Generate → (tunggu & unduh), dengan cadangan headless → jendela diperkecil
+  handle('flow:run', async (id, { prompt, images, options, waitResults }) => {
     if (store.data.mode !== 'auto' || !store.data.autoAck) throw new Error('AUTO_MODE_DISABLED');
-    const s = await connected(id);
-    await beforeUi(s);
-    const st = await s.status();
-    const before = st.projectId ? (await s.listMedia(st.projectId)).map((i) => i.mediaId) : [];
-    const click = await s.clickGenerate();
-    await afterUi(s);
-    if (!waitResults) return { click };
-    const res = await s.waitForNew(before, { timeoutMs: store.data.auto.timeoutMin * 60000, onProgress: (t) => send('activity', t) });
+    const imgs = checkImages(images);
+    if (!imgs.length && !(prompt || '').trim()) throw new Error('NOTHING_TO_SEND');
+    const s = await connectAccount(id);
+    const res = await s.generate({ prompt: (prompt || '').trim(), images: imgs, options: options || null }, {
+      onLog: (t) => send('activity', t), wait: !!waitResults, timeoutMs: store.data.auto.timeoutMin * 60000,
+      onFallback: (v) => markHeadlessFailed(id, v.error)
+    });
     const files = [];
-    if (store.data.auto.autoDownload) {
+    if (res.items && store.data.auto.autoDownload) {
       for (const item of res.items) {
+        send('activity', 'Mengunduh hasil…');
         const file = await s.download(item, path.join(store.data.downloadDir, safeName(account(id).label)));
         files.push(file);
         addDownload({ path: file, name: path.basename(file), mediaId: item.mediaId, accountId: id, at: Date.now() });
       }
     }
-    notify('Hasil Google Flow siap', `${res.items.length} hasil${files.length ? ' sudah diunduh' : ''}.`);
-    return { click, items: res.items, files };
+    if (res.items) notify('Hasil Google Flow siap', `${res.items.length} hasil${files.length ? ' sudah diunduh' : ''}.`);
+    refreshStatus(id).catch(() => {});
+    return { click: res.click, settings: res.settings, items: res.items || null, files, fellBack: res.fellBack, mode: res.mode, projectId: res.projectId };
   });
 
   // Antrean Mode Otomatis
   handle('queue:add', (job) => {
     const imgs = (job.images || []).filter((p) => allowedFiles.has(p) && checkImage(p));
     if ((job.images || []).length !== imgs.length) throw new Error('INVALID_IMAGE');
-    queue.add({ prompts: job.prompts, images: imgs, accountId: job.accountId });
+    queue.add({ prompts: job.prompts, images: imgs, accountId: job.accountId, options: job.options || null });
     return queue.state();
   });
   handle('queue:remove', (id) => { queue.remove(id); return queue.state(); });
@@ -420,15 +558,27 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+function titlebarColors() {
+  const dark = nativeTheme.shouldUseDarkColors;
+  return { color: MICA ? '#00000000' : (dark ? '#0d0f14' : '#eef0f5'), symbolColor: dark ? '#e8eaf0' : '#1b1d24', height: 40 };
+}
+function updateTitlebar() {
+  if (!win || !CUSTOM_TITLEBAR) return;
+  try { win.setTitleBarOverlay(titlebarColors()); } catch { /* tidak didukung */ }
+}
+
 function createWindow() {
   const dark = nativeTheme.shouldUseDarkColors;
   win = new BrowserWindow({
-    width: 1200, height: 780, minWidth: 940, minHeight: 600, show: false,
+    width: 1320, height: 840, minWidth: 980, minHeight: 640, show: false,
     title: 'FLOW CONNECT Desktop',
-    backgroundColor: dark ? '#202020' : '#f3f3f3',
+    backgroundColor: MICA ? '#00000000' : (dark ? '#0d0f14' : '#eef0f5'),
+    ...(MICA ? { backgroundMaterial: 'mica' } : {}),
+    ...(CUSTOM_TITLEBAR ? { titleBarStyle: 'hidden', titleBarOverlay: titlebarColors() } : {}),
     icon: path.join(__dirname, '..', 'renderer', 'icon.png'),
     webPreferences: { preload: path.join(__dirname, '..', 'preload', 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false }
   });
+  if (CUSTOM_TITLEBAR) win.removeMenu(); // pintasan papan ketik ditangani tampilan
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   win.once('ready-to-show', () => win.show());
   if (SMOKE) runSmoke();
@@ -476,7 +626,7 @@ app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(
 app.whenReady().then(async () => {
   store = new Store(app.getPath('userData'), path.join(app.getPath('downloads'), 'FLOW CONNECT'));
   nativeTheme.themeSource = store.data.theme;
-  queue = new AutomationQueue({ store, getSession: connected, onDownloaded: addDownload });
+  queue = new AutomationQueue({ store, getSession: (id) => connectAccount(id), onDownloaded: addDownload, onFallback: (id, v) => markHeadlessFailed(id, v && v.error) });
   queue.on('update', (st) => send('queue', st));
   queue.on('job-failed', (j) => notify('Tugas otomatis gagal', `${j.prompt.slice(0, 60)} — ${j.error}`));
   queue.on('finished', ({ done, failed }) => { if (done + failed) notify('Antrean otomatis selesai', `${done} berhasil, ${failed} gagal.`); });
@@ -492,7 +642,7 @@ app.whenReady().then(async () => {
   registerIpc();
   buildMenu();
   createWindow();
-  nativeTheme.on('updated', () => send('theme', nativeTheme.shouldUseDarkColors));
+  nativeTheme.on('updated', () => { send('theme', nativeTheme.shouldUseDarkColors); updateTitlebar(); });
   if (systemPreferences.on) {
     try { systemPreferences.on('accent-color-changed', () => send('accent', accent())); } catch { /* tidak didukung */ }
   }

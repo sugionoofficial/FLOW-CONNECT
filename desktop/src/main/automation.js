@@ -6,6 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
 const { sleep, rand } = require('./flow');
+const { sanitizeStudio } = require('./store');
 
 class AutomationQueue extends EventEmitter {
   /**
@@ -13,12 +14,14 @@ class AutomationQueue extends EventEmitter {
    * @param {import('./store').Store} o.store
    * @param {(accountId:string) => Promise<import('./flow').FlowSession>} o.getSession  sesi yang sudah tersambung
    * @param {(file:object) => void} [o.onDownloaded]
+   * @param {(accountId:string, info:object) => void} [o.onFallback]  mode tersembunyi ditolak Flow → jendela diperkecil
    */
   constructor(o) {
     super();
     this.store = o.store;
     this.getSession = o.getSession;
     this.onDownloaded = o.onDownloaded || (() => {});
+    this.onFallback = o.onFallback || (() => {});
     this.running = false;
     this.stopRequested = false;
     this.activity = '';
@@ -35,14 +38,14 @@ class AutomationQueue extends EventEmitter {
 
   _log(text) { this.activity = text; this._emit(); }
 
-  add({ prompts, images = [], accountId }) {
+  add({ prompts, images = [], accountId, options }) {
     const list = (Array.isArray(prompts) ? prompts : [prompts]).map((p) => String(p || '').trim()).filter(Boolean);
     if (!list.length) throw new Error('INVALID_PROMPT');
     if (list.length > 200 || this.jobs.length + list.length > 500) throw new Error('QUEUE_FULL');
     if (!this.store.data.accounts.some((a) => a.id === accountId)) throw new Error('UNKNOWN_ACCOUNT');
     for (const prompt of list) {
       if (prompt.length > 8000) throw new Error('INVALID_PROMPT');
-      this.jobs.push({ id: crypto.randomUUID(), prompt, images: images.slice(0, 10), accountId, status: 'pending', results: [], error: null, createdAt: Date.now() });
+      this.jobs.push({ id: crypto.randomUUID(), prompt, images: images.slice(0, 10), accountId, options: options ? sanitizeStudio(options) : null, status: 'pending', results: [], error: null, createdAt: Date.now() });
     }
     this._emit();
   }
@@ -129,27 +132,13 @@ class AutomationQueue extends EventEmitter {
     const tag = acc ? acc.label : 'akun';
     this._log(`[${tag}] Menyambungkan ke Google Flow…`);
     const session = await this.getSession(job.accountId);
-    const st = await session.status();
-    if (!st.signedIn) throw new Error('NOT_SIGNED_IN');
-    let before = [];
-    if (st.projectId) before = (await session.listMedia(st.projectId)).map((i) => i.mediaId);
-    if (job.images.length) {
-      this._log(`[${tag}] Melampirkan ${job.images.length} gambar…`);
-      await session.sendImages(job.images);
-      await sleep(rand(2500, 4500));
-    }
-    if (this.stopRequested) throw new Error('STOPPED');
-    this._log(`[${tag}] Menulis prompt…`);
-    await session.sendPrompt(job.prompt);
-    await sleep(rand(1200, 3500));
-    if (this.stopRequested) throw new Error('STOPPED');
-    this._log(`[${tag}] Menekan Generate…`);
-    await session.clickGenerate();
-    const res = await session.waitForNew(before, {
+    const res = await session.generate({ prompt: job.prompt, images: job.images, options: job.options }, {
+      onLog: (t) => this._log(`[${tag}] ${t}`),
+      shouldStop: () => this._shouldStop(),
       timeoutMs: cfg.timeoutMin * 60000,
-      onProgress: (t) => this._log(`[${tag}] ${t}`),
-      shouldStop: () => this._shouldStop()
+      onFallback: (v) => this.onFallback(job.accountId, v)
     });
+    if (res.settings && res.settings.missing.length) job.note = 'Setelan tidak ditemukan di Flow: ' + res.settings.missing.join(', ');
     job.projectId = res.projectId;
     job.results = [];
     if (cfg.autoDownload) {

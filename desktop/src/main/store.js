@@ -3,12 +3,18 @@
 const fs = require('fs');
 const path = require('path');
 
+const SCHEMA = 2;
+const STUDIO = { kind: 'video', sub: 'text', model: 'auto', ratio: '16:9', count: 1, duration: 0, apply: true };
+
 const DEFAULTS = {
-  accounts: [],            // { id, label, email, createdAt }
+  schema: SCHEMA,
+  accounts: [],            // { id, label, email, createdAt, signedInAt, headlessFailedAt }
   activeAccountId: null,
-  theme: 'system',         // system | light | dark
+  theme: 'dark',           // system | light | dark
   browser: { prefer: 'auto', customPath: '' },
-  browserWindow: 'normal', // normal | background | minimized
+  browserWindow: 'hidden', // hidden (headless, eksperimental) | minimized | normal
+  autoProject: true,       // buat project baru otomatis setelah terhubung
+  studio: STUDIO,          // setelan Flow terakhir di Studio
   downloadDir: '',
   mode: 'safe',            // safe | auto
   autoAck: null,           // waktu pengguna menyetujui risiko Mode Otomatis
@@ -18,6 +24,19 @@ const DEFAULTS = {
   deviceId: null,          // ID acak PC ini (untuk slot perangkat lisensi)
   license: null            // { key (terenkripsi), hint, info, checkedAt, error }
 };
+
+/** Validasi setelan Studio → setelan Flow (mode, model, rasio, jumlah, durasi). */
+function sanitizeStudio(p = {}, base = STUDIO) {
+  const o = { ...base };
+  if (['video', 'image'].includes(p.kind)) o.kind = p.kind;
+  if (['text', 'frames', 'ingredients'].includes(p.sub)) o.sub = p.sub;
+  if (typeof p.model === 'string') o.model = p.model.replace(/[<>"`]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60) || 'auto';
+  if (typeof p.ratio === 'string' && /^(16:9|9:16|1:1|4:3|3:4)$/.test(p.ratio)) o.ratio = p.ratio;
+  if ([1, 2, 3, 4].includes(Number(p.count))) o.count = Number(p.count);
+  if ([0, 4, 6, 8].includes(Number(p.duration))) o.duration = Number(p.duration);
+  if (typeof p.apply === 'boolean') o.apply = p.apply;
+  return o;
+}
 
 const LIMITS = { minDelay: [20, 3600], maxDelay: [20, 7200], maxPerRun: [1, 50], timeoutMin: [1, 30] };
 
@@ -29,6 +48,14 @@ class Store {
     this.data = { ...structuredClone(DEFAULTS), ...data };
     this.data.auto = { ...DEFAULTS.auto, ...(data.auto || {}) };
     this.data.browser = { ...DEFAULTS.browser, ...(data.browser || {}) };
+    this.data.studio = sanitizeStudio(data.studio || {});
+    // v1.2: browser disembunyikan & tampilan gelap premium sebagai bawaan
+    if ((data.schema || 1) < SCHEMA) {
+      if (data.browserWindow !== 'minimized') this.data.browserWindow = 'hidden';
+      if (!data.theme || data.theme === 'system') this.data.theme = 'dark';
+      this.data.schema = SCHEMA;
+    }
+    if (this.data.browserWindow === 'background') this.data.browserWindow = 'normal';
     if (!this.data.downloadDir) this.data.downloadDir = defaultDownloadDir;
     // tugas yang "berjalan" saat aplikasi ditutup dianggap menunggu lagi
     for (const j of this.data.queue) if (j.status === 'running') j.status = 'pending';
@@ -40,7 +67,9 @@ class Store {
   set(patch) {
     const d = this.data;
     if (patch.theme && ['system', 'light', 'dark'].includes(patch.theme)) d.theme = patch.theme;
-    if (patch.browserWindow && ['normal', 'background', 'minimized'].includes(patch.browserWindow)) d.browserWindow = patch.browserWindow;
+    if (patch.browserWindow && ['hidden', 'minimized', 'normal'].includes(patch.browserWindow)) d.browserWindow = patch.browserWindow;
+    if (typeof patch.autoProject === 'boolean') d.autoProject = patch.autoProject;
+    if (patch.studio && typeof patch.studio === 'object') d.studio = sanitizeStudio(patch.studio, d.studio);
     if (patch.browser) {
       const p = patch.browser;
       if (['auto', 'chrome', 'edge', 'brave', 'chromium', 'custom'].includes(p.prefer)) d.browser.prefer = p.prefer;
@@ -76,4 +105,4 @@ class Store {
   }
 }
 
-module.exports = { Store, DEFAULTS, LIMITS };
+module.exports = { Store, DEFAULTS, LIMITS, STUDIO, sanitizeStudio };

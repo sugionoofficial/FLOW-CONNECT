@@ -7,7 +7,11 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 
 async function call(channel, ...args) {
   const r = await fc.call(channel, ...args);
-  if (!r || !r.ok) throw new Error((r && r.error) || 'ERROR');
+  if (!r || !r.ok) {
+    const e = new Error((r && r.error) || 'ERROR');
+    if (r && r.detail) e.detail = r.detail;
+    throw e;
+  }
   return r.data;
 }
 
@@ -48,10 +52,17 @@ const ERR = {
   NO_UPDATE: 'Tidak ada pembaruan.',
   NOT_READY: 'Pembaruan belum selesai diunduh.',
   UPDATE_UNSUPPORTED: 'Pembaruan otomatis hanya tersedia di versi installer Windows.',
-  FORBIDDEN: 'Tidak diizinkan.'
+  FORBIDDEN: 'Tidak diizinkan.',
+  LOGIN_TIMEOUT: 'Kartu login ditutup karena terlalu lama. Coba lagi.',
+  LOGIN_IN_PROGRESS: 'Kartu login untuk akun ini sudah terbuka.',
+  QUEUE_RUNNING: 'Hentikan antrean otomatis terlebih dahulu.',
+  NEW_PROJECT_NOT_FOUND: 'Tombol "New project" di Google Flow tidak ditemukan. Klik "Lihat Flow" lalu buat project secara manual.',
+  GENERATE_NOT_STARTED: 'Flow tidak memulai pembuatan setelah Generate ditekan. Periksa kuota/kredit, lalu coba lagi.',
+  FLOW_ERROR: 'Google Flow menolak permintaan ini.'
 };
 const msg = (e) => {
   const k = (e && e.message) || String(e);
+  if (k === 'FLOW_ERROR' && e.detail) return ERR[k] + ' ' + e.detail;
   if (ERR[k]) return ERR[k];
   if (/^HTTP_\d+$/.test(k)) return `Google Flow membalas error ${k.slice(5)}.`;
   return k;
@@ -64,7 +75,9 @@ const S = {
   settings: null,
   statuses: {},
   queue: { running: false, activity: '', jobs: [] },
-  studio: { images: [], previews: {}, prompt: '', busy: '', waitResults: true, log: [] },
+  studio: { images: [], previews: {}, prompt: '', busy: '', waitResults: true, log: [], sel: null },
+  flowOptions: {},
+  login: null,     // { id, state, error } kartu login yang sedang berjalan
   gallery: { key: '', items: [], loading: false, error: null, thumbs: {}, selected: new Set(), busy: new Set() },
   busy: new Set(),
   activity: '',
@@ -80,6 +93,34 @@ const st = (id) => S.statuses[id] || { connected: false };
 const isAuto = () => S.settings && S.settings.mode === 'auto' && !!S.settings.autoAck;
 const fmtTime = (t) => new Date(t).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
 const fmtDate = (t) => new Date(t).toLocaleString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+const fileUrl = (p) => {
+  const u = String(p).replace(/\\/g, '/').split('/').map((x, i) => (i === 0 && /^[A-Za-z]:$/.test(x) ? x : encodeURIComponent(x))).join('/');
+  return u.startsWith('/') ? 'file://' + u : 'file:///' + u;
+};
+const normText = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+
+// ---------- Katalog setelan Google Flow (nama sesuai label di Flow) ----------
+const MODELS = {
+  video: [['Veo 3.1 - Fast', 'Cepat · hemat kredit'], ['Veo 3.1 - Quality', 'Kualitas tertinggi'], ['Veo 3.1 - Lite', 'Paling hemat'], ['Gemini Omni Flash', 'Klip 10 dtk · edit percakapan'], ['Veo 2 - Fast', 'Tanpa audio'], ['Veo 2 - Quality', 'Tanpa audio']],
+  image: [['Nano Banana 2', 'Bawaan · cepat'], ['Nano Banana Pro', 'Detail tinggi'], ['Imagen 4', 'Fotorealistis']]
+};
+const SUBS = [['text', 'Teks', 'type', 'Teks ke Video'], ['frames', 'Frame', 'film', 'Frame ke Video'], ['ingredients', 'Bahan', 'layers', 'Bahan ke Video']];
+const RATIOS = { video: ['16:9', '9:16'], image: ['16:9', '9:16', '1:1', '4:3', '3:4'] };
+const opts = () => S.settings.studio;
+function modelList(kind) {
+  const a = acc();
+  const fo = a && S.flowOptions[a.id];
+  const list = MODELS[kind].map(([v, d]) => ({ v, d }));
+  if (fo && fo.models) {
+    for (const m of fo.models) {
+      if ((kind === 'image') !== /imagen|nano|banana/i.test(m)) continue;
+      if (!list.some((x) => normText(x.v) === normText(m))) list.push({ v: m, d: 'Dibaca dari Flow' });
+    }
+  }
+  const cur = opts().model;
+  if (cur !== 'auto' && !list.some((x) => x.v === cur) && (kind === 'image') === /imagen|nano|banana/i.test(cur)) list.push({ v: cur, d: '' });
+  return list;
+}
 
 // ---------- Komponen kecil ----------
 const btn = (act, label, { ic, cls = '', title, data = '', disabled } = {}) =>
@@ -109,9 +150,9 @@ function readiness(needProject) {
   if (!S.settings.accounts.length) return infobar('', 'info', 'Belum ada akun.', 'Tambahkan akun Google untuk mulai.', btn('addAccount', 'Tambah akun', { ic: 'plus', cls: 'primary' }));
   if (!a) return infobar('', 'info', '', 'Pilih akun di atas.');
   const s = st(a.id);
-  if (!s.connected) return infobar('warning', 'plug', 'Akun belum terhubung.', 'Aplikasi akan membuka Google Flow di browser Anda.', btn('connect', 'Hubungkan', { ic: 'plug', cls: 'primary', data: `data-id="${a.id}"` }));
-  if (!s.signedIn) return infobar('warning', 'log-in', 'Belum masuk ke Google Flow.', ' Masuk langsung di jendela browser yang terbuka, atau gunakan "Masuk ke Google".', btn('showFlow', 'Tampilkan Flow', { ic: 'app-window', data: `data-id="${a.id}"` }) + btn('login', 'Masuk ke Google', { ic: 'log-in', data: `data-id="${a.id}"` }));
-  if (needProject && !s.projectId) return infobar('', 'info', 'Belum ada project terbuka.', ' Buka atau buat project di Google Flow.', btn('showFlow', 'Tampilkan Flow', { ic: 'app-window', data: `data-id="${a.id}"` }));
+  if (!s.connected) return infobar('warning', 'plug', 'Akun belum terhubung.', a.signedInAt ? ' Google Flow dibuka di latar belakang — browser tidak tampil.' : ' Masuk lewat kartu login Google dulu (sekali saja).', (a.signedInAt ? '' : btn('login', 'Masuk ke Google', { ic: 'log-in', cls: 'primary', data: `data-id="${a.id}"` })) + btn('connect', 'Hubungkan', { ic: 'plug', cls: a.signedInAt ? 'primary' : '', data: `data-id="${a.id}"` }));
+  if (!s.signedIn) return infobar('warning', 'log-in', 'Belum masuk ke Google Flow.', ' Klik "Masuk ke Google": kartu login kecil terbuka, setelah itu semuanya otomatis.', btn('login', 'Masuk ke Google', { ic: 'log-in', cls: 'primary', data: `data-id="${a.id}"` }));
+  if (needProject && !s.projectId) return infobar('', 'info', 'Belum ada project terbuka.', ' Buat project baru — aplikasi menekan "New project" di Flow untuk Anda.', btn('newProject', 'Project baru', { ic: 'folder-plus', cls: 'primary', data: `data-id="${a.id}"` }));
   return null;
 }
 
@@ -119,7 +160,7 @@ function readiness(needProject) {
 const NAV = [
   ['home', 'Beranda', 'house'],
   ['accounts', 'Akun Google', 'users'],
-  ['studio', 'Studio', 'send'],
+  ['studio', 'Studio', 'wand-sparkles'],
   ['gallery', 'Galeri', 'images'],
   ['auto', 'Otomatis', 'bot'],
   ['downloads', 'Unduhan', 'download']
@@ -131,39 +172,51 @@ const PAGES = {
     const nb = !S.info.browsers.length && S.settings.browser.prefer !== 'custom';
     const s = a ? st(a.id) : {};
     const si = a ? statusInfo(a.id) : null;
+    const hidden = S.settings.browserWindow === 'hidden';
     return `
-      <div class="page-head"><h1>Beranda</h1></div>
-      <p class="subtitle">Kendalikan Google Flow dari satu aplikasi. Proses generate tetap dilakukan Google Flow dengan akun Google Anda sendiri.</p>
+      <section class="hero">
+        <div class="hero-text">
+          <div class="eyebrow">${icon('sparkles')} FLOW CONNECT Desktop</div>
+          <h1>Berkarya dengan Google Flow, tanpa membuka browser.</h1>
+          <p>Masuk sekali lewat kartu login Google. Setelah itu aplikasi membuka Flow di latar belakang, membuat project, memilih model, dan menekan Generate untuk Anda.</p>
+          <div class="hero-actions">
+            ${!S.settings.accounts.length ? btn('addAccount', 'Tambah akun Google', { ic: 'plus', cls: 'primary lg' })
+              : a && !s.signedIn ? btn('login', 'Masuk ke Google', { ic: 'log-in', cls: 'primary lg', data: `data-id="${a.id}"` })
+              : btn('go', 'Buka Studio', { ic: 'wand-sparkles', cls: 'primary lg', data: 'data-page="studio"' })}
+            ${btn('help', 'Cara kerja', { ic: 'circle-help', cls: 'ghost lg' })}
+          </div>
+        </div>
+        <div class="hero-art" aria-hidden="true"><div class="orb o1"></div><div class="orb o2"></div><div class="glass-card">${icon('clapperboard', 'xl')}<div><b>Veo 3.1</b><span>16:9 · x2 · 8 dtk</span></div></div><div class="glass-card two">${icon('image', 'xl')}<div><b>Nano Banana</b><span>Gambar · 1:1</span></div></div></div>
+      </section>
       ${nb ? infobar('error', 'circle-x', 'Browser tidak ditemukan.', ' Instal Google Chrome atau Microsoft Edge, lalu buka ulang aplikasi.', btn('external', 'Unduh Chrome', { ic: 'external-link', data: 'data-url="https://www.google.com/chrome"' })) : ''}
-      ${!S.settings.accounts.length ? infobar('', 'sparkles', 'Selamat datang!', ' Mulai dengan menambahkan akun Google Anda.', btn('addAccount', 'Tambah akun', { ic: 'plus', cls: 'primary' })) : ''}
       <div class="grid c3">
         <div class="card stat">
           <div class="label">${icon('users')} Akun aktif</div>
           <div class="value ellipsis">${a ? esc(a.label) : '—'}</div>
           <div class="muted small ellipsis">${a ? esc(a.email || 'Email terdeteksi setelah masuk') : 'Belum ada akun'}</div>
           <div class="actions">${a ? `${si.badge}` : ''}</div>
-          <div class="actions">${a ? (s.connected ? btn('showFlow', 'Tampilkan Flow', { ic: 'app-window', cls: 'sm', data: `data-id="${a.id}"` }) : btn('connect', 'Hubungkan', { ic: 'plug', cls: 'sm primary', data: `data-id="${a.id}"` })) : btn('addAccount', 'Tambah akun', { ic: 'plus', cls: 'sm primary' })}</div>
+          <div class="actions">${a ? (s.connected ? btn('go', 'Studio', { ic: 'wand-sparkles', cls: 'sm', data: 'data-page="studio"' }) : btn('connect', 'Hubungkan', { ic: 'plug', cls: 'sm primary', data: `data-id="${a.id}"` })) : btn('addAccount', 'Tambah akun', { ic: 'plus', cls: 'sm primary' })}</div>
+        </div>
+        <div class="card stat">
+          <div class="label">${icon(hidden ? 'eye-off' : 'app-window')} Browser</div>
+          <div class="value">${{ hidden: 'Tersembunyi', minimized: 'Diperkecil', normal: 'Terlihat' }[S.settings.browserWindow]}</div>
+          <div class="muted small">${hidden ? (isAuto() ? 'Headless (eksperimental) — otomatis pindah ke jendela diperkecil bila ditolak Flow.' : 'Mode Aman: jendela Flow muncul saat Anda perlu menekan Generate.') : 'Ubah di Pengaturan → Browser.'}</div>
+          <div class="actions">${btn('go', 'Ubah', { cls: 'sm', data: 'data-page="settings"' })}</div>
         </div>
         <div class="card stat">
           <div class="label">${icon(isAuto() ? 'bot' : 'shield-check')} Mode kerja</div>
           <div class="value">${isAuto() ? 'Otomatis' : 'Aman'}</div>
-          <div class="muted small">${isAuto() ? 'Aplikasi boleh menekan Generate untuk Anda.' : 'Anda sendiri yang menekan Generate di Flow.'}</div>
-          <div class="actions">${btn('go', 'Ubah', { cls: 'sm', data: 'data-page="settings"' })}</div>
-        </div>
-        <div class="card stat">
-          <div class="label">${icon('download')} Unduhan</div>
-          <div class="value">${S.settings.downloads.length} file</div>
-          <div class="muted small ellipsis" title="${esc(S.settings.downloadDir)}">${esc(S.settings.downloadDir)}</div>
-          <div class="actions">${btn('openDownloads', 'Buka folder', { ic: 'folder-open', cls: 'sm' })}</div>
+          <div class="muted small">${isAuto() ? 'Aplikasi menekan Generate, menunggu, lalu mengunduh hasil.' : 'Anda sendiri yang menekan Generate di Flow.'}</div>
+          <div class="actions">${btn('go', 'Ubah', { cls: 'sm', data: 'data-page="settings"' })}${btn('openDownloads', `${S.settings.downloads.length} unduhan`, { ic: 'folder-open', cls: 'sm subtle' })}</div>
         </div>
       </div>
       <h2>Cara kerja</h2>
       <div class="card">
         <ol class="steps">
-          <li><div><b>Tambah akun</b><div class="muted small">Setiap akun Google mendapat profil browser tersendiri di PC ini.</div></div></li>
-          <li><div><b>Masuk ke Google (sekali saja)</b><div class="muted small">Browser biasa terbuka. Masuk ke akun Google Anda, lalu tutup jendelanya. Login tersimpan di PC Anda, tidak dikirim ke mana pun.</div></div></li>
-          <li><div><b>Hubungkan</b><div class="muted small">Aplikasi membuka Google Flow di browser itu dan mengendalikannya dari sini.</div></div></li>
-          <li><div><b>Kirim gambar &amp; prompt dari Studio</b><div class="muted small">Mode Aman: Anda menekan Generate di Flow. Mode Otomatis: aplikasi yang menekan, menunggu, lalu mengunduh hasilnya.</div></div></li>
+          <li><div><b>Tambah akun &amp; masuk ke Google</b><div class="muted small">Kartu login kecil berisi halaman login Google asli terbuka. Aplikasi tidak menyentuh halaman itu — kata sandi hanya Anda yang mengetik.</div></div></li>
+          <li><div><b>Otomatis masuk ke Flow &amp; buat project</b><div class="muted small">Kartu tertutup sendiri, Flow dibuka di latar belakang (tanpa jendela), lalu tombol "New project" ditekan untuk Anda.</div></div></li>
+          <li><div><b>Pilih mode, model &amp; rasio di Studio</b><div class="muted small">Video (Teks / Frame / Bahan) atau Gambar, Veo 3.1 / Nano Banana / Imagen, 16:9 / 9:16, x1–x4 — diterapkan ke setelan Flow sebelum Generate.</div></div></li>
+          <li><div><b>Generate &amp; lihat hasilnya di sini</b><div class="muted small">Pratinjau besar, galeri project, dan unduh otomatis ke PC.</div></div></li>
         </ol>
       </div>`;
   },
@@ -172,33 +225,33 @@ const PAGES = {
     const list = S.settings.accounts;
     return `
       <div class="page-head"><h1>Akun Google</h1><div class="tools">${btn('addAccount', 'Tambah akun', { ic: 'plus', cls: 'primary' })}</div></div>
-      <p class="subtitle">Satu akun = satu profil browser terpisah. Anda bisa memakai beberapa akun sekaligus.</p>
+      <p class="subtitle">Satu akun = satu profil browser terpisah di PC ini. Login cukup sekali lewat kartu login Google.</p>
       ${list.length ? '' : `<div class="card empty">${icon('users', 'xl')}<div>Belum ada akun.</div><div class="actionbar center">${btn('addAccount', 'Tambah akun', { ic: 'plus', cls: 'primary' })}</div></div>`}
       <div class="rows">
         ${list.map((a) => {
           const s = st(a.id);
           const si = statusInfo(a.id);
           const d = `data-id="${a.id}"`;
-          return `<div class="row">
+          return `<div class="row acc-row">
             <div class="avatar">${esc((a.label || '?').trim().charAt(0).toUpperCase())}</div>
             <div class="text">
-              <div class="title">${esc(a.label)} ${a.id === S.settings.activeAccountId ? '<span class="badge accent">Aktif</span>' : ''}</div>
-              <div class="desc">${esc(a.email || 'Email terdeteksi setelah masuk & terhubung')}${s.projectTitle ? ' · Project: ' + esc(s.projectTitle) : ''}</div>
+              <div class="title">${esc(a.label)} ${a.id === S.settings.activeAccountId ? '<span class="badge accent">Aktif</span>' : ''} ${a.headlessFailedAt ? '<span class="badge warn" title="Flow menolak mode tersembunyi untuk akun ini">Jendela diperkecil</span>' : ''}</div>
+              <div class="desc">${esc(a.email || 'Email terdeteksi setelah masuk')}${s.projectTitle ? ' · Project: ' + esc(s.projectTitle) : ''}</div>
             </div>
             <div class="ctrl">
               ${si.badge}
               ${a.id !== S.settings.activeAccountId ? btn('setActive', '', { ic: 'check', cls: 'subtle icon', title: 'Jadikan akun aktif', data: d }) : ''}
-              ${btn('login', 'Masuk ke Google', { ic: 'log-in', data: d, disabled: s.connected, title: s.connected ? 'Putuskan dulu untuk membuka jendela login biasa' : '' })}
+              ${btn('login', s.signedIn ? 'Masuk ulang' : 'Masuk ke Google', { ic: 'log-in', cls: s.signedIn ? '' : 'primary', data: d })}
               ${s.connected
-                ? btn('showFlow', '', { ic: 'app-window', cls: 'icon', title: 'Tampilkan Google Flow', data: d }) + btn('disconnect', 'Putuskan', { ic: 'unplug', data: d })
-                : btn('connect', 'Hubungkan', { ic: 'plug', cls: 'primary', data: d })}
+                ? btn('showFlow', '', { ic: 'app-window', cls: 'icon', title: 'Lihat jendela Google Flow', data: d }) + btn('disconnect', 'Putuskan', { ic: 'unplug', data: d })
+                : btn('connect', 'Hubungkan', { ic: 'plug', cls: a.signedInAt ? 'primary' : '', data: d })}
               ${btn('renameAccount', '', { ic: 'pencil', cls: 'subtle icon', title: 'Ganti nama', data: d })}
               ${btn('removeAccount', '', { ic: 'trash-2', cls: 'subtle icon danger', title: 'Hapus akun', data: d })}
             </div>
           </div>`;
         }).join('')}
       </div>
-      ${list.length ? `<h2>Tentang login</h2>${infobar('', 'shield-check', '', '"Masuk ke Google" membuka browser biasa (Chrome/Edge) <b>tanpa</b> kendali aplikasi, jadi login Google berjalan normal. Setelah berhasil masuk, tutup jendela browser itu lalu klik <b>Hubungkan</b>. Kata sandi & cookie Google hanya tersimpan di profil browser di PC ini.')}` : ''}`;
+      ${list.length ? `<h2>Tentang login</h2>${infobar('', 'shield-check', '', '"Masuk ke Google" membuka <b>kartu login</b> — jendela kecil berisi halaman login Google asli di Chrome/Edge Anda. Aplikasi <b>tidak</b> mengetik, mengklik, atau membaca isi halaman itu; aplikasi hanya menunggu Google mengalihkan ke Flow, lalu menutup kartu dan melanjutkan di latar belakang. Kata sandi &amp; cookie hanya tersimpan di profil browser di PC ini.', btn('loginWindowHelp', 'Login di browser biasa', { cls: 'sm subtle' }))}` : ''}`;
   },
 
   studio() {
@@ -206,40 +259,81 @@ const PAGES = {
     const s = a ? st(a.id) : {};
     const warn = readiness(false);
     const ready = !warn;
+    const o = opts();
     const imgs = S.studio.images;
     const busy = S.studio.busy;
+    const video = o.kind === 'video';
+    const chip = (k, v, label, ic, title) => `<button class="chip ${String(o[k]) === String(v) ? 'on' : ''}" data-act="studioOpt" data-k="${k}" data-v="${v}" ${title ? `title="${esc(title)}"` : ''}>${ic ? icon(ic) : ''}<span>${label}</span></button>`;
+    const refLabel = !video ? 'Gambar referensi' : o.sub === 'frames' ? 'Frame awal &amp; akhir' : o.sub === 'ingredients' ? 'Bahan (karakter, objek, gaya)' : 'Gambar referensi';
+    const refHint = !video ? 'Opsional — untuk edit / gaya.' : o.sub === 'frames' ? 'Gambar ke-1 = frame awal, ke-2 = frame akhir.' : o.sub === 'ingredients' ? 'Maks. 3 bahan agar konsisten antar adegan.' : 'Opsional. Untuk animasi gambar, pilih "Frame".';
+    const models = modelList(o.kind);
+    const g = S.gallery;
+    const items = g.key ? g.items : [];
+    const cur = items.find((x) => x.mediaId === S.studio.sel) || items[0];
+    const local = cur && S.settings.downloads.find((d) => d.mediaId === cur.mediaId);
+    const stage = busy
+      ? `<div class="stage-busy"><div class="pulse">${icon('sparkles', 'xl')}</div><div class="stage-title">${busy === 'send' ? 'Mengirim ke Google Flow…' : 'Google Flow sedang membuat…'}</div><div class="muted small" id="act-text">${esc(S.activity)}</div><div class="progress indet"><i></i></div></div>`
+      : cur
+        ? (cur.isVideo && local && /\.(mp4|webm)$/i.test(local.path)
+          ? `<video class="stage-media" src="${esc(fileUrl(local.path))}" controls loop muted autoplay playsinline></video>`
+          : g.thumbs[cur.mediaId] ? `<img class="stage-media" src="${g.thumbs[cur.mediaId]}" alt="">` : `<div class="stage-empty">${icon(cur.isVideo ? 'video' : 'file-image', 'xl')}<div class="muted">${cur.done ? 'Memuat pratinjau…' : 'Masih diproses Flow…'}</div></div>`)
+        : `<div class="stage-empty">${icon('square-play', 'xl')}<div class="stage-title">Hasil generate tampil di sini</div><div class="muted small">Tulis prompt, pilih model, lalu tekan ${isAuto() ? 'Generate' : 'Kirim ke Flow'}.</div></div>`;
     return `
-      <div class="page-head"><h1>Studio</h1><div class="tools">${accountPicker()}${a && s.connected ? btn('showFlow', 'Tampilkan Flow', { ic: 'app-window', data: `data-id="${a.id}"` }) : ''}</div></div>
-      ${warn || (s.projectId ? '' : infobar('', 'info', 'Belum ada project terbuka.', ' Prompt tetap bisa dikirim ke halaman Flow yang sedang terbuka; untuk galeri & unduh otomatis, buka sebuah project.'))}
-      ${ready && s.projectId ? infobar('success', 'circle-check', 'Siap.', ` Project: <b>${esc(s.projectTitle || s.projectId)}</b>`) : ''}
+      <div class="page-head"><h1>Studio</h1><div class="tools">${accountPicker()}
+        ${a && s.signedIn ? `<span class="pill" title="${esc(s.projectTitle || '')}">${icon('clapperboard')}<span class="ellipsis">${s.projectId ? esc(s.projectTitle || 'Project') : 'Belum ada project'}</span></span>${btn('newProject', 'Project baru', { ic: S.busy.has('newProject' + `data-id="${a.id}"`) ? 'loader-circle' : 'folder-plus', data: `data-id="${a.id}"`, disabled: !!busy })}` : ''}
+        ${a && s.connected ? btn('showFlow', '', { ic: 'app-window', cls: 'icon', title: 'Lihat jendela Google Flow', data: `data-id="${a.id}"` }) : ''}
+      </div></div>
+      ${warn || ''}
       <div class="studio">
-        <div class="card">
-          <div class="card-head">${icon('image-plus')}<h3>Gambar referensi</h3><span class="right faint small">${imgs.length}/10</span></div>
-          <div class="drop" id="drop">
-            ${icon('file-image', 'xl')}
-            <div>Seret gambar ke sini</div>
-            ${btn('pickImages', 'Pilih gambar…', { ic: 'folder-open', cls: 'sm' })}
+        <div class="card composer">
+          <div class="seg" role="tablist" aria-label="Jenis hasil">
+            <button class="seg-btn ${video ? 'on' : ''}" data-act="studioOpt" data-k="kind" data-v="video" role="tab" aria-selected="${video}">${icon('clapperboard')}<span>Video</span></button>
+            <button class="seg-btn ${!video ? 'on' : ''}" data-act="studioOpt" data-k="kind" data-v="image" role="tab" aria-selected="${!video}">${icon('image')}<span>Gambar</span></button>
           </div>
-          ${imgs.length ? `<div class="thumbs">${imgs.map((p, i) => `<div class="thumb" title="${esc(p)}">${S.studio.previews[p] ? `<img src="${S.studio.previews[p]}" alt="">` : icon('file-image', 'lg')}${btn('removeImage', '', { ic: 'x', cls: 'x sm', title: 'Hapus', data: `data-i="${i}"` })}</div>`).join('')}</div>
-          <div class="actionbar">${btn('clearImages', 'Hapus semua', { cls: 'sm subtle' })}</div>` : ''}
-        </div>
-        <div class="card">
-          <div class="card-head">${icon('pencil')}<h3>Prompt</h3><span class="right faint small" id="count">${S.studio.prompt.length}/8000</span></div>
-          <textarea id="prompt" class="input" rows="7" maxlength="8000" placeholder="Jelaskan gambar atau video yang ingin dibuat Google Flow…" data-input="prompt">${esc(S.studio.prompt)}</textarea>
-          <div class="actionbar">
+          ${video ? `<div class="chips modes">${SUBS.map(([v, l, ic, t]) => chip('sub', v, l, ic, t)).join('')}</div>` : ''}
+          <div class="prompt-wrap">
+            <textarea id="prompt" class="input prompt" rows="6" maxlength="8000" placeholder="${video ? 'Kamera drone perlahan maju di atas sawah terasering Bali saat matahari terbit, kabut tipis, sinematik…' : 'Foto produk kopi susu gula aren di meja kayu, cahaya pagi, gaya editorial…'}" data-input="prompt">${esc(S.studio.prompt)}</textarea>
+            <div class="prompt-foot"><span class="faint small" id="count">${S.studio.prompt.length}/8000</span><span class="faint small">Ctrl+Enter</span></div>
+          </div>
+          <div class="refs">
+            <div class="refs-head"><b>${refLabel}</b><span class="faint small">${refHint}</span><span class="right faint small">${imgs.length}/10</span></div>
+            <div class="ref-row" id="drop">
+              ${imgs.map((p, i) => `<div class="thumb" title="${esc(p)}">${S.studio.previews[p] ? `<img src="${S.studio.previews[p]}" alt="">` : icon('file-image', 'lg')}${video && o.sub === 'frames' && i < 2 ? `<span class="tag">${i ? 'Akhir' : 'Awal'}</span>` : ''}${btn('removeImage', '', { ic: 'x', cls: 'x sm', title: 'Hapus', data: `data-i="${i}"` })}</div>`).join('')}
+              <button class="thumb add" data-act="pickImages" title="Tambah gambar (atau seret ke sini)">${icon('image-plus', 'lg')}<span class="small">Tambah</span></button>
+            </div>
+          </div>
+          <div class="opts ${o.apply ? '' : 'off'}">
+            <div class="opt wide"><span class="opt-l">${icon('cpu')} Model</span>
+              <select class="input" data-change="studioModel" ${o.apply ? '' : 'disabled'} aria-label="Model">
+                <option value="auto" ${o.model === 'auto' ? 'selected' : ''}>Bawaan Flow (tidak diubah)</option>
+                ${models.map((m) => `<option value="${esc(m.v)}" ${o.model === m.v ? 'selected' : ''}>${esc(m.v)}${m.d ? ' — ' + esc(m.d) : ''}</option>`).join('')}
+              </select>
+              ${a && s.connected ? btn('studioScan', '', { ic: S.busy.has('studioScan') ? 'loader-circle' : 'scan-search', cls: 'subtle icon', title: 'Baca daftar model dari Google Flow', disabled: !!busy }) : ''}
+            </div>
+            <div class="opt"><span class="opt-l">${icon('ratio')} Rasio</span><div class="chips">${RATIOS[o.kind].map((r) => chip('ratio', r, r)).join('')}</div></div>
+            <div class="opt"><span class="opt-l">${icon('hash')} Jumlah</span><div class="chips">${[1, 2, 3, 4].map((n) => chip('count', n, 'x' + n)).join('')}</div></div>
+            ${video ? `<div class="opt"><span class="opt-l">${icon('timer')} Durasi</span><div class="chips">${chip('duration', 0, 'Bawaan', '', 'Pakai durasi bawaan Flow')}${[4, 6, 8].map((n) => chip('duration', n, n + ' dtk')).join('')}</div></div>` : ''}
+          </div>
+          <label class="switch apply"><input type="checkbox" data-change="studioApply" ${o.apply ? 'checked' : ''}><span class="small">Terapkan setelan ini ke Google Flow sebelum ${isAuto() ? 'Generate' : 'mengirim'}</span></label>
+          <div class="actionbar cta-bar">
             ${isAuto()
-              ? btn('sendGenerate', 'Kirim &amp; Generate', { ic: busy === 'generate' ? 'loader-circle' : 'zap', cls: 'primary', disabled: !ready || !!busy }) +
-                btn('send', 'Kirim saja', { ic: 'send', disabled: !ready || !!busy }) +
-                btn('queueAdd', 'Tambah ke antrean', { ic: 'list-plus', disabled: !a || !!busy }) +
+              ? btn('sendGenerate', busy === 'generate' ? 'Membuat…' : 'Generate', { ic: busy === 'generate' ? 'loader-circle' : 'sparkles', cls: 'cta', disabled: !ready || !!busy }) +
+                btn('queueAdd', 'Antrean', { ic: 'list-plus', disabled: !a || !!busy, title: 'Tambah ke antrean otomatis' }) +
                 `<label class="check small"><input type="checkbox" data-change="waitResults" ${S.studio.waitResults ? 'checked' : ''}> Tunggu hasil${S.settings.auto.autoDownload ? ' &amp; unduh' : ''}</label>`
-              : btn('send', 'Kirim ke Flow', { ic: busy === 'send' ? 'loader-circle' : 'send', cls: 'primary', disabled: !ready || !!busy }) +
-                `<span class="muted small">Gambar & prompt dimasukkan ke Google Flow, lalu jendela Flow ditampilkan agar Anda menekan Generate.</span>`}
+              : btn('send', busy === 'send' ? 'Mengirim…' : 'Kirim ke Flow', { ic: busy === 'send' ? 'loader-circle' : 'send', cls: 'cta', disabled: !ready || !!busy }) +
+                `<span class="muted small grow">Mode Aman: jendela Flow muncul agar Anda menekan Generate. <a data-act="go" data-page="settings">Mode Otomatis</a> menjalankan semuanya tersembunyi.</span>`}
           </div>
-          ${busy ? `<div class="activity"><div class="progress indet grow"><i></i></div></div><div class="muted small" id="act-text">${esc(S.activity)}</div>` : ''}
+        </div>
+        <div class="card preview">
+          <div class="card-head">${icon('square-play')}<h3>Pratinjau</h3>${cur && !busy ? `<span class="faint small ellipsis">${esc(cur.title || '')}</span>` : ''}
+            <span class="right hrow">${cur && !busy ? btn('galleryDownload', '', { ic: g.busy.has(cur.mediaId) ? 'loader-circle' : 'download', cls: 'subtle icon sm', title: 'Unduh', data: `data-id="${cur.mediaId}"`, disabled: !cur.done }) : ''}${local ? btn('showFile', '', { ic: 'folder-open', cls: 'subtle icon sm', title: 'Tampilkan di folder', data: `data-path="${esc(local.path)}"` }) : ''}</span></div>
+          <div class="stage r-${o.ratio.replace(':', '-')}">${stage}</div>
+          ${items.length ? `<div class="strip">${items.slice(0, 14).map((it) => `<button class="strip-item ${cur && cur.mediaId === it.mediaId ? 'on' : ''}" data-act="studioSel" data-id="${it.mediaId}" title="${esc(it.title || '')}">${g.thumbs[it.mediaId] ? `<img src="${g.thumbs[it.mediaId]}" alt="">` : icon(it.isVideo ? 'video' : 'file-image')}${it.isVideo ? `<span class="vtag">${icon('play')}</span>` : ''}</button>`).join('')}</div>` : `<div class="muted small strip-empty">${s.projectId ? 'Belum ada hasil di project ini.' : 'Hasil project akan muncul di sini.'}</div>`}
         </div>
       </div>
-      <h2>Aktivitas</h2>
-      <div class="card">${S.studio.log.length ? `<ul class="log">${S.studio.log.map((l) => `<li><time>${fmtTime(l.t)}</time><span class="${l.k}">${icon(l.k === 'ok' ? 'circle-check' : l.k === 'err' ? 'circle-x' : 'info')}</span><span>${esc(l.text)}</span></li>`).join('')}</ul>` : '<div class="muted small">Belum ada aktivitas.</div>'}</div>`;
+      <details class="card logcard" ${S.studio.log.length ? 'open' : ''}><summary><b>Aktivitas</b><span class="faint small">${S.studio.log.length ? S.studio.log.length + ' catatan' : 'Belum ada aktivitas'}</span></summary>
+        ${S.studio.log.length ? `<ul class="log">${S.studio.log.map((l) => `<li><time>${fmtTime(l.t)}</time><span class="${l.k}">${icon(l.k === 'ok' ? 'circle-check' : l.k === 'err' ? 'circle-x' : 'info')}</span><span>${esc(l.text)}</span></li>`).join('')}</ul>` : ''}
+      </details>`;
   },
 
   gallery() {
@@ -349,8 +443,15 @@ const PAGES = {
             ${b.map((x) => `<option value="${x.id}" ${s.browser.prefer === x.id ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}
             <option value="custom" ${s.browser.prefer === 'custom' ? 'selected' : ''}>Pilih file…</option>
           </select></div></div>
-        <div class="row">${icon('eye', 'lg')}<div class="text"><div class="title">Jendela Google Flow</div><div class="desc">Cara menampilkan browser saat aplikasi bekerja. Jendela tidak bisa disembunyikan total — Flow perlu tampil agar berjalan normal.</div></div>
-          <div class="ctrl"><select class="input" data-change="browserWindow">${[['normal', 'Biasa'], ['background', 'Di belakang aplikasi'], ['minimized', 'Diperkecil (dipulihkan saat bekerja)']].map(([v, l]) => `<option value="${v}" ${s.browserWindow === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
+        <div class="row">${icon('eye-off', 'lg')}<div class="text"><div class="title">Tampilan browser Google Flow</div><div class="desc">${{
+          hidden: 'Tersembunyi total (headless, eksperimental) saat Mode Otomatis. Bila Flow menolak, aplikasi otomatis beralih ke jendela diperkecil untuk akun itu. Di Mode Aman jendela diperkecil dipakai agar Anda bisa menekan Generate.',
+          minimized: 'Jendela browser di luar layar & diperkecil. Paling kompatibel — muncul hanya saat Anda klik "Lihat Flow".',
+          normal: 'Jendela browser terlihat biasa. Berguna untuk memantau apa yang dilakukan aplikasi.'
+        }[s.browserWindow]}</div></div>
+          <div class="ctrl"><select class="input" data-change="browserWindow">${[['hidden', 'Tersembunyi (headless) — eksperimental'], ['minimized', 'Diperkecil (di luar layar)'], ['normal', 'Terlihat']].map(([v, l]) => `<option value="${v}" ${s.browserWindow === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
+        ${s.accounts.filter((a) => a.headlessFailedAt).map((a) => `<div class="row sub">${icon('triangle-alert', 'warn-ic')}<div class="text"><div class="title">${esc(a.label)}: memakai jendela diperkecil</div><div class="desc">Flow menolak mode tersembunyi pada ${fmtDate(a.headlessFailedAt)}${a.headlessReason ? ' — ' + esc(a.headlessReason) : ''}.</div></div><div class="ctrl">${btn('resetHeadless', 'Coba tersembunyi lagi', { cls: 'sm', data: `data-id="${a.id}"` })}</div></div>`).join('')}
+        <div class="row">${icon('folder-plus', 'lg')}<div class="text"><div class="title">Buat project baru otomatis</div><div class="desc">Setelah masuk / terhubung, aplikasi menekan "New project" di Flow bila belum ada project terbuka.</div></div>
+          <div class="ctrl"><label class="switch"><span class="small muted">${s.autoProject ? 'Aktif' : 'Nonaktif'}</span><input type="checkbox" data-change="autoProject" ${s.autoProject ? 'checked' : ''}></label></div></div>
       </div>
       <h2>Unduhan</h2>
       <div class="rows">
@@ -465,6 +566,11 @@ function renderNav() {
   const item = ([id, label, ic]) => `<button class="nav-item ${S.page === id ? 'active' : ''}" data-act="go" data-page="${id}">${icon(ic, 'lg')}<span>${label}</span>${id === 'auto' && S.queue.running ? '<span class="badge accent">Berjalan</span>' : ''}</button>`;
   $('#nav-items').innerHTML = NAV.map(item).join('');
   $('#nav-bottom').innerHTML = item(['settings', 'Pengaturan', 'settings']);
+  const a = acc();
+  const si = a ? statusInfo(a.id) : null;
+  $('#nav-account').innerHTML = a
+    ? `<button class="nav-acc" data-act="go" data-page="accounts" title="Akun Google"><span class="avatar sm">${esc((a.label || '?').trim().charAt(0).toUpperCase())}<i class="dot ${si.dot}"></i></span><span class="nav-acc-t"><b class="ellipsis">${esc(a.label)}</b><span class="ellipsis">${esc(st(a.id).account || a.email || si.text)}</span></span></button>`
+    : `<button class="nav-acc" data-act="addAccount"><span class="avatar sm">${icon('plus')}</span><span class="nav-acc-t"><b>Tambah akun</b><span>Masuk ke Google</span></span></button>`;
 }
 
 function renderStatus() {
@@ -476,7 +582,10 @@ function renderStatus() {
     left = `<span class="dot ${si.dot}"></span><span>${esc(a.label)}${s.account ? ' · ' + esc(s.account) : ''}</span><span class="sep"></span><span>${si.text}</span>${s.projectId ? `<span class="sep"></span><span class="ellipsis">Project: ${esc(s.projectTitle || s.projectId)}</span>` : ''}`;
   }
   const act = S.queue.running ? S.queue.activity : S.activity;
-  $('#statusbar').innerHTML = `${left}<span class="grow ellipsis faint">${esc(act || '')}</span><span>${isAuto() ? 'Mode Otomatis' : 'Mode Aman'}</span><span class="sep"></span><span>v${esc(S.info.version)}</span>`;
+  const bw = { hidden: 'Browser tersembunyi', minimized: 'Browser diperkecil', normal: 'Browser terlihat' }[S.settings.browserWindow];
+  $('#statusbar').innerHTML = `${left}<span class="grow ellipsis faint">${esc(act || '')}</span><span>${bw}</span><span class="sep"></span><span>${isAuto() ? 'Mode Otomatis' : 'Mode Aman'}</span><span class="sep"></span><span>v${esc(S.info.version)}</span>`;
+  const tb = $('#tb-status');
+  if (tb) tb.innerHTML = a ? `<span class="dot ${statusInfo(a.id).dot}"></span>${esc(a.label)}` : '';
 }
 
 function render() {
@@ -488,6 +597,8 @@ function render() {
     const keepFocus = ae && ae.id === 'license-key' ? { s: ae.selectionStart, e: ae.selectionEnd } : null;
     $('#nav-items').innerHTML = '';
     $('#nav-bottom').innerHTML = '';
+    $('#nav-account').innerHTML = '';
+    $('#tb-status').innerHTML = '';
     $('#statusbar').innerHTML = `<span>FLOW CONNECT Desktop</span><span class="grow"></span><span>v${esc(S.info.version)}</span>`;
     $('#page').innerHTML = updateBanner() + gatePage();
     const inp = $('#license-key');
@@ -516,7 +627,7 @@ function afterRender() {
     const d = S.queue.jobs.filter((j) => j.status !== 'pending' && j.status !== 'running').length;
     bar.style.width = (t ? (d / t) * 100 : 0) + '%';
   }
-  if (S.page === 'gallery') loadThumbs();
+  if (S.page === 'gallery' || S.page === 'studio') loadThumbs();
 }
 
 function go(page) {
@@ -525,7 +636,7 @@ function go(page) {
   $('#page').scrollTop = 0;
   render();
   $('#page').focus();
-  if (page === 'gallery') galleryAutoLoad();
+  if (page === 'gallery' || page === 'studio') galleryAutoLoad();
 }
 
 // ---------- Toast & dialog ----------
@@ -591,6 +702,86 @@ async function addImages(paths) {
   render();
 }
 
+function settingsNote(r) {
+  if (!r) return '';
+  const names = { kind: 'jenis', sub: 'mode', model: 'model', ratio: 'rasio', count: 'jumlah', duration: 'durasi' };
+  const ok = Object.keys(r.applied || {}).length;
+  return (ok ? ` Setelan diterapkan (${ok}).` : '') + (r.missing && r.missing.length ? ` Tidak ditemukan di Flow: ${r.missing.map((k) => names[k] || k).join(', ')}.` : '');
+}
+function studioSummary() {
+  const o = opts();
+  if (!o.apply) return 'setelan Flow apa adanya';
+  const sub = o.kind === 'video' ? (SUBS.find((x) => x[0] === o.sub) || [])[3] : 'Gambar';
+  return [sub, o.model === 'auto' ? 'model bawaan' : o.model, o.ratio, 'x' + o.count, o.kind === 'video' && o.duration ? o.duration + ' dtk' : ''].filter(Boolean).join(' · ');
+}
+function setStudio(patch) {
+  const o = { ...opts(), ...patch };
+  if (patch.kind && patch.kind !== opts().kind) {
+    if (o.model !== 'auto' && !modelList(o.kind).some((m) => m.v === o.model)) o.model = 'auto';
+    if (!RATIOS[o.kind].includes(o.ratio)) o.ratio = '16:9';
+  }
+  S.settings.studio = o;
+  render();
+  call('settings:set', { studio: o }).catch((e) => toast(msg(e), 'err'));
+}
+
+// Kartu login Google: aplikasi menunggu login selesai, lalu menyambung tersembunyi & membuat project baru
+const LOGIN_STEPS = [
+  ['card', 'Kartu login Google terbuka', 'Masuk ke akun Google Anda di jendela kecil itu. Aplikasi tidak menyentuh halaman login.'],
+  ['connecting', 'Membuka Google Flow di latar belakang', 'Kartu ditutup otomatis; Flow berjalan tanpa jendela.'],
+  ['project', 'Membuat project baru', 'Tombol "New project" ditekan untuk Anda.'],
+  ['done', 'Siap di Studio', '']
+];
+function loginSheetHtml() {
+  const l = S.login || {};
+  const idx = Math.max(0, LOGIN_STEPS.findIndex((x) => x[0] === l.state));
+  return `<form method="dialog"><div class="body login-sheet">
+    <div class="ls-head"><div class="ls-logo">${icon('log-in', 'lg')}</div><div><h3>Masuk ke Google</h3><div class="muted small">${esc((accById(l.id) || {}).label || '')}</div></div></div>
+    <ol class="ls-steps">${LOGIN_STEPS.map(([, t, d], i) => `<li class="${i < idx || l.state === 'done' ? 'done' : i === idx ? 'now' : ''}"><span class="ls-dot">${i < idx || l.state === 'done' ? icon('check') : i === idx ? icon('loader-circle', 'spin') : i + 1}</span><div><b>${t}</b>${d ? `<div class="muted small">${d}</div>` : ''}</div></li>`).join('')}</ol>
+    <p class="small faint">Kartu tidak muncul? Periksa taskbar, atau gunakan <a data-ls="window">login di browser biasa</a>.</p>
+  </div><div class="foot"><button class="btn" value="cancel" data-ls="cancel">${l.state === 'card' ? 'Batal' : 'Tutup'}</button></div></form>`;
+}
+function renderLoginSheet() {
+  const d = $('#dialog');
+  if (!S.login || !d.open || !d.classList.contains('ls')) return;
+  d.innerHTML = loginSheetHtml();
+}
+async function loginFlow(id) {
+  if (S.login) return;
+  S.login = { id, state: 'card' };
+  const d = $('#dialog');
+  d.classList.add('ls');
+  d.innerHTML = loginSheetHtml();
+  const onClick = (e) => {
+    const b = e.target.closest('[data-ls]');
+    if (!b) return;
+    e.preventDefault();
+    if (b.dataset.ls === 'window') { call('accounts:loginCancel', id); d.close(); ACTIONS.loginWindowHelp(); }
+    else { if (S.login && S.login.state === 'card') call('accounts:loginCancel', id); d.close(); }
+  };
+  d.addEventListener('click', onClick);
+  d.addEventListener('close', () => { d.removeEventListener('click', onClick); d.classList.remove('ls'); }, { once: true });
+  d.showModal();
+  try {
+    const r = await call('accounts:login', id);
+    S.statuses[id] = r.status;
+    if (r.ok) {
+      S.login.state = 'done';
+      renderLoginSheet();
+      toast(r.status.projectId ? 'Masuk berhasil — project baru siap di Studio.' : 'Masuk berhasil.', 'ok');
+      await new Promise((res) => setTimeout(res, 900));
+      if (d.open) d.close();
+      go('studio');
+    } else if (S.login.state === 'not-signed-in') {
+      if (d.open) d.close();
+      toast('Login belum selesai. Coba lagi dan masuk sampai Google Flow terbuka.', 'err');
+    } else if (d.open) d.close();
+  } catch (e) {
+    if (d.open) d.close();
+    toast(msg(e), 'err');
+  } finally { S.login = null; render(); }
+}
+
 const ACTIONS = {
   go: (el) => go(el.dataset.page),
   external: (el) => call('shell:external', el.dataset.url).catch((e) => toast(msg(e), 'err')),
@@ -612,7 +803,7 @@ const ACTIONS = {
     if (S.page !== 'accounts') go('accounts'); else render();
     const next = await dialog({
       title: 'Masuk ke Google sekarang?',
-      body: `<p>Browser akan terbuka di halaman login Google. Setelah berhasil masuk ke Google Flow, <b>tutup jendela browser itu</b>, lalu klik <b>Hubungkan</b> pada akun "${esc(a.label)}".</p>`,
+      body: `<p>Kartu login Google kecil akan terbuka. Masuk ke akun Anda di sana — setelah itu aplikasi otomatis membuka Google Flow di latar belakang dan membuat project baru untuk "${esc(a.label)}".</p>`,
       buttons: [{ label: 'Masuk ke Google', value: 'ok', primary: true }, { label: 'Nanti', value: 'cancel' }]
     });
     if (next) ACTIONS.login({ dataset: { id: a.id } });
@@ -643,17 +834,36 @@ const ACTIONS = {
     });
   },
   async setActive(el) { S.settings = await call('settings:set', { activeAccountId: el.dataset.id }); render(); },
-  login: (el) => busy('login' + `data-id="${el.dataset.id}"`, async () => {
-    await call('accounts:login', el.dataset.id);
-    toast('Browser dibuka. Setelah masuk ke Google Flow, tutup jendela itu lalu klik Hubungkan.', 'info');
-  }),
+  login: (el) => loginFlow(el.dataset.id),
+  loginWindowHelp: async () => {
+    const a = acc();
+    if (!a) return;
+    const r = await dialog({
+      title: 'Login di browser biasa',
+      body: '<p>Cadangan bila kartu login bermasalah: jendela Chrome/Edge biasa dibuka di halaman login Google. Setelah berhasil masuk, <b>tutup jendela itu</b>, lalu klik <b>Hubungkan</b>.</p>',
+      buttons: [{ label: 'Buka browser', value: 'ok', primary: true }, { label: 'Batal', value: 'cancel' }]
+    });
+    if (r) await call('accounts:loginWindow', a.id);
+  },
   connect: (el) => busy('connect' + `data-id="${el.dataset.id}"`, async () => {
-    S.activity = 'Membuka Google Flow…';
+    S.activity = 'Membuka Google Flow di latar belakang…';
     const s = await call('accounts:connect', el.dataset.id);
     S.statuses[el.dataset.id] = s;
     S.activity = '';
-    toast(s.signedIn ? 'Terhubung ke Google Flow.' : 'Terhubung. Silakan masuk ke akun Google di jendela browser.', s.signedIn ? 'ok' : 'info');
+    if (s.signedIn) toast(s.projectId ? 'Terhubung — project siap di Studio.' : 'Terhubung ke Google Flow.', 'ok');
+    else toast('Terhubung, tetapi belum masuk ke Google. Klik "Masuk ke Google".', 'info');
   }),
+  newProject: (el) => busy('newProject' + `data-id="${el.dataset.id}"`, async () => {
+    const s = await call('flow:newProject', el.dataset.id);
+    S.statuses[el.dataset.id] = s;
+    S.gallery.key = '';
+    S.studio.sel = null;
+    log(`Project baru dibuat${s.projectTitle ? ': ' + s.projectTitle : ''}.`, 'ok');
+    toast('Project baru siap.', 'ok');
+    galleryAutoLoad();
+  }),
+  resetHeadless: async (el) => { S.settings = await call('accounts:resetHeadless', el.dataset.id); toast('Mode tersembunyi dicoba lagi saat akun dihubungkan berikutnya.', 'ok'); render(); },
+  help: () => helpDialog(),
   disconnect: async (el) => {
     const r = await dialog({
       title: 'Putuskan akun?',
@@ -665,7 +875,17 @@ const ACTIONS = {
       S.statuses[el.dataset.id] = await call('accounts:disconnect', el.dataset.id, r.el.querySelector('[name=close]').checked);
     });
   },
-  showFlow: (el) => call('flow:show', el.dataset.id).catch((e) => toast(msg(e), 'err')),
+  showFlow: (el) => busy('showFlow' + `data-id="${el.dataset.id}"`, () => call('flow:show', el.dataset.id)),
+
+  // Studio: setelan Flow
+  studioOpt: (el) => setStudio({ [el.dataset.k]: /^(count|duration)$/.test(el.dataset.k) ? Number(el.dataset.v) : el.dataset.v }),
+  studioSel: (el) => { S.studio.sel = el.dataset.id; render(); },
+  studioScan: () => busy('studioScan', async () => {
+    const a = acc();
+    const r = await call('flow:scan', a.id);
+    S.flowOptions[a.id] = r;
+    toast(r.models.length ? `${r.models.length} model terbaca dari Google Flow.` : 'Daftar model tidak terbaca — pilihan bawaan tetap bisa dipakai.', r.models.length ? 'ok' : 'info');
+  }),
 
   // Studio
   pickImages: async () => { const list = await call('files:pickImages'); if (list.length) addImages(list); },
@@ -678,13 +898,13 @@ const ACTIONS = {
     S.activity = 'Mengirim ke Google Flow…';
     render();
     try {
-      const r = await call('flow:send', a.id, { prompt: S.studio.prompt, images: S.studio.images });
+      const r = await call('flow:send', a.id, { prompt: S.studio.prompt, images: S.studio.images, options: opts() });
       const parts = [];
-      if (r.images) parts.push(`${r.images.count} gambar (${r.images.method === 'file-input' ? 'unggah' : r.images.method})`);
+      if (r.images) parts.push(`${r.images.count} gambar`);
       if (r.prompt) parts.push('prompt');
-      log(`Terkirim ke Flow: ${parts.join(' + ')}.`, 'ok');
-      await call('flow:afterSend', a.id, !isAuto());
-      toast(isAuto() ? 'Terkirim ke Google Flow.' : 'Terkirim. Tekan Generate di jendela Google Flow.', 'ok');
+      log(`Terkirim ke Flow: ${parts.join(' + ')}.${settingsNote(r.settings)}`, 'ok');
+      await call('flow:afterSend', a.id, true);
+      toast('Terkirim. Tekan Generate di jendela Google Flow.', 'ok');
     } catch (e) { log(msg(e), 'err'); toast(msg(e), 'err'); }
     S.studio.busy = '';
     S.activity = '';
@@ -693,28 +913,24 @@ const ACTIONS = {
   async sendGenerate() {
     const a = acc();
     if (!a || S.studio.busy || !isAuto()) return;
+    if (!S.studio.prompt.trim() && !S.studio.images.length) { toast(ERR.NOTHING_TO_SEND, 'err'); return; }
     S.studio.busy = 'generate';
-    S.activity = 'Mengirim ke Google Flow…';
+    S.activity = 'Menyiapkan Google Flow…';
     render();
     try {
-      if (S.studio.prompt.trim() || S.studio.images.length) {
-        await call('flow:send', a.id, { prompt: S.studio.prompt, images: S.studio.images });
-        log('Gambar/prompt terkirim.', 'ok');
-        await new Promise((r) => setTimeout(r, 1500));
-      }
-      S.activity = 'Menekan Generate…';
-      render();
-      const r = await call('flow:generate', a.id, { waitResults: S.studio.waitResults });
-      log(`Generate ditekan (${r.click.method === 'click' ? 'tombol "' + (r.click.label || 'Generate') + '"' : 'Enter'}).`, 'ok');
+      const r = await call('flow:run', a.id, { prompt: S.studio.prompt, images: S.studio.images, options: opts(), waitResults: S.studio.waitResults });
+      log(`Generate ditekan${r.click && r.click.label ? ' ("' + r.click.label + '")' : ''}.${settingsNote(r.settings)}${r.fellBack ? ' Mode tersembunyi ditolak — beralih ke jendela diperkecil.' : ''}`, 'ok');
       if (r.items) {
         log(`${r.items.length} hasil siap${r.files.length ? `, ${r.files.length} file diunduh` : ''}.`, 'ok');
         toast(`${r.items.length} hasil siap${r.files.length ? ' & sudah diunduh' : ''}.`, 'ok');
-        S.gallery.key = '';
-      } else toast('Generate ditekan.', 'ok');
+        S.studio.sel = r.items[0] ? r.items[0].mediaId : null;
+      } else toast('Generate ditekan. Hasil muncul di pratinjau saat selesai.', 'ok');
+      S.gallery.key = '';
     } catch (e) { log(msg(e), 'err'); toast(msg(e), 'err'); }
     S.studio.busy = '';
     S.activity = '';
     render();
+    galleryAutoLoad();
   },
 
   // Galeri
@@ -737,7 +953,7 @@ const ACTIONS = {
     let images = [...S.studio.images];
     const r = await dialog({
       title: 'Tambah tugas ke antrean',
-      body: `<p>Tulis <b>satu prompt per baris</b> — setiap baris menjadi satu tugas. Gambar referensi (opsional) dipakai untuk semua tugas ini.</p>
+      body: `<p>Tulis <b>satu prompt per baris</b> — setiap baris menjadi satu tugas. Gambar referensi (opsional) dan setelan Studio saat ini (<b>${esc(studioSummary())}</b>) dipakai untuk semua tugas ini.</p>
         <label class="field"><span>Akun</span><select class="input" name="acc">${S.settings.accounts.map((x) => `<option value="${x.id}" ${x.id === S.settings.activeAccountId ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}</select></label>
         <label class="field"><span>Prompt</span><textarea class="input" name="prompts" rows="7" placeholder="Kucing astronot di bulan, gaya film 70-an&#10;Pasar terapung saat fajar, sinematik">${esc(S.studio.prompt)}</textarea></label>
         <div class="field"><span>Gambar referensi</span><div class="hrow"><button type="button" class="btn sm" id="dlg-pick">${icon('folder-open')}<span>Pilih gambar…</span></button><span class="muted small" id="dlg-imgs">${images.length ? images.length + ' gambar' : 'Tidak ada'}</span></div></div>`,
@@ -753,7 +969,7 @@ const ACTIONS = {
     if (!r) return;
     const prompts = r.el.querySelector('[name=prompts]').value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
     try {
-      S.queue = await call('queue:add', { prompts, images, accountId: r.el.querySelector('[name=acc]').value });
+      S.queue = await call('queue:add', { prompts, images, accountId: r.el.querySelector('[name=acc]').value, options: opts() });
       toast(`${prompts.length} tugas ditambahkan.`, 'ok');
       if (S.page !== 'auto') go('auto'); else render();
     } catch (e) { toast(msg(e), 'err'); }
@@ -870,7 +1086,7 @@ function loadThumbs() {
   const g = S.gallery;
   const a = acc();
   if (!a) return;
-  const todo = g.items.filter((i) => i.image && g.thumbs[i.mediaId] === undefined);
+  const todo = g.items.slice(0, S.page === 'studio' ? 14 : g.items.length).filter((i) => i.image && g.thumbs[i.mediaId] === undefined);
   while (thumbRunning < 3 && todo.length) {
     const it = todo.shift();
     g.thumbs[it.mediaId] = null;
@@ -878,7 +1094,7 @@ function loadThumbs() {
     call('flow:thumb', a.id, it)
       .then((url) => { g.thumbs[it.mediaId] = url; })
       .catch(() => { g.thumbs[it.mediaId] = null; })
-      .finally(() => { thumbRunning--; if (S.page === 'gallery') render(); });
+      .finally(() => { thumbRunning--; if (S.page === 'gallery' || S.page === 'studio') render(); });
   }
 }
 async function downloadItems(ids) {
@@ -913,7 +1129,10 @@ const CHANGES = {
   waitResults: (el) => { S.studio.waitResults = el.checked; },
   gallerySel: (el) => { if (el.checked) S.gallery.selected.add(el.dataset.id); else S.gallery.selected.delete(el.dataset.id); render(); },
   theme: async (el) => { S.settings = await call('settings:set', { theme: el.value }); render(); },
-  browserWindow: async (el) => { S.settings = await call('settings:set', { browserWindow: el.value }); render(); },
+  browserWindow: async (el) => { S.settings = await call('settings:set', { browserWindow: el.value }); render(); toast('Berlaku saat akun dihubungkan / bekerja berikutnya.', 'info'); },
+  autoProject: async (el) => { S.settings = await call('settings:set', { autoProject: el.checked }); render(); },
+  studioModel: (el) => setStudio({ model: el.value }),
+  studioApply: (el) => setStudio({ apply: el.checked }),
   browser: async (el) => {
     if (el.value === 'custom') S.settings = await call('files:pickBrowser');
     else S.settings = await call('settings:set', { browser: { prefer: el.value } });
@@ -963,20 +1182,30 @@ document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && S.page === 'studio') {
     e.preventDefault();
     (isAuto() ? ACTIONS.sendGenerate : ACTIONS.send)();
+    return;
   }
+  // Windows (bilah judul khusus, tanpa menu): pintasan ditangani di sini
+  if (!S.info || !(S.info.chrome || {}).customTitlebar || !licensed() || $('#dialog').open) return;
+  const pages = ['home', 'accounts', 'studio', 'gallery', 'auto', 'downloads'];
+  if (e.ctrlKey && !e.shiftKey && /^[1-6]$/.test(e.key)) { e.preventDefault(); go(pages[Number(e.key) - 1]); }
+  else if (e.ctrlKey && e.key === ',') { e.preventDefault(); go('settings'); }
+  else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'n') { e.preventDefault(); go('accounts'); ACTIONS.addAccount(); }
+  else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'o') { e.preventDefault(); go('studio'); ACTIONS.pickImages(); }
+  else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'd') { e.preventDefault(); call('files:openDownloads'); }
+  else if (e.key === 'F1') { e.preventDefault(); helpDialog(); }
 });
 
 function helpDialog() {
   dialog({
     title: 'Panduan FLOW CONNECT Desktop',
     body: `<ol class="steps">
-      <li><div><b>Akun Google → Tambah akun.</b><div class="muted small">Satu akun mendapat satu profil browser.</div></div></li>
-      <li><div><b>Masuk ke Google.</b><div class="muted small">Login di browser biasa yang terbuka, lalu tutup jendelanya.</div></div></li>
-      <li><div><b>Hubungkan.</b><div class="muted small">Google Flow terbuka; buka atau buat sebuah project.</div></div></li>
-      <li><div><b>Studio.</b><div class="muted small">Pilih gambar &amp; tulis prompt → Kirim (Ctrl+Enter). Mode Aman: tekan Generate di Flow. Mode Otomatis: aplikasi yang menekan &amp; mengunduh.</div></div></li>
-      <li><div><b>Galeri / Unduhan.</b><div class="muted small">Lihat hasil project dan simpan ke PC.</div></div></li>
+      <li><div><b>Akun Google → Tambah akun → Masuk ke Google.</b><div class="muted small">Kartu login kecil terbuka; masuk seperti biasa. Kartu menutup sendiri setelah berhasil.</div></div></li>
+      <li><div><b>Otomatis: Flow dibuka di latar belakang &amp; project baru dibuat.</b><div class="muted small">Browser tidak tampil. Klik "Lihat Flow" bila ingin melihat jendelanya.</div></div></li>
+      <li><div><b>Studio.</b><div class="muted small">Pilih Video / Gambar, mode (Teks / Frame / Bahan), model, rasio &amp; jumlah. Tulis prompt → Generate (Ctrl+Enter).</div></div></li>
+      <li><div><b>Mode Aman vs Otomatis.</b><div class="muted small">Aman: jendela Flow muncul, Anda menekan Generate. Otomatis: aplikasi menekan Generate, menunggu, mengunduh — sepenuhnya tersembunyi.</div></div></li>
+      <li><div><b>Galeri / Unduhan.</b><div class="muted small">Lihat semua hasil project dan simpan ke PC.</div></div></li>
     </ol>
-    <p class="small mt16">Jika muncul "jendela browser masih terbuka", tutup semua jendela browser akun itu lalu klik Hubungkan lagi.</p>`,
+    <p class="small mt16">Pintasan: Ctrl+1…6 pindah halaman · Ctrl+, Pengaturan · Ctrl+N tambah akun · Ctrl+O pilih gambar · F1 panduan.</p>`,
     buttons: [{ label: 'Tutup', value: 'ok', primary: true }]
   });
 }
@@ -989,11 +1218,15 @@ async function init() {
   S.queue = S.info.queue;
   S.license = S.info.license;
   S.update = S.info.update;
+  S.flowOptions = S.info.flowOptions || {};
   document.documentElement.style.setProperty('--accent', S.info.accent);
   document.body.classList.add('platform-' + S.info.platform);
+  const chrome = S.info.chrome || {};
+  document.body.classList.toggle('has-titlebar', !!chrome.customTitlebar);
+  document.body.classList.toggle('mica', !!chrome.mica);
   render();
 
-  fc.on('statuses', (s) => { S.statuses = s; render(); if (S.page === 'gallery') galleryAutoLoad(); });
+  fc.on('statuses', (s) => { S.statuses = s; render(); if (S.page === 'gallery' || S.page === 'studio') galleryAutoLoad(); });
   fc.on('settings', (s) => { S.settings = s; render(); });
   fc.on('queue', (q) => {
     const sig = (x) => x.running + '|' + x.jobs.map((j) => j.id + j.status).join(',');
@@ -1019,6 +1252,11 @@ async function init() {
     render();
   });
   fc.on('accent', (c) => document.documentElement.style.setProperty('--accent', c));
+  fc.on('login', (l) => {
+    if (!S.login || S.login.id !== l.id) return;
+    S.login.state = l.state;
+    renderLoginSheet();
+  });
   fc.on('navigate', (p) => {
     if (!licensed()) return;
     if (p === 'accounts:add') { go('accounts'); ACTIONS.addAccount(); }

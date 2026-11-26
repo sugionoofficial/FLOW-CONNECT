@@ -18,11 +18,12 @@ const SRC = path.join(__dirname, '..', 'src');
 const MOCK = `(() => {
   const now = Date.now();
   const accounts = [
-    { id: 'a1', label: 'Kerja', email: 'studio.kerja@gmail.com', createdAt: now },
-    { id: 'a2', label: 'Pribadi', email: null, createdAt: now }
+    { id: 'a1', label: 'Kerja', email: 'studio.kerja@gmail.com', createdAt: now, signedInAt: now },
+    { id: 'a2', label: 'Pribadi', email: null, createdAt: now, headlessFailedAt: now, headlessReason: 'Flow keluar akun' }
   ];
   const settings = {
-    accounts, activeAccountId: 'a1', theme: 'system', browser: { prefer: 'auto', customPath: '' }, browserWindow: 'background',
+    accounts, activeAccountId: 'a1', theme: 'dark', browser: { prefer: 'auto', customPath: '' }, browserWindow: 'hidden', autoProject: true,
+    studio: { kind: 'video', sub: 'text', model: 'Veo 3.1 - Fast', ratio: '16:9', count: 2, duration: 0, apply: true },
     downloadDir: 'C:\\\\Users\\\\Sugiono\\\\Downloads\\\\FLOW CONNECT', mode: 'auto', autoAck: '2026-11-25T00:00:00Z',
     auto: { minDelay: 45, maxDelay: 120, maxPerRun: 10, timeoutMin: 8, autoDownload: true, stopOnError: true },
     downloads: [
@@ -44,7 +45,7 @@ const MOCK = `(() => {
   const gate = location.search === '?gate';
   let license = gate ? { state: 'none', deviceId: '7f3a9c2e-0000' }
     : { state: 'valid', hint: 'FC-7KQ2M…H4ZPA', checkedAt: now - 600000, deviceId: '7f3a9c2e-0000', info: { ok: true, label: 'PC Studio', email: 'sugiono@flowconnect.id', devices: 2, max_devices: 3, expires_at: null } };
-  const update = gate ? { state: 'none', current: '1.1.0' } : { state: 'available', current: '1.1.0', version: '1.2.0', notes: 'Perbaikan', percent: 0, portable: false };
+  const update = gate ? { state: 'none', current: '1.2.0' } : { state: 'available', current: '1.2.0', version: '1.3.0', notes: 'Perbaikan', percent: 0, portable: false };
   const R = {
     'license:activate': (k) => {
       if (!/^FC(-[A-Z0-9]{5}){5}$/.test(k)) return { __err: 'INVALID_KEY' };
@@ -53,14 +54,26 @@ const MOCK = `(() => {
     },
     'update:download': () => Object.assign(update, { state: 'downloading', percent: 37 }),
     'auto:ack': (v) => Object.assign(settings, { mode: v ? 'auto' : 'safe', autoAck: v ? '2026-11-25T00:00:00Z' : null }),
-    'app:info': () => ({ license, update, version: '1.1.0', platform: 'win32', accent: '#0067c0', browsers: [{ id: 'chrome', name: 'Google Chrome', path: 'C:\\\\Program Files\\\\Google\\\\Chrome\\\\Application\\\\chrome.exe' }, { id: 'edge', name: 'Microsoft Edge', path: 'C:\\\\Program Files (x86)\\\\Microsoft\\\\Edge\\\\Application\\\\msedge.exe' }], settings, statuses, queue, webUrl: 'https://flow-connect-2qu.pages.dev' }),
+    'app:info': () => ({ license, update, version: '1.2.0', platform: 'win32', chrome: { customTitlebar: true, mica: false }, flowOptions: {}, accent: '#0067c0', browsers: [{ id: 'chrome', name: 'Google Chrome', path: 'C:\\\\Program Files\\\\Google\\\\Chrome\\\\Application\\\\chrome.exe' }, { id: 'edge', name: 'Microsoft Edge', path: 'C:\\\\Program Files (x86)\\\\Microsoft\\\\Edge\\\\Application\\\\msedge.exe' }], settings, statuses, queue, webUrl: 'https://flow-connect-2qu.pages.dev' }),
     'settings:set': (p) => Object.assign(settings, p),
+    'flow:scan': () => ({ models: ['Veo 3.1 - Fast', 'Veo 3.1 - Quality', 'Veo 4 - Preview'], options: [], current: {} }),
+    'flow:newProject': (id) => Object.assign(statuses[id], { projectId: 'p2', projectTitle: 'Project baru' }),
+    'flow:run': () => ({ click: { label: 'Create' }, settings: { applied: { kind: 1, model: 1 }, missing: ['duration'] }, items: items.slice(0, 2), files: [] }),
+    'accounts:login': (id) => new Promise((res) => {
+      const ev = window.__ev.login;
+      ev({ id, state: 'card' });
+      setTimeout(() => ev({ id, state: 'connecting' }), 150);
+      setTimeout(() => ev({ id, state: 'project' }), 300);
+      setTimeout(() => { Object.assign(statuses[id], { connected: true, signedIn: true, projectId: 'p3', projectTitle: 'Untitled' }); res({ ok: true, status: statuses[id] }); }, 450);
+    }),
+    'accounts:resetHeadless': (id) => { const a = accounts.find((x) => x.id === id); delete a.headlessFailedAt; return settings; },
     'flow:listMedia': () => items,
     'flow:thumb': (id, it) => it.image,
     'files:register': (p) => p,
     'files:preview': () => svg(['#888', '#ccc'])
   };
   window.__calls = [];
+  window.__settings = settings;
   window.fc = {
     call: async (ch, ...a) => { window.__calls.push(ch); const d = R[ch] ? R[ch](...a) : null; return d && d.__err ? { ok: false, error: d.__err } : { ok: true, data: d }; },
     on: (ev, fn) => { (window.__ev = window.__ev || {})[ev] = fn; return () => {}; },
@@ -123,6 +136,59 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   await sleep(700);
   assert.strictEqual(await ev('document.querySelectorAll(".tile").length'), 6);
   assert.ok(await ev('document.querySelectorAll(".tile img").length') >= 5);
+  // Studio: Video/Gambar, mode, model, rasio → tersimpan ke settings.studio
+  await ev(`document.querySelector('[data-page="studio"]').click()`);
+  await sleep(300);
+  assert.strictEqual(await ev('document.querySelectorAll(".seg-btn").length'), 2);
+  assert.strictEqual(await ev('document.querySelectorAll(".modes .chip").length'), 3, 'mode Teks/Frame/Bahan');
+  assert.ok(await ev('[...document.querySelectorAll("[data-change=studioModel] option")].some((o) => o.value === "Veo 3.1 - Quality")'));
+  await ev(`document.querySelector('[data-act=studioOpt][data-k=sub][data-v=frames]').click()`);
+  await sleep(100);
+  assert.strictEqual(await ev('__settings.studio.sub'), 'frames');
+  await ev(`document.querySelector('[data-act=studioOpt][data-k=kind][data-v=image]').click()`);
+  await sleep(150);
+  assert.strictEqual(await ev('JSON.stringify([__settings.studio.kind, __settings.studio.model])'), JSON.stringify(['image', 'auto']), 'model video direset saat pindah ke gambar');
+  assert.strictEqual(await ev('document.querySelectorAll(".modes .chip").length'), 0);
+  assert.ok(await ev('[...document.querySelectorAll("[data-change=studioModel] option")].some((o) => o.value === "Nano Banana Pro")'));
+  await ev(`document.querySelector('[data-act=studioOpt][data-k=ratio][data-v="1:1"]').click()`);
+  await ev(`document.querySelector('[data-act=studioOpt][data-k=count][data-v="4"]').click()`);
+  await sleep(150);
+  assert.strictEqual(await ev('__settings.studio.ratio + "/" + __settings.studio.count'), '1:1/4');
+  assert.ok(await ev('!!document.querySelector(".stage.r-1-1")'));
+  if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'dark-studio-image.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  await ev(`document.querySelector('[data-act=studioOpt][data-k=kind][data-v=video]').click()`);
+  await sleep(100);
+  // baca model dari Flow
+  await ev(`document.querySelector('[data-act=studioScan]').click()`);
+  await sleep(200);
+  assert.ok(await ev('[...document.querySelectorAll("[data-change=studioModel] option")].some((o) => o.value === "Veo 4 - Preview")'), 'model hasil scan tampil');
+  // generate (Mode Otomatis) memakai flow:run dengan options
+  await ev(`(() => { const t = document.querySelector('#prompt'); t.value = 'Drone di atas sawah'; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await ev(`document.querySelector('[data-act=sendGenerate]').click()`);
+  await sleep(400);
+  assert.ok(await ev('window.__calls.includes("flow:run")'), 'flow:run dipanggil');
+  assert.ok(await ev('document.querySelector(".logcard").textContent.includes("durasi")'), 'setelan yang tidak ditemukan dilaporkan');
+  // project baru
+  await ev(`document.querySelector('[data-act=newProject]').click()`);
+  await sleep(200);
+  assert.ok(await ev('document.querySelector(".pill").textContent.includes("Project baru")'));
+  // kartu login: langkah berjalan → selesai → pindah ke Studio
+  await ev(`document.querySelector('[data-page="accounts"]').click()`);
+  await sleep(200);
+  await ev(`document.querySelector('[data-act=login][data-id=a2]').click()`);
+  await sleep(200);
+  assert.ok(await ev('document.querySelector("#dialog").open && !!document.querySelector(".ls-steps li.now")'), 'proses login tampil');
+  if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'dark-login.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  await sleep(1500);
+  assert.ok(await ev('!document.querySelector("#dialog").open'), 'dialog login tertutup');
+  assert.strictEqual(await ev('document.querySelector("#page h1").textContent'), 'Studio');
+  // pengaturan: reset headless per akun
+  await ev(`document.querySelector('[data-page="settings"]').click()`);
+  await sleep(200);
+  await ev(`document.querySelector('[data-act=resetHeadless]').click()`);
+  await sleep(200);
+  assert.ok(await ev('!document.querySelector("[data-act=resetHeadless]")'));
+
   // dialog peringatan Mode Otomatis: tombol Aktifkan nonaktif sampai dicentang
   await ev(`window.fc.call = (o => async (ch, ...a) => ch === 'app:info' ? o(ch, ...a) : o(ch, ...a))(window.fc.call)`);
   await ev(`document.querySelector('[data-page="settings"]').click()`);
@@ -134,7 +200,7 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   await ev(`document.querySelector('[data-page="home"]').click()`);
   await sleep(200);
   assert.ok(await ev('!!document.querySelector(".update-bar [data-act=updateDownload]")'), 'spanduk pembaruan tampil');
-  assert.ok(await ev('document.querySelector("#statusbar").textContent.includes("v1.1.0")'));
+  assert.ok(await ev('document.querySelector("#statusbar").textContent.includes("v1.2.0")'));
   await ev(`document.querySelector('.update-bar [data-act=updateDownload]').click()`);
   await sleep(200);
   assert.strictEqual(await ev('document.querySelector(".update-bar progress") && document.querySelector(".update-bar progress").value'), 37);
@@ -161,6 +227,6 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   await typeKey('FC-7KQ2M-PX9RT-WB3NV-CJ8LD-H4ZPA');
   await sleep(400);
   assert.ok(await ev('!document.querySelector("#gate") && document.querySelectorAll("[data-page]").length >= 7'), 'masuk setelah aktivasi');
-  assert.strictEqual(await ev('document.querySelector("#page h1").textContent'), 'Beranda');
+  assert.ok(await ev('!!document.querySelector("#page .hero")'), 'beranda tampil');
   assert.deepStrictEqual(errors, [], 'tanpa error JS/CSP');
 });

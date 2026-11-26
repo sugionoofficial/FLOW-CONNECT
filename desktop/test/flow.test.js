@@ -102,12 +102,15 @@ test('FlowSession mengendalikan browser asli lewat CDP', { skip: !CHROME && 'Chr
 
   await s.connect();
   assert.ok(s.connected, 'tersambung');
+  const flowTabs = async () => (await s._targets()).filter((x) => s._isFlow(x)).length;
+  assert.strictEqual(await flowTabs(), 1, 'tidak membuka tab Flow ganda');
 
   // menyambung ulang ke browser yang sama (seperti aplikasi dibuka ulang)
   const port1 = s.port;
   s.disconnect();
   await s.connect();
   assert.strictEqual(s.port, port1, 'memakai browser yang sudah berjalan');
+  assert.strictEqual(await flowTabs(), 1);
 
   const st = await s.status();
   assert.strictEqual(st.signedIn, true);

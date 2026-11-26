@@ -55,9 +55,25 @@ class FlowSession extends EventEmitter {
       port = await browser.waitForDebugPort(this.profileDir);
     }
     this.port = port;
-    await this.ensurePage();
+    await this.ensurePage({ waitForTabMs: 8000 });
+    await this.waitReady();
     this.emit('change');
     return port;
+  }
+
+  /** Tunggu halaman Flow selesai dimuat (agar status/agen tidak membaca halaman setengah jadi). */
+  async waitReady(timeoutMs = 20000) {
+    const end = Date.now() + timeoutMs;
+    while (Date.now() < end) {
+      try {
+        const page = await this.ensurePage();
+        const r = await page.send('Runtime.evaluate', { expression: 'document.readyState + "|" + location.host', returnByValue: true }, 5000);
+        const [state, host] = String(r.result && r.result.value).split('|');
+        if (state === 'complete' && host === this.flowHost) return true;
+      } catch { /* tab sedang berpindah halaman */ }
+      await sleep(250);
+    }
+    return false;
   }
 
   disconnect() {
@@ -86,10 +102,16 @@ class FlowSession extends EventEmitter {
   }
 
   /** Cari (atau buat) tab Google Flow lalu sambungkan CDP ke tab itu. */
-  async ensurePage() {
+  async ensurePage({ waitForTabMs = 0 } = {}) {
     if (!this.port) throw new Error('NOT_CONNECTED');
-    const targets = await this._targets();
-    const flows = targets.filter((t) => this._isFlow(t));
+    let targets = await this._targets();
+    let flows = targets.filter((t) => this._isFlow(t));
+    // Browser yang baru diluncurkan: tab pertama bisa masih "about:blank" sesaat sebelum membuka Flow
+    for (const end = Date.now() + waitForTabMs; !flows.length && Date.now() < end; ) {
+      await sleep(250);
+      targets = await this._targets();
+      flows = targets.filter((t) => this._isFlow(t));
+    }
     let target = (this.pageTarget && flows.find((t) => t.id === this.pageTarget.id)) ||
       flows.find((t) => /\/project\//.test(t.url)) || flows[0];
     if (!target) {
@@ -148,6 +170,8 @@ class FlowSession extends EventEmitter {
     if (u.host !== this.flowHost) throw new Error('INVALID_URL');
     const page = await this.ensurePage();
     await page.send('Page.navigate', { url: u.toString() });
+    await sleep(300);
+    await this.waitReady();
   }
 
   async listMedia(projectId) { return this.call('listMedia', [projectId]); }

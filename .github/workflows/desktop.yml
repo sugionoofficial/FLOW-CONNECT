@@ -106,7 +106,7 @@ jobs:
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
 
-            **Baru di versi ini:** gambar referensi benar-benar diunggah ke Google Flow (ditunggu sampai tersimpan) sebelum Generate; penanda **@nama** di prompt menunjuk gambar referensi; skill **Generate Foto**; kegagalan generate (ditolak filter, aktivitas tidak biasa, kredit habis, video gagal) langsung terdeteksi dan dilaporkan — tidak menunggu tanpa akhir. Pembaruan otomatis tetap aktif (versi installer).
+            **Baru di versi ini:** pratinjau & thumbnail galeri gambar hasil generate kini tampil (poster Flow terbaru dikenali dan diambil dengan sesi akun), gambar referensi yang diunggah tidak lagi muncul di galeri/pratinjau. Sebelumnya (v1.3.0): unggah referensi terkonfirmasi, penanda @nama, skill Generate Foto, deteksi generate gagal.
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

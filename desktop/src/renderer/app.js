@@ -307,7 +307,8 @@ const PAGES = {
       : cur
         ? (cur.isVideo && local && /\.(mp4|webm)$/i.test(local.path)
           ? `<video class="stage-media" src="${esc(fileUrl(local.path))}" controls loop muted autoplay playsinline></video>`
-          : g.thumbs[cur.mediaId] ? `<img class="stage-media" src="${g.thumbs[cur.mediaId]}" alt="">` : `<div class="stage-empty">${icon(cur.isVideo ? 'video' : 'file-image', 'xl')}<div class="muted">${cur.done ? 'Memuat pratinjau…' : 'Masih diproses Flow…'}</div></div>`)
+          : thumbSrc(cur, local) ? `<img class="stage-media" src="${esc(thumbSrc(cur, local))}" alt="">`
+            : `<div class="stage-empty">${icon(cur.isVideo ? 'video' : 'file-image', 'xl')}<div class="muted">${!cur.done ? 'Masih diproses Flow…' : g.thumbs[cur.mediaId] === null ? 'Pratinjau tidak tersedia.' : 'Memuat pratinjau…'}</div>${cur.done && g.thumbs[cur.mediaId] === null ? btn('thumbRetry', 'Coba lagi', { ic: 'refresh-cw', cls: 'sm subtle', data: `data-id="${cur.mediaId}"` }) : ''}</div>`)
         : `<div class="stage-empty">${icon('square-play', 'xl')}<div class="stage-title">Hasil generate tampil di sini</div><div class="muted small">Tulis prompt, pilih model, lalu tekan ${isAuto() ? 'Generate' : 'Kirim ke Flow'}.</div></div>`;
     return `
       <div class="page-head"><h1>Studio</h1><div class="tools">${accountPicker()}
@@ -360,7 +361,7 @@ const PAGES = {
           <div class="card-head">${icon('square-play')}<h3>Pratinjau</h3>${cur && !busy ? `<span class="faint small ellipsis">${esc(cur.title || '')}</span>` : ''}
             <span class="right hrow">${cur && !busy ? btn('galleryDownload', '', { ic: g.busy.has(cur.mediaId) ? 'loader-circle' : 'download', cls: 'subtle icon sm', title: 'Unduh', data: `data-id="${cur.mediaId}"`, disabled: !cur.done }) : ''}${local ? btn('showFile', '', { ic: 'folder-open', cls: 'subtle icon sm', title: 'Tampilkan di folder', data: `data-path="${esc(local.path)}"` }) : ''}</span></div>
           <div class="stage r-${o.ratio.replace(':', '-')}">${stage}</div>
-          ${items.length ? `<div class="strip">${items.slice(0, 14).map((it) => `<button class="strip-item ${cur && cur.mediaId === it.mediaId ? 'on' : ''}" data-act="studioSel" data-id="${it.mediaId}" title="${esc(it.title || '')}">${g.thumbs[it.mediaId] ? `<img src="${g.thumbs[it.mediaId]}" alt="">` : icon(it.isVideo ? 'video' : 'file-image')}${it.isVideo ? `<span class="vtag">${icon('play')}</span>` : ''}</button>`).join('')}</div>` : `<div class="muted small strip-empty">${s.projectId ? 'Belum ada hasil di project ini.' : 'Hasil project akan muncul di sini.'}</div>`}
+          ${items.length ? `<div class="strip">${items.slice(0, 14).map((it) => `<button class="strip-item ${cur && cur.mediaId === it.mediaId ? 'on' : ''}" data-act="studioSel" data-id="${it.mediaId}" title="${esc(it.title || '')}">${thumbSrc(it) ? `<img src="${esc(thumbSrc(it))}" alt="">` : icon(it.isVideo ? 'video' : 'file-image')}${it.isVideo ? `<span class="vtag">${icon('play')}</span>` : ''}</button>`).join('')}</div>` : `<div class="muted small strip-empty">${s.projectId ? 'Belum ada hasil di project ini.' : 'Hasil project akan muncul di sini.'}</div>`}
         </div>
       </div>
       <details class="card logcard" ${S.studio.log.length ? 'open' : ''}><summary><b>Aktivitas</b><span class="faint small">${S.studio.log.length ? S.studio.log.length + ' catatan' : 'Belum ada aktivitas'}</span></summary>
@@ -387,7 +388,7 @@ const PAGES = {
       ${!warn ? `<div class="gallery">${g.items.map((it) => `
         <div class="tile ${g.selected.has(it.mediaId) ? 'sel' : ''}">
           <div class="media">
-            ${g.thumbs[it.mediaId] ? `<img src="${g.thumbs[it.mediaId]}" alt="">` : icon(it.isVideo ? 'video' : 'file-image', 'xl')}
+            ${thumbSrc(it) ? `<img src="${esc(thumbSrc(it))}" alt="">` : icon(it.isVideo ? 'video' : 'file-image', 'xl')}
             <input type="checkbox" data-change="gallerySel" data-id="${it.mediaId}" ${g.selected.has(it.mediaId) ? 'checked' : ''} aria-label="Pilih">
             ${it.isVideo ? '<span class="badge">Video</span>' : ''}${!it.done ? '<span class="badge">Memproses…</span>' : ''}
           </div>
@@ -971,7 +972,8 @@ const ACTIONS = {
   },
 
   // Galeri
-  galleryRefresh: () => galleryLoad(true),
+  galleryRefresh: () => { S.gallery.thumbs = Object.fromEntries(Object.entries(S.gallery.thumbs).filter(([, v]) => v)); return galleryLoad(true); },
+  thumbRetry: (el) => { delete S.gallery.thumbs[el.dataset.id]; render(); },
   gallerySelectAll: () => {
     const g = S.gallery;
     if (g.selected.size === g.items.length) g.selected.clear();
@@ -1118,18 +1120,26 @@ async function galleryLoad(force) {
   g.loading = false;
   render();
 }
+// sumber gambar pratinjau: thumbnail dari Flow, atau file hasil yang sudah diunduh
+function thumbSrc(it, local) {
+  const t = S.gallery.thumbs[it.mediaId];
+  if (t) return t;
+  const l = local || S.settings.downloads.find((d) => d.mediaId === it.mediaId);
+  return l && /\.(png|jpe?g|webp|gif)$/i.test(l.path) ? fileUrl(l.path) : '';
+}
 let thumbRunning = 0;
 function loadThumbs() {
   const g = S.gallery;
   const a = acc();
   if (!a) return;
-  const todo = g.items.slice(0, S.page === 'studio' ? 14 : g.items.length).filter((i) => i.image && g.thumbs[i.mediaId] === undefined);
+  // undefined = belum dicoba · false = sedang dimuat · null = gagal · string = data URL
+  const todo = g.items.slice(0, S.page === 'studio' ? 14 : g.items.length).filter((i) => i.done && g.thumbs[i.mediaId] === undefined);
   while (thumbRunning < 3 && todo.length) {
     const it = todo.shift();
-    g.thumbs[it.mediaId] = null;
+    g.thumbs[it.mediaId] = false;
     thumbRunning++;
     call('flow:thumb', a.id, it)
-      .then((url) => { g.thumbs[it.mediaId] = url; })
+      .then((url) => { g.thumbs[it.mediaId] = url || null; })
       .catch(() => { g.thumbs[it.mediaId] = null; })
       .finally(() => { thumbRunning--; if (S.page === 'gallery' || S.page === 'studio') render(); });
   }

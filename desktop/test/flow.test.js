@@ -29,10 +29,12 @@ function makePng(w = 64, h = 64, rgb = [220, 120, 40]) {
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
 }
 
+const BIGPNG = makePng(32, 32, [10, 200, 120]);
+
 function mockFlow() {
   const media = []; // {id, prompt, files, at}
   const generated = [];
-  const state = { blockNext: 0, projects: 0, rpc: false, terms: false, unsafeNext: 0, failNext: 0, uploads: [], polls: 0 };
+  const state = { assets: [], blockNext: 0, projects: 0, rpc: false, terms: false, unsafeNext: 0, failNext: 0, uploads: [], polls: 0 };
   let port;
   // panel setelan meniru Flow terbaru: chip "Video · 8s · x2" → dialog berisi radio + daftar model
   const settingsUi = `
@@ -159,7 +161,7 @@ ${genJs}
       }
       if (u.pathname === '/mock/project') { state.projects++; res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ id: 'p-new-' + state.projects })); }
       if (req.method === 'GET' && (u.pathname === '/' || u.pathname.startsWith('/project/'))) {
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'set-cookie': 'fc_sess=1; Path=/; HttpOnly' });
         return res.end(page(u.searchParams.get('signedout') !== '1', u.searchParams.get('ce') === '1'));
       }
       if (u.pathname === '/mock/generate') {
@@ -184,7 +186,9 @@ ${genJs}
         if (rpcName === 'maseQ') {
           state.uploads.push(j);
           if (j.size < 200) return refuse(3); // gambar 1x1 ditolak Flow (gRPC 3)
-          return out([['wrb.fr', 'maseQ', JSON.stringify([[uuid(state.uploads.length, 'eeee'), 'p-test-1'], j.name]), null, null, null, 'generic']]);
+          const upId = uuid(state.uploads.length, 'eeee');
+          state.assets.push({ id: upId, name: j.name, at: Date.now() - 5000 }); // Flow mencatat unggahan di project juga
+          return out([['wrb.fr', 'maseQ', JSON.stringify([[upId, 'p-test-1'], j.name]), null, null, null, 'generic']]);
         }
         if (rpcName === 'jwpduf') {
           state.polls++;
@@ -214,7 +218,12 @@ ${genJs}
         let payload;
         if (rpc === 'Zzl0ze') {
           const rows = media.map((m) => ['asset-' + m.id, 'f', null, [m.prompt.slice(0, 30), [Math.floor(m.at / 1000), 0], false, null, m.id, 'op', Date.now() - m.at > 1500], 'p-test-1']);
-          payload = [rows, media.map((m) => `http://127.0.0.1:${port}/image/${m.id}?sig=1`)];
+          if (state.rpc) {
+            // Flow 2026: poster di dalam record sebagai /asb/<token> (tanpa media id, butuh cookie) + unggahan ikut terdaftar
+            rows.forEach((r, i) => r.push([[null, `http://127.0.0.1:${port}/asb/tok${i}x${media[i].id.slice(0, 8)}=w512`]]));
+            for (const a of state.assets) rows.push(['asset-' + a.id, 'f', null, [a.name, [Math.floor(a.at / 1000), 0], false, null, a.id, 'op', true], 'p-test-1', [[null, `http://127.0.0.1:${port}/asb/up${a.id.slice(0, 8)}=w512`]]]);
+            payload = [rows, []];
+          } else payload = [rows, media.map((m) => `http://127.0.0.1:${port}/image/${m.id}?sig=1`)];
         } else if (rpc === 'as29s') {
           const id = JSON.parse(JSON.parse(params.get('f.req'))[0][0][1])[0];
           payload = [[`http://127.0.0.1:${port}/image/${id}?sig=2`]];
@@ -222,6 +231,11 @@ ${genJs}
         const line = JSON.stringify([['wrb.fr', rpc, JSON.stringify(payload), null, null, null, 'generic']]);
         res.writeHead(200, { 'content-type': 'application/json' });
         return res.end(`)]}'\n\n${line.length}\n${line}\n`);
+      }
+      if (u.pathname.startsWith('/asb/')) {
+        if (!/(^|;\s*)fc_sess=1/.test(req.headers.cookie || '')) { res.writeHead(403, { 'content-type': 'text/html' }); return res.end('<html>login</html>'); }
+        res.writeHead(200, { 'content-type': 'image/png' });
+        return res.end(BIGPNG);
       }
       if (u.pathname.startsWith('/image/')) {
         if (u.searchParams.get('sig') !== '1' && u.searchParams.get('sig') !== '2') { res.writeHead(403); return res.end(); }
@@ -494,6 +508,22 @@ test('Skill Foto: unggah referensi ke Flow → @ chip → generate gambar → ha
   assert.ok(logs.some((l) => /Mengunggah gambar 2\/2/.test(l)));
   assert.ok(logs.some((l) => /Tidak disebut di prompt/.test(l)));
   assert.ok(!res.items.some((i) => res.refs.some((r) => r.mediaId === i.mediaId)), 'gambar referensi bukan hasil');
+  // pratinjau: poster /asb/ (tanpa media id di URL) dikenali dari record & diambil lewat jaringan browser (cookie)
+  assert.match(res.items[0].image, /\/asb\/tok/, 'URL pratinjau ditemukan di record: ' + res.items[0].image);
+  const thumb = await s.fetchMedia(res.items[0].image);
+  assert.strictEqual(thumb.mime, 'image/png');
+  assert.ok(thumb.buffer.equals(BIGPNG), 'thumbnail utuh lewat cookie browser');
+  assert.ok((await s._browserFetch(res.items[0].image)).buffer.equals(BIGPNG), 'jaringan browser membawa cookie akun');
+  await assert.rejects(() => s._browserFetch('https://evil.example/x.png'), /INVALID_URL/);
+  // galeri: hanya hasil generate — gambar unggahan disembunyikan (id tercatat, dan juga dari judul nama file)
+  const gal = await s.listMedia('p-test-1');
+  assert.deepStrictEqual(gal.map((i) => i.mediaId), res.items.map((i) => i.mediaId));
+  assert.ok(gal.every((i) => i.image && i.image.includes('/asb/tok')), 'setiap hasil punya thumbnail');
+  assert.ok((await s.listMedia('p-test-1', { uploads: true })).length > gal.length, 'unggahan memang ada di project Flow');
+  const known = new Set(s.uploads);
+  s.uploads.clear();
+  assert.strictEqual((await s.listMedia('p-test-1')).length, gal.length, 'unggahan lama (tanpa catatan) juga disaring');
+  known.forEach((x) => s.uploads.add(x));
 
   // 3) ditolak filter keamanan (balasan ogiZ0b) → gagal dalam hitungan detik
   mock.state.unsafeNext = 1;

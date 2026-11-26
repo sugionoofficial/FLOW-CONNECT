@@ -111,7 +111,11 @@ function session(id) {
   if (!s) {
     s = new FlowSession({
       profileDir: profileDir(id), flowUrl: FLOW_URL, getBrowser: () => browser.resolveBrowser(store.data.browser),
-      getMode: () => desiredMode(id), getShowBounds: showBounds
+      getMode: () => desiredMode(id), getShowBounds: showBounds, uploads: uploadSet
+    });
+    s.on('upload', (mediaId) => {
+      store.data.uploads = [mediaId, ...(store.data.uploads || []).filter((x) => x !== mediaId)].slice(0, 5000);
+      store.save();
     });
     s.on('change', () => refreshStatus(id));
     s.on('login', (state) => send('login', { id, state }));
@@ -119,6 +123,10 @@ function session(id) {
   }
   return s;
 }
+
+// media id gambar referensi yang pernah diunggah aplikasi → tidak ditampilkan di galeri / pratinjau
+let uploadSet = null;
+function initUploads() { uploadSet = new Set(store.data.uploads || []); }
 
 async function connected(id) {
   const s = session(id);
@@ -347,8 +355,6 @@ function registerIpc() {
   handle('flow:listMedia', async (id, projectId) => (await connected(id)).listMedia(projectId));
   handle('flow:thumb', async (id, item) => {
     if (!item || !/^[A-Za-z0-9-]{1,128}$/.test(item.mediaId || '')) throw new Error('INVALID_MEDIA_ID');
-    const url = item.image;
-    if (!url) return null;
     fs.mkdirSync(thumbsDir(), { recursive: true });
     const hit = fs.readdirSync(thumbsDir()).find((f) => f.startsWith(item.mediaId + '.'));
     let buffer, mime;
@@ -356,7 +362,11 @@ function registerIpc() {
       buffer = fs.readFileSync(path.join(thumbsDir(), hit));
       mime = { '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' }[path.extname(hit)] || 'image/jpeg';
     } else {
-      ({ buffer, mime } = await (await connected(id)).fetchMedia(url));
+      const s = await connected(id);
+      let url = item.image;
+      if (!url) { const m = await s.getMedia(item.mediaId).catch(() => ({})); url = m.image || null; } // URL dari record media (as29s)
+      if (!url) return null;
+      ({ buffer, mime } = await s.fetchMedia(url));
       if (!/^image\//.test(mime)) return null;
       fs.writeFileSync(path.join(thumbsDir(), item.mediaId + ({ 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif' }[mime] || '.jpg')), buffer);
     }
@@ -623,6 +633,7 @@ app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(
 
 app.whenReady().then(async () => {
   store = new Store(app.getPath('userData'), path.join(app.getPath('downloads'), 'FLOW CONNECT'));
+  initUploads();
   nativeTheme.themeSource = store.data.theme;
   queue = new AutomationQueue({ store, getSession: (id) => connectAccount(id), onDownloaded: addDownload, onFallback: (id, v) => markHeadlessFailed(id, v && v.error) });
   queue.on('update', (st) => send('queue', st));

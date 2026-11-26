@@ -67,6 +67,8 @@ function resolveBrowser(pref = {}) {
   return hit;
 }
 
+const PLAIN_ARGS = ['--no-first-run', '--no-default-browser-check'];
+
 const BASE_ARGS = [
   '--no-first-run',
   '--no-default-browser-check',
@@ -96,9 +98,14 @@ function modeArgs(mode, { card } = {}) {
  * TIDAK memakai --enable-automation (tidak ada banner "dikendalikan software otomatis", navigator.webdriver tetap false).
  * app=true membuka url sebagai jendela aplikasi (tanpa tab & bilah alamat) — dipakai untuk kartu login.
  */
-function launchBrowser({ exe, profileDir, url, debug, extraArgs = [], mode = 'normal', card, app = false }) {
+function launchBrowser({ exe, profileDir, url, debug, extraArgs = [], mode = 'normal', card, app = false, plain = false, netLog = null }) {
   fs.mkdirSync(profileDir, { recursive: true });
-  const args = [`--user-data-dir=${profileDir}`, ...BASE_ARGS, ...modeArgs(mode, { card }), ...extraArgs];
+  // plain = browser biasa untuk login Google: tanpa port debug & tanpa flag tambahan (Google menolak login bila
+  // navigator.webdriver = true, dan Chrome menyalakannya setiap kali ada --remote-debugging-port/pipe)
+  const args = [`--user-data-dir=${profileDir}`, ...(plain ? PLAIN_ARGS : BASE_ARGS), ...modeArgs(mode, { card }), ...extraArgs];
+  if (netLog) args.push(`--log-net-log=${netLog}`); // hanya untuk tahu kapan Google mengalihkan ke Flow (tidak terlihat oleh halaman)
+  if (plain) debug = false;
+  if (app && args.some((a) => a.startsWith('--headless'))) app = false; // headless mengabaikan --app
   if (debug) {
     try { fs.unlinkSync(path.join(profileDir, 'DevToolsActivePort')); } catch { /* belum ada */ }
     args.push('--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1');
@@ -202,4 +209,57 @@ async function waitForDebugPort(profileDir, timeoutMs = 20000) {
   throw new Error('PROFILE_IN_USE');
 }
 
-module.exports = { findBrowsers, resolveBrowser, launchBrowser, launchedMode, modeArgs, waitForExit, cleanUserAgent, existingDebugPort, waitForDebugPort, getJSON, BASE_ARGS };
+/** Tunggu proses anak keluar; true bila keluar sebelum batas waktu. */
+function waitChild(child, timeoutMs) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(false), timeoutMs);
+    child.once('exit', () => { clearTimeout(t); resolve(true); });
+  });
+}
+
+/**
+ * Tutup browser TANPA port debug dengan cara wajar (seperti menekan X), agar cookie login sempat tersimpan.
+ * Windows: taskkill tanpa /F (mengirim WM_CLOSE); lainnya: SIGTERM. Bila tidak menutup, dipaksa.
+ */
+async function closeGracefully(child, profileDir, timeoutMs = 10000) {
+  const kill = (force) => {
+    try {
+      if (process.platform === 'win32') spawn('taskkill', ['/PID', String(child.pid), '/T', ...(force ? ['/F'] : [])], { windowsHide: true, stdio: 'ignore' }).on('error', () => {});
+      else process.kill(child.pid, force ? 'SIGKILL' : 'SIGTERM');
+    } catch { /* sudah keluar */ }
+  };
+  if (child && child.pid && !(await waitChild(child, 0))) {
+    kill(false);
+    if (!(await waitChild(child, timeoutMs))) { kill(true); await waitChild(child, 5000); }
+  }
+  if (profileDir) await waitForExit(profileDir);
+}
+
+/**
+ * Baca log jaringan Chrome (--log-net-log) secara bertahap → URL yang dimuat. Hanya URL; cookie tidak dicatat
+ * (mode bawaan Chrome membuang data pribadi). Dipakai untuk mendeteksi akhir login tanpa menyentuh halaman.
+ */
+class NetLogReader {
+  constructor(file) { this.file = file; this.pos = 0; this.tail = ''; }
+  read() {
+    let fd;
+    try { fd = fs.openSync(this.file, 'r'); } catch { return []; }
+    try {
+      const size = fs.fstatSync(fd).size;
+      if (size <= this.pos) return [];
+      const buf = Buffer.alloc(Math.min(size - this.pos, 8 * 1024 * 1024));
+      const n = fs.readSync(fd, buf, 0, buf.length, this.pos);
+      this.pos += n;
+      const text = this.tail + buf.toString('utf8', 0, n);
+      this.tail = text.slice(-2048);
+      const urls = [];
+      const re = /"url":"((?:[^"\\]|\\.){1,4000})"/g;
+      let m;
+      while ((m = re.exec(text))) { try { urls.push(JSON.parse('"' + m[1] + '"')); } catch { /* terpotong */ } }
+      return urls;
+    } finally { fs.closeSync(fd); }
+  }
+}
+
+module.exports = { findBrowsers, resolveBrowser, launchBrowser, launchedMode, modeArgs, waitForExit, cleanUserAgent, existingDebugPort, waitForDebugPort, getJSON, BASE_ARGS, PLAIN_ARGS, closeGracefully, waitChild, NetLogReader };

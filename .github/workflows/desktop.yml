@@ -46,6 +46,11 @@ jobs:
       - name: Ringkasan uji
         if: always()
         run: node scripts/test-annotate.js test.log
+      - name: Uji kartu login dengan Chrome berjendela (navigator.webdriver harus false)
+        if: matrix.os == 'windows-latest'
+        env:
+          CHROME_HEADED_ARGS: '--disable-gpu'
+        run: node --test --test-reporter=spec --test-force-exit --test-name-pattern="Chrome asli berjendela" test/flow.test.js
 
   build-win:
     name: Build installer Windows
@@ -106,7 +111,7 @@ jobs:
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
 
-            **Baru di versi ini:** model disesuaikan dengan Google Flow saat ini — Gambar: Nano Banana 2.1 (bawaan, tanpa batas / 0 kredit), Nano Banana Pro, Nano Banana 2 Lite; Video: Omni 1.2 Flash, Omni 1.1 Flash, Veo 3.1 Lite / Fast / Quality. Video kini punya 2 mode: **Frame** (wajib foto awal & foto akhir) dan **Bahan**. Durasi otomatis mengikuti model: Omni 10 detik, Veo 8 detik. Sebelumnya (v1.3.2): notifikasi pembaruan muncul otomatis.
+            **Baru di versi ini:** perbaikan login — Google tidak lagi menolak dengan pesan "This browser or app may not be secure" saat menambah akun. Kartu login kini dibuka sebagai Chrome/Edge biasa tanpa kendali apa pun; setelah login selesai kartu tertutup sendiri, aplikasi tersambung tersembunyi dan membuat project baru. Sebelumnya (v1.3.3): model Flow terbaru, mode Frame/Bahan, durasi otomatis (Omni 10 dtk, Veo 8 dtk).
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

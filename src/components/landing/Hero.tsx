@@ -1,25 +1,9 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { ChevronDown, Images, MonitorDown, Play, Wand2 } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { ChevronDown, Images, MonitorDown, Play } from 'lucide-react'
 import { AuroraBg } from '../AuroraBg'
-import { PROMPT_IDEAS, SHOWCASE_MEDIA } from '../../lib/catalog'
+import { SHOWCASE_MEDIA } from '../../lib/catalog'
 
 export function Hero() {
-  const navigate = useNavigate()
-  const [prompt, setPrompt] = useState('')
-  const [ideaIdx, setIdeaIdx] = useState(0)
-
-  useEffect(() => {
-    const t = setInterval(() => setIdeaIdx((i) => (i + 1) % PROMPT_IDEAS.length), 3500)
-    return () => clearInterval(t)
-  }, [])
-
-  const submit = (e: FormEvent) => {
-    e.preventDefault()
-    const text = prompt.trim() || PROMPT_IDEAS[ideaIdx]
-    navigate(`/app?prompt=${encodeURIComponent(text)}`)
-  }
-
   return (
     <section className="relative isolate overflow-hidden pb-20 pt-36 md:pt-44">
       <AuroraBg />
@@ -27,7 +11,7 @@ export function Hero() {
         <div className="animate-fade-up">
           <span className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs text-white/80 glass">
             <span className="size-1.5 rounded-full bg-aurora-cyan shadow-[0_0_10px_#22d3ee]" />
-            Studio kreatif AI generasi baru
+            Aplikasi PC untuk Google Flow
           </span>
           <h1 className="mt-6 font-display text-5xl font-bold leading-[1.02] tracking-tight sm:text-6xl lg:text-7xl">
             Wujudkan ide
@@ -35,28 +19,16 @@ export function Hero() {
             jadi <span className="text-aurora">film AI</span>
           </h1>
           <p className="mt-6 max-w-xl text-lg text-white/65">
-            FLOW CONNECT adalah pintu masuk ke Google Flow — studio kreatif AI untuk video, gambar, dan tools kustom. Kelola banyak akun Google
-            dan mulai berkarya dalam satu klik.
+            FLOW CONNECT Desktop membawa Google Flow ke PC-mu — banyak akun Google, Studio untuk video & gambar, Asisten Prompt AI,
+            galeri, unduh otomatis, dan antrean prompt dalam satu aplikasi.
           </p>
 
-          <form onSubmit={submit} className="glow-border mt-8 flex max-w-xl items-center gap-2 rounded-2xl p-2 glass">
-            <input
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder={PROMPT_IDEAS[ideaIdx]}
-              className="min-w-0 flex-1 bg-transparent px-3 py-2.5 text-sm placeholder:text-white/40 focus:outline-none"
-              aria-label="Deskripsikan videomu"
-            />
-            <button type="submit" className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-aurora px-5 py-3 text-sm font-semibold shadow-[0_0_30px_-6px_#7c3aed] transition hover:brightness-110">
-              Buat <Wand2 className="size-4" />
-            </button>
-          </form>
-          <div className="mt-5 flex flex-wrap gap-2">
-            <Link to="/contoh" className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold glass transition hover:bg-white/10">
-              <Images className="size-4 text-aurora-cyan" /> Lihat contoh generate
+          <div className="mt-8 flex flex-wrap gap-2">
+            <Link to="/unduh" className="inline-flex items-center gap-2 rounded-xl bg-aurora px-5 py-3 text-sm font-semibold shadow-[0_0_30px_-6px_#7c3aed] transition hover:brightness-110">
+              <MonitorDown className="size-4" /> Unduh aplikasi PC
             </Link>
-            <Link to="/unduh" className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold glass transition hover:bg-white/10">
-              <MonitorDown className="size-4 text-aurora-cyan" /> Unduh aplikasi PC
+            <Link to="/contoh" className="inline-flex items-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold glass transition hover:bg-white/10">
+              <Images className="size-4 text-aurora-cyan" /> Lihat contoh generate
             </Link>
           </div>
           <p className="mt-4 max-w-xl text-xs text-white/40">

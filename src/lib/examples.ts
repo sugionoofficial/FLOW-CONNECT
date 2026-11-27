@@ -1,4 +1,4 @@
-// Contoh hasil generate untuk halaman /contoh — prompt, model & pengaturan bisa disalin lalu dicoba di Studio.
+// Contoh hasil generate untuk halaman /contoh — prompt, model & pengaturan bisa disalin lalu dicoba di Studio aplikasi PC.
 export type ExampleKind = 'video' | 'foto' | 'workflow' | 'project'
 
 export type ExampleStep = { title: string; model: string; prompt: string; note?: string }

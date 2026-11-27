@@ -42,13 +42,16 @@ Uji lokal di runtime Cloudflare: `npm run cf:preview` (port 8787).
 ## Alur aplikasi
 | Halaman | Rute | Isi |
 |---|---|---|
-| Landing | `/` | Hero + prompt, model, Plan/Create/Refine, tools, films, FAQ |
+| Landing | `/` | Hero, model, Plan/Create/Refine, tools, films, FAQ — CTA ke **Unduh aplikasi PC** |
+| Contoh | `/contoh` | Galeri contoh generate + prompt yang bisa disalin |
+| Unduh | `/unduh` | Unduh FLOW CONNECT Desktop (Windows) |
 | Masuk / Daftar | `/masuk` | Email + password (Supabase Auth) |
-| **Hub akun Google** | `/app` | Daftar akun, tambah / default / label / hapus, tombol **Buka Google Flow** |
-| **Studio** | `/app/studio` | Mode **Komputer**: kirim gambar/prompt, galeri + unduh lewat **Bookmarklet** atau **ekstensi Bridge**. Mode **HP**: kirim ke aplikasi Google Flow |
+| **Lisensi** | `/app/lisensi` | Beranda setelah login (`/app` diarahkan ke sini): buat / kelola kunci lisensi aplikasi PC |
 | Tools | `/app/tools` | 12 tools Google Flow, dibuka dengan akun pilihan |
+| Admin | `/app/admin` | Khusus admin: provider & model AI, kunci API, pengaturan chat, lisensi, pemakaian |
 
-Prompt yang diketik di hero landing dibawa ke hub dan otomatis disalin ke clipboard saat membuka Google Flow.
+Halaman web **Akun Google** dan **Studio** (beserta bookmarklet & ekstensi Bridge) sudah dihapus —
+fitur Studio, banyak akun Google, galeri, dan unduhan sekarang ada di aplikasi PC (`desktop/`).
 
 ### Membuka Google Flow dengan akun tertentu
 `https://accounts.google.com/AccountChooser?Email=<email>&continue=https://flow.google.com/?authuser=<email>`
@@ -59,57 +62,6 @@ Jika akun sudah login di browser → langsung masuk; jika belum → Google memin
 2. **Pakai email** (manual) — hanya pintasan, `verified = false`. Klien tidak bisa mengubah dirinya jadi terverifikasi (RLS + trigger).
 
 Maksimal 10 akun per pengguna; akun pertama otomatis jadi default.
-
-## Studio + Bookmarklet (tanpa instal)
-Alternatif ekstensi: bookmark `javascript:` yang dijalankan pengguna di tab **flow.google.com** miliknya
-(sumber: `src/bookmarklet/flow-connect-bookmarklet.js`, dibuat oleh `bookmarkletHref()` di `src/lib/flowLink.ts`).
-
-- Komunikasi tab FLOW CONNECT ↔ tab Flow lewat `window.postMessage`, dua arah:
-  1. Studio membuka tab Flow → pengguna klik bookmarklet → bookmarklet menyapa `window.opener`
-  2. Pengguna klik bookmarklet → tombol “Buka FLOW CONNECT” di panel membuka Studio → bookmarklet menyapa jendela itu
-- Origin dicek di kedua sisi: bookmarklet hanya menerima pesan dari origin FLOW CONNECT yang membuatnya; Studio hanya dari `https://flow.google.com`.
-- Fitur sama dengan ekstensi: status akun/project, galeri (RPC baca-saja `Zzl0ze`/`as29s`), ambil file (Blob) untuk unduh,
-  kirim gambar (File via postMessage) & prompt ke UI Flow. Tidak membuat token reCAPTCHA dan tidak menekan Generate.
-- Tanpa `innerHTML`/`eval` (aman untuk Trusted Types). Kode di-inline penuh (~16 KB) karena CSP Flow memblokir script eksternal.
-- Perlu diklik ulang setiap tab Flow dimuat ulang. React memblokir `href="javascript:"`, jadi tombol seret mengisi `href` lewat DOM.
-
-> ⚠️ Belum diuji pada akun Google Flow sungguhan. Spesifikasi CSP menyatakan bookmarklet tidak boleh diblokir dan Firefox mematuhinya;
-> jika Chrome/Google Flow memblokirnya, gunakan ekstensi. Jika Flow memutus hubungan jendela (COOP), sambungkan lewat tombol “Buka FLOW CONNECT” di panel bookmarklet.
-
-## Studio + ekstensi FLOW CONNECT Bridge
-Website lain tidak bisa mengakses Google Flow (cookie Google, CORS, iframe diblokir), jadi upload/download lewat FLOW CONNECT memakai
-ekstensi browser kecil di `extension/` yang bekerja **di tab Google Flow milik pengguna sendiri** (akun & kuota Google mereka, tanpa API key).
-
-| Aksi | Cara kerja |
-|---|---|
-| Status | membaca tab `flow.google.com` yang terbuka, akun yang login, dan project dari URL `/project/<id>` |
-| Galeri | RPC baca-saja `Zzl0ze` (media project) & `as29s` (URL media) di konteks halaman Flow — tanpa reCAPTCHA |
-| Unduh | `chrome.downloads` dari `flow-content.google` → folder `Downloads/FLOW CONNECT` |
-| Kirim gambar | file dimasukkan ke UI Flow (input file / paste / drop) — **Flow sendiri** yang meng-upload |
-| Tulis prompt | prompt diketik ke kotak prompt Flow; pengguna menekan **Generate** di Flow |
-
-**Sengaja tidak dilakukan:** memanggil endpoint generate/upload Flow secara langsung atau membuat token reCAPTCHA dari ekstensi.
-Google Flow mendeteksi hal itu (`extension_hijack_detected`) dan melewatinya berarti membobol proteksi Google → risiko akun diblokir.
-
-- Paket: `npm run build:extension` → `public/downloads/flow-connect-bridge.zip` (otomatis saat `dev`/`build`, tidak di-commit).
-- Pasang: ekstrak zip → `chrome://extensions` → *Developer mode* → *Load unpacked* → folder `flow-connect-bridge`.
-- ID tetap `paedhhaejfnmdlgabmdjlncbjjpfdkfp` (dari `key` di manifest). Hanya menerima pesan dari `flow-connect-2qu.pages.dev` & `localhost:5173`.
-- RPC id/format diambil dari riset open-source (crisng95/flowkit, ffroliva/gflow-cli, MIT) — API internal Google tidak resmi dan bisa berubah sewaktu-waktu.
-
-## Studio mode HP → aplikasi Google Flow
-HP tidak mendukung ekstensi, jadi di HP Studio otomatis memakai **aplikasi Google Flow resmi**
-(Android `com.google.android.apps.labs.whisk`, iPhone App Store `id6751294549`). Bisa juga dipilih manual lewat tombol *Komputer / HP*.
-
-1. Pilih gambar (galeri/kamera) & tulis prompt di FLOW CONNECT.
-2. **Kirim ke aplikasi Flow** → prompt disalin ke clipboard, lalu menu *Bagikan* bawaan HP (Web Share API) terbuka berisi gambar → pilih Google Flow.
-   - Jika browser tidak mendukung berbagi file: gambar disimpan ke HP, lalu aplikasi Flow dibuka (unggah dari galeri).
-   - Tanpa gambar: aplikasi Flow langsung dibuka.
-3. Di Flow: tempel prompt → Generate → Unduh hasil ke HP.
-
-Membuka aplikasi: Android memakai intent URL (`intent://flow.google.com/#Intent;scheme=https;package=…;S.browser_fallback_url=<Play Store>;end`),
-iPhone memakai link `https://flow.google.com/` (Universal Link). Hub di HP juga menampilkan tombol **Buka aplikasi Flow**.
-
-> Catatan: apakah Google Flow muncul di menu *Bagikan* ditentukan oleh aplikasi Flow sendiri — jika tidak muncul, pakai jalur simpan ke galeri.
 
 ## FLOW CONNECT Desktop (aplikasi Windows) — `desktop/`
 Aplikasi PC (Electron) dengan tampilan aplikasi sistem biasa (gaya Windows 11: font sistem, warna aksen Windows,
@@ -171,15 +123,12 @@ Tanpa Client ID, aplikasi tetap jalan dengan mode “Pakai email”.
 ## Struktur
 ```
 src/
-  components/      UI umum, landing/, hub/ (akun Google), studio/ (mode HP)
+  components/      UI umum, landing/, hub/ (pemilih akun Google untuk Tools)
   context/         Auth & Toast
   hooks/           useGoogleAccounts
-  lib/             supabase client, api, google (Flow URL + GIS), bridge (ekstensi), flowLink (bookmarklet), connector, device (HP), catalog
-  pages/           Landing, Login, Hub, Studio, Tools
+  lib/             supabase client, api, google (Flow URL + GIS), desktop (unduhan), examples, catalog
+  pages/           Landing, Login, Examples, Download, Licenses, Tools, Admin
 design/            Pilihan template dark (referensi)
 supabase/migrations, supabase/functions
 desktop/            FLOW CONNECT Desktop (Electron, Windows) — main/ (browser, cdp, agent, flow, automation), renderer/ (UI)
-extension/          FLOW CONNECT Bridge (Chrome MV3)
-src/bookmarklet/    sumber bookmarklet Flow
-scripts/            build-extension.mjs (zip ekstensi)
 ```

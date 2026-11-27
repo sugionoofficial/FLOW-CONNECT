@@ -7,9 +7,7 @@ import { Loader } from './components/Loader'
 import Landing from './pages/Landing'
 
 const Login = lazy(() => import('./pages/Login'))
-const Hub = lazy(() => import('./pages/Hub'))
 const Tools = lazy(() => import('./pages/Tools'))
-const Studio = lazy(() => import('./pages/Studio'))
 const Licenses = lazy(() => import('./pages/Licenses'))
 const Admin = lazy(() => import('./pages/Admin'))
 const Examples = lazy(() => import('./pages/Examples'))
@@ -27,12 +25,11 @@ export default function App() {
               <Route path="/masuk" element={<Login />} />
               <Route path="/contoh" element={<Examples />} />
               <Route path="/unduh" element={<DownloadPage />} />
-              <Route path="/app" element={<ProtectedRoute><Hub /></ProtectedRoute>} />
-              <Route path="/app/studio" element={<ProtectedRoute><Studio /></ProtectedRoute>} />
+              <Route path="/app" element={<Navigate to="/app/lisensi" replace />} />
               <Route path="/app/tools" element={<ProtectedRoute><Tools /></ProtectedRoute>} />
               <Route path="/app/lisensi" element={<ProtectedRoute><Licenses /></ProtectedRoute>} />
               <Route path="/app/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
-              <Route path="/app/*" element={<Navigate to="/app" replace />} />
+              <Route path="/app/*" element={<Navigate to="/app/lisensi" replace />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>

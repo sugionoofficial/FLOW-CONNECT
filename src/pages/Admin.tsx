@@ -47,7 +47,16 @@ const KINDS = [
 /** Base URL API: buang "/" di akhir dan endpoint yang sering ikut tertempel (…/v1/responses → …/v1). */
 const apiBase = (raw: string) =>
   raw.trim().replace(/\/+$/, '').replace(/\/(chat\/completions|completions|responses|models|messages)$/i, '').replace(/\/+$/, '')
-type RemoteModel = { id: string; name: string; context: number | null; input_per_m: number | null; output_per_m: number | null; free: boolean; outputs: string[] }
+type RemoteModel = { id: string; name: string; context: number | null; input_per_m: number | null; output_per_m: number | null; free: boolean; outputs: string[]; vision?: boolean }
+// Cloudflare Workers AI (OpenAI-compatible): https://api.cloudflare.com/client/v4/accounts/<Account ID>/ai/v1
+const CF_RE = /^https:\/\/api\.cloudflare\.com\/client\/v4\/accounts\/([^/]*)\/ai\/v1$/
+const cfBase = (accountId: string) => `https://api.cloudflare.com/client/v4/accounts/${accountId.trim()}/ai/v1`
+const isCloudflare = (base: string | null | undefined) => /^https:\/\/api\.cloudflare\.com\//.test(String(base ?? '').trim())
+const PRESETS: { id: string; name: string; base_url: string; notes: string }[] = [
+  { id: 'cloudflare', name: 'Cloudflare Workers AI', base_url: cfBase(''), notes: 'Workers AI — gratis 10.000 neuron/hari, lalu bayar sesuai pemakaian.' },
+  { id: 'openrouter', name: 'OpenRouter', base_url: 'https://openrouter.ai/api/v1', notes: '' },
+  { id: 'groq', name: 'Groq', base_url: 'https://api.groq.com/openai/v1', notes: '' },
+]
 const priceNote = (m: RemoteModel) =>
   m.free ? 'Gratis' : m.input_per_m != null && m.output_per_m != null ? `$${m.input_per_m} / $${m.output_per_m} per 1 jt token` : ''
 /** Pesan galat dari supabase.functions.invoke (isi JSON { error, detail } bila ada). */
@@ -315,6 +324,13 @@ function ProvidersTab() {
       <Modal open={!!editProv} onClose={() => setEditProv(null)} title={editProv?._new ? 'Tambah provider' : 'Ubah provider'}>
         {editProv && (
           <div className="flex flex-col gap-3 text-sm">
+            {editProv._new && (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-white/55">Isi cepat:
+                {PRESETS.map((p) => (
+                  <button key={p.id} type="button" className={buttonClass('glass', 'sm')} onClick={() => setEditProv({ ...editProv, id: p.id, name: p.name, base_url: p.base_url, notes: p.notes || editProv.notes, kind: 'openai_compat' })}>{p.name}</button>
+                ))}
+              </div>
+            )}
             <Field label="ID (huruf kecil, tanpa spasi)"><input className={input} value={editProv.id ?? ''} disabled={!editProv._new} onChange={(e) => setEditProv({ ...editProv, id: e.target.value })} placeholder="mis. openrouter" /></Field>
             <Field label="Nama"><input className={input} value={editProv.name ?? ''} onChange={(e) => setEditProv({ ...editProv, name: e.target.value })} placeholder="mis. OpenRouter" /></Field>
             <Field label="Jenis API">
@@ -323,6 +339,14 @@ function ProvidersTab() {
               </select>
             </Field>
             <Field label="Base URL"><input className={input} value={editProv.base_url ?? ''} onChange={(e) => setEditProv({ ...editProv, base_url: e.target.value })} placeholder="https://…/v1 — mis. https://openrouter.ai/api/v1" /></Field>
+            {isCloudflare(editProv.base_url) && (
+              <div className="rounded-xl border border-orange-400/20 bg-orange-400/5 p-3">
+                <Field label="Cloudflare Account ID">
+                  <input className={clsx(input, 'font-mono')} value={(editProv.base_url ?? '').match(CF_RE)?.[1] ?? ''} onChange={(e) => setEditProv({ ...editProv, base_url: cfBase(e.target.value.replace(/[^A-Za-z0-9]/g, '')) })} placeholder="32 karakter — dasbor Cloudflare → Workers AI → Use REST API" />
+                </Field>
+                <p className="mt-2 text-xs text-white/50">Base URL otomatis: <span className="font-mono">…/accounts/&lt;Account ID&gt;/ai/v1</span>. Setelah disimpan, isi <b>Kunci API</b> dengan <b>API Token</b> Cloudflare (templat “Workers AI”), lalu klik <b>Ambil model</b>.</p>
+              </div>
+            )}
             {editProv.base_url && apiBase(editProv.base_url) !== editProv.base_url.trim().replace(/\/+$/, '') && (
               <p className="text-xs text-amber-200/80">Akan disimpan sebagai <span className="font-mono">{apiBase(editProv.base_url)}</span> (cukup alamat dasar API, tanpa /chat/completions atau /responses).</p>
             )}
@@ -330,7 +354,7 @@ function ProvidersTab() {
             <p className="text-xs text-white/45">Chat prompt saat ini mendukung jenis <b>OpenAI-compatible</b> (endpoint <code>/chat/completions</code>).</p>
             <div className="mt-2 flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setEditProv(null)}>Batal</Button>
-              <Button onClick={saveProvider} disabled={busy || !editProv.id || !editProv.name || !editProv.base_url}><Save className="size-4" /> Simpan</Button>
+              <Button onClick={saveProvider} disabled={busy || !editProv.id || !editProv.name || !editProv.base_url || (isCloudflare(editProv.base_url) && !/^[A-Za-z0-9]{16,}$/.test((editProv.base_url ?? '').match(CF_RE)?.[1] ?? ''))}><Save className="size-4" /> Simpan</Button>
             </div>
           </div>
         )}
@@ -339,7 +363,8 @@ function ProvidersTab() {
       <Modal open={!!keyFor} onClose={() => setKeyFor(null)} title={`Kunci API — ${keyFor?.name ?? ''}`}>
         <p className="text-sm text-white/60">Kunci disimpan terenkripsi di Supabase Vault dan hanya dipakai server. Aplikasi PC dan browser tidak pernah menerima kunci ini.</p>
         {keyFor?.key_hint && <p className="mt-2 text-xs text-white/45">Kunci sekarang: <span className="font-mono">{keyFor.key_hint}</span></p>}
-        <input type="password" autoComplete="off" className={clsx(input, 'mt-4 font-mono')} value={keyVal} onChange={(e) => setKeyVal(e.target.value)} placeholder={keyFor?.id === 'opencode' ? 'oc_sk_…' : 'sk-…'} aria-label="Kunci API" />
+        <input type="password" autoComplete="off" className={clsx(input, 'mt-4 font-mono')} value={keyVal} onChange={(e) => setKeyVal(e.target.value)} placeholder={keyFor?.id === 'opencode' ? 'oc_sk_…' : isCloudflare(keyFor?.base_url) ? 'API Token Cloudflare' : 'sk-…'} aria-label="Kunci API" />
+        {isCloudflare(keyFor?.base_url) && <p className="mt-2 text-xs text-white/50">Buat di dasbor Cloudflare → <b>My Profile → API Tokens → Create Token</b> → templat <b>Workers AI</b>. Token hanya butuh izin Workers AI.</p>}
         <div className="mt-6 flex flex-wrap justify-between gap-2">
           {keyFor?.key_hint ? <Button variant="danger" onClick={() => saveKey(true)} disabled={busy}><Trash2 className="size-4" /> Hapus kunci</Button> : <span />}
           <div className="flex gap-2">
@@ -396,6 +421,7 @@ function ModelPicker({ provider, existing, onClose, onAdded }: { provider: Provi
   const [err, setErr] = useState('')
   const [q, setQ] = useState('')
   const [freeOnly, setFreeOnly] = useState(false)
+  const [visionOnly, setVisionOnly] = useState(false)
   const [cat, setCat] = useState<Category>('chat')
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [busy, setBusy] = useState(false)
@@ -410,10 +436,10 @@ function ModelPicker({ provider, existing, onClose, onAdded }: { provider: Provi
   const have = useMemo(() => new Set(existing.filter((m) => m.provider_id === provider.id).map((m) => m.model_id)), [existing, provider])
   const shown = useMemo(() => {
     const t = q.trim().toLowerCase()
-    return (list ?? []).filter((m) => (!freeOnly || m.free) &&
+    return (list ?? []).filter((m) => (!freeOnly || m.free) && (!visionOnly || m.vision) &&
       (cat !== 'chat' || !m.outputs.length || m.outputs.includes('text')) &&
       (!t || m.id.toLowerCase().includes(t) || m.name.toLowerCase().includes(t)))
-  }, [list, q, freeOnly, cat])
+  }, [list, q, freeOnly, visionOnly, cat])
 
   const add = async () => {
     if (!list) return
@@ -421,6 +447,7 @@ function ModelPicker({ provider, existing, onClose, onAdded }: { provider: Provi
       const config: Record<string, number> = {}
       if (m.input_per_m != null) config.input_per_m = m.input_per_m
       if (m.output_per_m != null) config.output_per_m = m.output_per_m
+      if (m.vision) config.vision = 1
       return { provider_id: provider.id, model_id: m.id, label: m.name.slice(0, 80), category: cat, enabled: true, is_default: false, sort: 100 + i, price_note: priceNote(m) || null, config }
     })
     setBusy(true)
@@ -436,7 +463,7 @@ function ModelPicker({ provider, existing, onClose, onAdded }: { provider: Provi
       {err ? (
         <div className="flex flex-col gap-3 text-sm">
           <p className="rounded-xl border border-red-400/20 bg-red-400/5 p-3 text-red-200/90">Gagal mengambil daftar model: {err}</p>
-          <p className="text-xs text-white/50">Periksa Base URL (contoh OpenRouter: <span className="font-mono">https://openrouter.ai/api/v1</span>) dan Kunci API provider.</p>
+          <p className="text-xs text-white/50">Periksa Base URL (contoh OpenRouter: <span className="font-mono">https://openrouter.ai/api/v1</span>; Cloudflare: <span className="font-mono">https://api.cloudflare.com/client/v4/accounts/&lt;Account ID&gt;/ai/v1</span>) dan Kunci API provider.</p>
         </div>
       ) : !list ? (
         <div className="flex justify-center py-12"><Loader2 className="size-6 animate-spin text-white/50" /></div>
@@ -451,7 +478,9 @@ function ModelPicker({ provider, existing, onClose, onAdded }: { provider: Provi
               {CATS.map((c) => <option key={c.id} value={c.id} className="bg-ink-900">{c.label}</option>)}
             </select>
             <label className="flex items-center gap-2 text-xs text-white/70"><input type="checkbox" checked={freeOnly} onChange={(e) => setFreeOnly(e.target.checked)} /> Gratis saja</label>
+            {list.some((m) => m.vision) && <label className="flex items-center gap-2 text-xs text-white/70"><input type="checkbox" checked={visionOnly} onChange={(e) => setVisionOnly(e.target.checked)} /> Bisa baca gambar</label>}
           </div>
+          {isCloudflare(provider.base_url) && <p className="text-xs text-white/50">Cloudflare Workers AI: <b>gratis 10.000 neuron per hari</b> untuk semua model; harga di kolom kanan berlaku setelah kuota gratis habis (perlu paket Workers Paid). Model bertanda <b>Gambar</b> bisa dipakai skill “Rekayasa balik prompt”.</p>}
           <div className="max-h-[52vh] overflow-y-auto rounded-2xl border border-white/10">
             {shown.length === 0 && <p className="px-4 py-8 text-center text-white/45">Tidak ada model yang cocok.</p>}
             {shown.slice(0, 300).map((m) => {
@@ -464,7 +493,7 @@ function ModelPicker({ provider, existing, onClose, onAdded }: { provider: Provi
                     setSel(next)
                   }} />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{m.name}</span>
+                    <span className="flex items-center gap-2 font-medium"><span className="truncate">{m.name}</span>{m.vision && <span className="shrink-0 rounded-full bg-aurora-cyan/15 px-2 py-0.5 text-[10px] font-semibold text-aurora-cyan">Gambar</span>}</span>
                     <span className="block truncate font-mono text-xs text-white/40">{m.id}</span>
                   </span>
                   <span className="shrink-0 text-right text-xs text-white/55">

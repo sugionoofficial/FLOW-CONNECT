@@ -60,12 +60,10 @@ export function AppHeader({ children }: { children?: ReactNode }) {
   return (
     <header className="sticky top-0 z-30 border-b border-white/5 bg-ink-950/70 backdrop-blur-xl">
       <div className="container-x flex h-16 items-center gap-6">
-        <Link to="/app" className="shrink-0"><Logo to="/app" /></Link>
+        <Link to="/app/lisensi" className="shrink-0"><Logo to="/app/lisensi" /></Link>
         <nav className="hidden items-center gap-1 sm:flex">
-          <NavLink to="/app" end className={link}>Akun Google</NavLink>
-          <NavLink to="/app/studio" className={link}>Studio</NavLink>
-          <NavLink to="/app/tools" className={link}>Tools</NavLink>
           <NavLink to="/app/lisensi" className={link}>Lisensi</NavLink>
+          <NavLink to="/app/tools" className={link}>Tools</NavLink>
           <NavLink to="/contoh" className={link}>Contoh</NavLink>
           <NavLink to="/unduh" className={link}>Unduh</NavLink>
           {isAdmin && <NavLink to="/app/admin" className={link}>Admin</NavLink>}

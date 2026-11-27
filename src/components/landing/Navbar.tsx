@@ -54,8 +54,8 @@ export function Navbar() {
         </div>
         <div className="hidden items-center gap-2 md:flex">
           {user ? (
-            <Link to="/app" className={buttonClass('primary', 'md')}>
-              Buka Studio
+            <Link to="/app/lisensi" className={buttonClass('primary', 'md')}>
+              Lisensi saya
             </Link>
           ) : (
             <>
@@ -77,8 +77,8 @@ export function Navbar() {
           {LINKS.map((l) => (
             <NavItem key={l.href} {...l} onClick={() => setOpen(false)} className="rounded-lg px-3 py-2.5 text-white/80 hover:bg-white/5" />
           ))}
-          <Link to={user ? '/app' : '/masuk'} className={buttonClass('primary', 'md', 'mt-2')}>
-            {user ? 'Buka Studio' : 'Masuk / Daftar'}
+          <Link to={user ? '/app/lisensi' : '/masuk'} className={buttonClass('primary', 'md', 'mt-2')}>
+            {user ? 'Lisensi saya' : 'Masuk / Daftar'}
           </Link>
         </div>
       )}

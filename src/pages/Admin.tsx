@@ -66,7 +66,7 @@ export default function Admin() {
   // AuthContext memuat status admin secara async — tunggu sebentar sebelum menolak
   useEffect(() => { const t = setTimeout(() => setChecked(true), 1500); return () => clearTimeout(t) }, [])
   if (loading || (!isAdmin && !checked)) return <Loader full />
-  if (!isAdmin) return <Navigate to="/app" replace />
+  if (!isAdmin) return <Navigate to="/app/lisensi" replace />
 
   return (
     <div className="relative isolate min-h-screen">

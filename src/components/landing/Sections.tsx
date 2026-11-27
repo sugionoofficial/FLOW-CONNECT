@@ -48,8 +48,8 @@ export function ModelsSection() {
                 <p className={clsx('mt-2 text-sm text-white/60', i !== active && 'line-clamp-1')}>{model.desc}</p>
                 {i === active && (
                   <div className="mt-4 flex gap-2">
-                    <Link to="/app" className={buttonClass('primary', 'sm')}>
-                      Coba di Google Flow
+                    <Link to="/unduh" className={buttonClass('primary', 'sm')}>
+                      Coba di aplikasi PC
                     </Link>
                     <span className={buttonClass('ghost', 'sm')}>Pelajari</span>
                   </div>
@@ -255,10 +255,10 @@ export function FilmsSection() {
 
 /* ─────────────── FAQ + CTA ─────────────── */
 const FAQ = [
-  { q: 'Apa itu FLOW CONNECT?', a: 'Pintu masuk ke Google Flow. Kamu login di FLOW CONNECT, menautkan satu atau beberapa akun Google, lalu membuka Google Flow dengan akun mana pun dalam satu klik.' },
+  { q: 'Apa itu FLOW CONNECT?', a: 'Aplikasi PC (Windows) untuk bekerja dengan Google Flow: banyak akun Google, Studio untuk kirim prompt & gambar, Asisten Prompt berbasis AI, galeri per kategori, unduh otomatis, dan antrean prompt. Situs ini dipakai untuk mengunduh aplikasi dan membuat kunci lisensinya.' },
   { q: 'Apakah generate video terjadi di FLOW CONNECT?', a: 'Tidak. Semua proses generate berjalan di Google Flow memakai akun Google kamu sendiri, termasuk kuota dan langganan Google AI milik akun tersebut.' },
-  { q: 'Bisakah menambah lebih dari satu akun Google?', a: 'Bisa, hingga 10 akun. Tautkan lewat “Masuk dengan Google” (terverifikasi) atau cukup dengan alamat email, lalu pilih akun default.' },
-  { q: 'Bisakah upload & download lewat FLOW CONNECT?', a: 'Bisa. Di komputer pakai bookmarklet (tanpa instal) atau ekstensi gratis FLOW CONNECT Bridge: gambar & prompt dikirim ke project Google Flow-mu, hasilnya bisa dilihat dan diunduh dari Studio. Di HP, Studio mengirim gambar & prompt ke aplikasi Google Flow resmi (Android & iPhone). Tanpa API key.' },
+  { q: 'Bisakah memakai lebih dari satu akun Google?', a: 'Bisa. Di aplikasi PC, setiap akun Google punya profil browser sendiri. Login cukup sekali lewat kartu login Google, lalu pilih akun aktif di Studio.' },
+  { q: 'Bisakah upload & download lewat FLOW CONNECT?', a: 'Bisa, di aplikasi PC: tambahkan gambar referensi (tandai dengan @ di prompt), kirim ke Google Flow, lalu lihat hasilnya di Galeri dan unduh ke folder PC. Tanpa API key.' },
   { q: 'Ada aplikasi untuk PC?', a: 'Ada: FLOW CONNECT Desktop untuk Windows. Aplikasi ini menjalankan Google Flow di Chrome/Edge asli milikmu di balik layar, mendukung banyak akun, kirim gambar & prompt, galeri, unduh ke folder, dan Mode Otomatis (antrean prompt, dengan peringatan risiko akun). Aplikasi diaktifkan dengan kunci lisensi yang kamu buat sendiri di menu Lisensi, dan memperbarui dirinya otomatis (cukup klik “Update sekarang”). Unduh di halaman Unduh Aplikasi.' },
   { q: 'Bagaimana cara mendapatkan kunci lisensi aplikasi PC?', a: 'Masuk ke FLOW CONNECT, buka menu Lisensi, lalu klik “Buat kunci lisensi”. Salin kuncinya dan tempel di aplikasi saat pertama dibuka. Satu kunci bisa dipakai di beberapa PC; PC lama bisa dilepas kapan saja dari halaman yang sama.' },
   { q: 'Apakah password Google saya aman?', a: 'FLOW CONNECT tidak pernah melihat atau menyimpan password Google. Login selalu dilakukan di halaman resmi Google.' },
@@ -275,9 +275,9 @@ export function FaqSection() {
           <div className="glow-border relative mt-10 overflow-hidden rounded-3xl p-8">
             <div className="absolute -right-10 -top-10 size-48 rounded-full bg-aurora-violet/40 blur-3xl" />
             <h3 className="relative font-display text-2xl font-bold">Siap memulai?</h3>
-            <p className="relative mt-2 text-white/60">Daftar gratis, tautkan akun Google, dan langsung buka Google Flow.</p>
-            <Link to="/app" className={buttonClass('primary', 'lg', 'relative mt-6')}>
-              Mulai Berkarya <ArrowRight className="size-4" />
+            <p className="relative mt-2 text-white/60">Unduh aplikasi PC, buat kunci lisensi gratis, lalu mulai generate di Google Flow.</p>
+            <Link to="/unduh" className={buttonClass('primary', 'lg', 'relative mt-6')}>
+              Unduh aplikasi PC <ArrowRight className="size-4" />
             </Link>
           </div>
         </div>

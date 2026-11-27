@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { ArrowRight, Check, Clapperboard, Copy, Film, Image as ImageIcon, Layers, Play, Search, Sparkles, Wand2, Workflow } from 'lucide-react'
 import clsx from 'clsx'
 import { Navbar } from '../components/landing/Navbar'
 import { Footer } from '../components/landing/Footer'
 import { AuroraBg } from '../components/AuroraBg'
 import { Modal } from '../components/Modal'
-import { Button, buttonClass } from '../components/Button'
+import { buttonClass } from '../components/Button'
 import { useToast } from '../context/ToastContext'
 import { EXAMPLES, EXAMPLE_KINDS, type Example, type ExampleKind } from '../lib/examples'
 
@@ -17,8 +17,6 @@ const KIND_META: Record<ExampleKind, { label: string; icon: typeof Film; color: 
   project: { label: 'Project', icon: Clapperboard, color: 'text-emerald-300' },
 }
 
-const PROMPT_KEY = 'fc:pendingPrompt'
-
 function useCopy() {
   const toast = useToast()
   const [copied, setCopied] = useState<string | null>(null)
@@ -26,7 +24,7 @@ function useCopy() {
     navigator.clipboard.writeText(text).then(
       () => {
         setCopied(id)
-        toast('Prompt disalin — tempel di Google Flow atau Studio', 'success')
+        toast('Prompt disalin — tempel di Studio aplikasi PC atau di Google Flow', 'success')
         setTimeout(() => setCopied((c) => (c === id ? null : c)), 1800)
       },
       () => toast('Gagal menyalin. Pilih teks lalu salin manual.', 'error'),
@@ -94,7 +92,7 @@ function PromptBox({ text, id, label = 'Prompt', model }: { text: string; id: st
   )
 }
 
-function ExampleDetail({ ex, onTry }: { ex: Example; onTry: (prompt: string) => void }) {
+function ExampleDetail({ ex }: { ex: Example }) {
   return (
     <div className="grid gap-6 md:grid-cols-[1.1fr_1fr]">
       <div>
@@ -132,9 +130,6 @@ function ExampleDetail({ ex, onTry }: { ex: Example; onTry: (prompt: string) => 
                     <p className="mb-1.5 font-semibold">{s.title}</p>
                     <PromptBox text={s.prompt} id={`${ex.id}-${i}`} label="Prompt" model={s.model} />
                     {s.note && <p className="mt-1.5 text-xs text-white/45">{s.note}</p>}
-                    <button onClick={() => onTry(s.prompt)} className="mt-1.5 inline-flex items-center gap-1 text-xs text-aurora-cyan hover:underline">
-                      <Wand2 className="size-3" /> Coba langkah ini di Studio
-                    </button>
                   </div>
                 </li>
               ))}
@@ -144,10 +139,7 @@ function ExampleDetail({ ex, onTry }: { ex: Example; onTry: (prompt: string) => 
           <PromptBox text={ex.prompt} id={ex.id} model={ex.model} />
         )}
         <div className="mt-auto flex flex-wrap gap-2 pt-2">
-          <Button onClick={() => onTry(ex.steps ? ex.steps[0].prompt : ex.prompt)}>
-            <Wand2 className="size-4" /> Coba di Studio
-          </Button>
-          <Link to="/unduh" className={buttonClass('glass', 'md')}>Pakai aplikasi PC</Link>
+          <Link to="/unduh" className={buttonClass('primary', 'md')}><Wand2 className="size-4" /> Coba di aplikasi PC</Link>
         </div>
         <p className="text-xs text-white/35">Hasil generate dibuat di Google Flow dengan akun Google-mu sendiri; hasil bisa berbeda setiap kali.</p>
       </div>
@@ -157,7 +149,6 @@ function ExampleDetail({ ex, onTry }: { ex: Example; onTry: (prompt: string) => 
 
 export default function Examples() {
   const [params, setParams] = useSearchParams()
-  const navigate = useNavigate()
   const kind = (params.get('jenis') as ExampleKind | null) ?? 'semua'
   const openId = params.get('id')
   const [q, setQ] = useState('')
@@ -176,10 +167,6 @@ export default function Examples() {
     if (v) next.set(k, v); else next.delete(k)
     setParams(next, { replace: k === 'id' && !v })
   }
-  const tryInStudio = (prompt: string) => {
-    sessionStorage.setItem(PROMPT_KEY, prompt)
-    navigate('/app/studio')
-  }
   const counts = useMemo(() => Object.fromEntries(EXAMPLE_KINDS.map((k) => [k.id, k.id === 'semua' ? EXAMPLES.length : EXAMPLES.filter((e) => e.kind === k.id).length])), [])
 
   return (
@@ -196,7 +183,7 @@ export default function Examples() {
               Contoh <span className="text-aurora">generate</span> siap pakai
             </h1>
             <p className="mt-4 text-lg text-white/60">
-              Video, foto, workflow, dan project lengkap — beserta prompt, model, dan pengaturannya. Salin, lalu coba sendiri di Studio atau aplikasi PC.
+              Video, foto, workflow, dan project lengkap — beserta prompt, model, dan pengaturannya. Salin, lalu coba sendiri di aplikasi PC FLOW CONNECT.
             </p>
           </div>
 
@@ -233,11 +220,11 @@ export default function Examples() {
             <div className="relative flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
               <div>
                 <h2 className="font-display text-2xl font-bold sm:text-3xl">Siap membuat versimu sendiri?</h2>
-                <p className="mt-2 max-w-xl text-white/60">Tautkan akun Google, kirim prompt ke Google Flow dari Studio, atau jalankan antrean prompt dari aplikasi PC.</p>
+                <p className="mt-2 max-w-xl text-white/60">Tempel prompt di Studio aplikasi PC, minta Asisten Prompt menyesuaikannya, atau jalankan antrean prompt sekaligus.</p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Link to="/app/studio" className={buttonClass('primary', 'lg')}>Buka Studio <ArrowRight className="size-4" /></Link>
-                <Link to="/unduh" className={buttonClass('glass', 'lg')}>Unduh aplikasi PC</Link>
+                <Link to="/unduh" className={buttonClass('primary', 'lg')}>Unduh aplikasi PC <ArrowRight className="size-4" /></Link>
+                <Link to="/app/lisensi" className={buttonClass('glass', 'lg')}>Buat kunci lisensi</Link>
               </div>
             </div>
           </div>
@@ -246,7 +233,7 @@ export default function Examples() {
       <Footer />
 
       <Modal open={!!open} onClose={() => setParam('id', null)} title={open?.title} className="max-h-[92vh] max-w-5xl! overflow-y-auto">
-        {open && <ExampleDetail ex={open} onTry={tryInStudio} />}
+        {open && <ExampleDetail ex={open} />}
       </Modal>
     </div>
   )

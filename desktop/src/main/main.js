@@ -13,6 +13,8 @@ const browser = require('./browser');
 const { LicenseManager } = require('./license');
 const { Assistant } = require('./assistant');
 const { Updater } = require('./updater');
+const tools = require('./tools');
+const skillstore = require('./skillstore');
 
 const WEB_URL = 'https://flow-connect-2qu.pages.dev';
 const FLOW_URL = 'https://flow.google.com/?hl=en'; // label UI Flow berbahasa Inggris → otomasi setelan lebih andal
@@ -39,6 +41,7 @@ let updater = null;
 const sessions = new Map();     // accountId → FlowSession
 const statuses = new Map();     // accountId → status terakhir
 const allowedFiles = new Set(); // gambar yang dipilih pengguna (dialog / seret)
+const allowedVideos = new Set(); // video yang dipilih pengguna (Alat → Frame dari video)
 const logins = new Map();       // accountId → { stop } kartu login yang sedang terbuka
 const flowOptions = new Map();  // accountId → pilihan model/rasio yang dibaca dari Flow
 
@@ -251,6 +254,30 @@ function checkImage(p) {
   try { const st = fs.statSync(p); return st.isFile() && st.size <= 30 * 1024 * 1024; } catch { return false; }
 }
 
+
+/** Daftarkan berkas pilihan pengguna untuk Alat (gambar → allowedFiles, video → allowedVideos). */
+function registerToolFiles(paths, kind) {
+  const list = (Array.isArray(paths) ? paths : []).filter((p) => (kind === 'video' ? tools.checkVideo(p) : checkImage(p)));
+  list.forEach((p) => (kind === 'video' ? allowedVideos : allowedFiles).add(p));
+  return list;
+}
+
+/** Permintaan chat: gambar (path pilihan pengguna) → data URL JPEG kecil untuk model yang mendukung gambar. */
+function chatRequest(req) {
+  const out = { messages: req.messages, model: req.model, mode: req.mode };
+  if (req.imagePath) {
+    const p = req.imagePath;
+    if (!allowedFiles.has(p) || !checkImage(p)) throw new Error('INVALID_IMAGE');
+    let img = nativeImage.createFromPath(p);
+    if (img.isEmpty()) throw new Error('INVALID_IMAGE');
+    const { width, height } = img.getSize();
+    const k = Math.min(1, 1024 / Math.max(width, height));
+    if (k < 1) img = img.resize({ width: Math.max(1, Math.round(width * k)), height: Math.max(1, Math.round(height * k)), quality: 'good' });
+    out.image = jpegUrl(img.toJPEG(85));
+  }
+  return out;
+}
+
 function insideDownloads(p) {
   const rel = path.relative(path.resolve(store.data.downloadDir), path.resolve(p));
   return (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) || store.data.downloads.some((d) => d.path === p);
@@ -288,7 +315,89 @@ function registerIpc() {
 
   // Asisten Prompt (chat AI lewat server FLOW CONNECT)
   handle('assistant:catalog', (force) => assistant.catalog(!!force));
-  handle('assistant:chat', (req) => assistant.chat(req || {}));
+  handle('assistant:chat', (req) => assistant.chat(chatRequest(req || {})));
+  handle('skills:catalog', async (force) => (await assistant.skills(!!force)).map((x) => {
+    const sk = skillstore.sanitizeSkill(x, { prefix: 'admin' });
+    return sk && { ...sk, id: 'admin-' + String(x.id || sk.id).replace(/^admin-/, '').slice(0, 50), source: 'admin' };
+  }).filter(Boolean));
+  handle('skills:mine', () => store.data.mySkills);
+  handle('skills:save', (skill) => {
+    const sk = skillstore.sanitizeSkill(skill);
+    if (!sk) throw new Error('INVALID_SKILL');
+    if (!/^my-/.test(sk.id)) sk.id = 'my-' + crypto.randomUUID();
+    store.data.mySkills = skillstore.upsert(store.data.mySkills, sk);
+    store.save();
+    return store.data.mySkills;
+  });
+  handle('skills:remove', (id) => {
+    store.data.mySkills = store.data.mySkills.filter((x) => x.id !== id);
+    store.save();
+    return store.data.mySkills;
+  });
+  handle('skills:export', async (ids) => {
+    const list = Array.isArray(ids) && ids.length ? store.data.mySkills.filter((x) => ids.includes(x.id)) : store.data.mySkills;
+    if (!list.length) throw new Error('NO_SKILLS');
+    const r = await dialog.showSaveDialog(win, {
+      title: 'Ekspor skill', defaultPath: path.join(app.getPath('documents'), list.length === 1 ? `Skill - ${safeName(list[0].name)}.json` : 'Skill FLOW CONNECT.json'),
+      filters: [{ name: 'Skill FLOW CONNECT', extensions: ['json'] }]
+    });
+    if (r.canceled || !r.filePath) return null;
+    fs.writeFileSync(r.filePath, JSON.stringify(skillstore.exportDoc(list), null, 2));
+    return r.filePath;
+  });
+  handle('skills:import', async () => {
+    const r = await dialog.showOpenDialog(win, { title: 'Impor skill', properties: ['openFile'], filters: [{ name: 'Skill FLOW CONNECT', extensions: ['json'] }] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    if (fs.statSync(r.filePaths[0]).size > 2 * 1024 * 1024) throw new Error('INVALID_SKILL_FILE');
+    const list = skillstore.parseImport(fs.readFileSync(r.filePaths[0], 'utf8'));
+    let mine = store.data.mySkills;
+    for (const sk of list.reverse()) mine = skillstore.upsert(mine, /^my-/.test(sk.id) ? sk : { ...sk, id: 'my-' + crypto.randomUUID() });
+    store.data.mySkills = mine;
+    store.save();
+    return { list: store.data.mySkills, added: list.length };
+  });
+
+  // Studio → Alat
+  handle('flow:openTool', async (id, url) => {
+    const s = await connected(id);
+    return s.openTool(url);
+  });
+  handle('tools:pick', async (kind) => {
+    const video = kind === 'video';
+    const r = await dialog.showOpenDialog(win, {
+      title: video ? 'Pilih video' : 'Pilih gambar', defaultPath: store.data.downloadDir,
+      properties: ['openFile', ...(kind === 'images' ? ['multiSelections'] : [])],
+      filters: [video ? { name: 'Video', extensions: Object.keys(tools.VIDEO_EXT).map((e) => e.slice(1)) } : { name: 'Gambar', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }]
+    });
+    if (r.canceled) return [];
+    return registerToolFiles(r.filePaths, video ? 'video' : 'image').slice(0, kind === 'images' ? 50 : 1);
+  });
+  handle('tools:register', (paths) => ({
+    images: registerToolFiles(paths, 'image').slice(0, 50),
+    videos: registerToolFiles(paths, 'video').slice(0, 1)
+  }));
+  handle('tools:read', (p) => {
+    const ext = path.extname(String(p)).toLowerCase();
+    const isVideo = !!tools.VIDEO_EXT[ext];
+    const ok = isVideo ? tools.checkVideo(p) && (allowedVideos.has(p) || insideDownloads(p)) : checkImage(p) && ext !== '.heic' && (allowedFiles.has(p) || insideDownloads(p));
+    if (!ok) throw new Error(ext === '.heic' ? 'UNSUPPORTED_FORMAT' : 'INVALID_FILE');
+    if (!isVideo && fs.statSync(p).size > tools.MAX_IMAGE_READ) throw new Error('FILE_TOO_LARGE');
+    return { name: path.basename(p), mime: isVideo ? tools.VIDEO_EXT[ext] : IMAGE_EXT[ext], data: fs.readFileSync(p) };
+  });
+  handle('tools:save', (o) => {
+    const file = tools.saveOutput(path.join(store.data.downloadDir, 'Alat'), o || {});
+    allowedFiles.add(file);
+    return file;
+  });
+  const accLabel = (id) => (store.data.accounts.find((a) => a.id === id) || {}).label || '';
+  handle('tools:renamePlan', (o) => tools.renamePlan(store.data.downloads, o || {}, accLabel));
+  handle('tools:rename', (o) => {
+    const plan = tools.renamePlan(store.data.downloads, o || {}, accLabel);
+    const r = tools.applyRename(store.data.downloads, plan);
+    store.save();
+    send('settings', publicSettings());
+    return r;
+  });
 
   // Pembaruan aplikasi
   handle('update:check', () => updater.check());
@@ -617,6 +726,8 @@ function buildMenu() {
         { label: 'Beranda', accelerator: 'CmdOrCtrl+1', click: go('home') },
         { label: 'Akun', accelerator: 'CmdOrCtrl+2', click: go('accounts') },
         { label: 'Studio', accelerator: 'CmdOrCtrl+3', click: go('studio') },
+        { label: 'Studio → Alat', click: go('studio:alat') },
+        { label: 'Studio → Skill', click: go('studio:skill') },
         { label: 'Asisten Prompt', accelerator: 'CmdOrCtrl+4', click: go('assistant') },
         { label: 'Galeri', accelerator: 'CmdOrCtrl+5', click: go('gallery') },
         { label: 'Otomatis', accelerator: 'CmdOrCtrl+6', click: go('auto') },

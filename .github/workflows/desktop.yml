@@ -111,7 +111,7 @@ jobs:
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
 
-            **Baru di versi ini (v1.4.2):** **Asisten Prompt** selalu memuat daftar model terbaru dari admin setiap kali dibuka, ada tombol muat ulang di samping pilihan model, dan nama provider (mis. OpenCode, OpenRouter) ikut tampil bila ada lebih dari satu provider. Sebelumnya (v1.4.1): foto tidak lagi masuk kategori Video di Galeri.
+            **Baru di versi ini (v1.5.0):** **Studio kini punya 3 bagian — Buat, Alat, Skill** (Alt+1/2/3). **Alat:** 12 alat Google Flow (Teks Animasi, Ubah Ukuran Video, Editor Gambar, Storyboard, dll.) langsung dari aplikasi, plus alat lokal gratis & offline: frame dari video (langsung jadi foto awal/akhir mode Frame), potong rasio, pecah grid, konversi/kompres, hapus latar polos, dan ganti nama massal. **Skill:** 24 skill siap pakai (foto produk, poster, thumbnail, iklan, sinematik, Reels, cerita multi-adegan, rekayasa balik prompt, dll.) — isi formulir singkat → prompt detail + setelan otomatis → Kirim ke Studio, Generate, atau masuk antrean Otomatis. Simpan skill sendiri, ekspor/impor .json, dan skill dari admin muncul tanpa update.
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

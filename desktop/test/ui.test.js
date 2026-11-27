@@ -82,7 +82,21 @@ const MOCK = `(() => {
     'assistant:chat': (req) => new Promise((res) => setTimeout(() => res({ reply: 'Siap! Ini prompt untuk **' + (req.mode === 'image' ? 'gambar' : 'video') + '** kamu:\\n\\n\\u0060\\u0060\\u0060prompt\\nAerial drone shot slowly gliding over Bali rice terraces at sunrise, soft mist, cinematic\\n\\u0060\\u0060\\u0060\\n\\nMau saya buat versi 9:16?', model: { id: req.model, label: 'GPT 5 Nano' } }), 300)),
     'files:pickImages': () => ['/foto/Kucing Oren.png', '/foto/latar.jpg'],
     'files:register': (p) => p,
-    'files:preview': () => svg(['#888', '#ccc'])
+    'files:preview': () => svg(['#888', '#ccc']),
+    'skills:catalog': () => [{ id: 'admin-1', name: 'Promo Ramadan', description: 'Skill dari admin', category: 'image', icon: 'sparkles', template: 'Poster promo Ramadan untuk {Produk}, nuansa hijau emas', settings: { ratio: '9:16' }, refs: { min: 0, max: 0 }, source: 'admin' }],
+    'skills:mine': () => window.__mine || [],
+    'skills:save': (sk) => { window.__mine = [Object.assign({}, sk, { id: sk.id || 'my-1' })].concat((window.__mine || []).filter((x) => x.id !== sk.id)); return window.__mine; },
+    'queue:add': (o) => { window.__queued = o; return queue; },
+    'flow:openTool': (id, url) => { window.__tool = url; return true; },
+    'tools:pick': () => ['/foto/produk.png'],
+    'tools:read': async (p) => {
+      const c = new OffscreenCanvas(400, 300); const x = c.getContext('2d');
+      x.fillStyle = '#ffffff'; x.fillRect(0, 0, 400, 300); x.fillStyle = '#d00000'; x.fillRect(150, 100, 100, 100);
+      return { name: p.split('/').pop(), mime: 'image/png', data: new Uint8Array(await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer()) };
+    },
+    'tools:save': async (o) => { window.__saved = (window.__saved || []).concat([o]); const b = await createImageBitmap(new Blob([o.data])); window.__savedSize = b.width + 'x' + b.height; return '/unduhan/Alat/' + o.name + '.' + o.format; },
+    'tools:renamePlan': () => settings.downloads.map((d, i) => ({ from: d.path, to: '/x/' + i + ' ' + d.name, name: i + ' ' + d.name })),
+    'tools:rename': () => ({ renamed: 6, skipped: 0 })
   };
   window.__calls = [];
   window.__settings = settings;
@@ -377,6 +391,92 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   assert.ok(await ev('!document.querySelector("#gate") && document.querySelectorAll("[data-page]").length >= 7'), 'masuk setelah aktivasi');
   assert.ok(await ev('!!document.querySelector("#page .hero")'), 'beranda tampil');
 
+  // Studio → Alat & Skill
+  await ev(`document.querySelector('[data-page="studio"]').click()`);
+  await sleep(250);
+  assert.deepStrictEqual(await ev('[...document.querySelectorAll(".subtab")].map((b) => b.textContent)'), ['Buat', 'Alat', 'Skill']);
+  await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: '2', altKey: true, bubbles: true }))`);
+  await sleep(250);
+  assert.strictEqual(await ev('document.querySelector(".subtab.on").textContent'), 'Alat', 'Alt+2 → Alat');
+  assert.strictEqual(await ev('document.querySelectorAll(".tool-card").length'), 18, '6 alat lokal + 12 alat Flow');
+  await ev(`document.querySelector('[data-act=flowTool]').click()`);
+  await sleep(200);
+  assert.ok(await ev('/flow[.]google[.]com[/]shared[/]tool[/]/.test(window.__tool)'), 'alat Flow dibuka di Flow');
+  await ev(`document.querySelector('[data-act=toolOpen][data-id=crop]').click()`);
+  await sleep(150);
+  await ev(`document.querySelector('[data-act=toolPick]').click()`);
+  await sleep(500);
+  assert.ok(await ev('!!document.querySelector(".tool-src img.tool-media")'), 'pratinjau gambar sumber');
+  await ev(`document.querySelector('[data-act=toolOpt][data-k=ratio][data-v="1:1"]').click()`);
+  await ev(`document.querySelector('[data-act=toolRun]').click()`);
+  await sleep(700);
+  assert.strictEqual(await ev('window.__savedSize'), '300x300', 'potong 1:1');
+  assert.strictEqual(await ev('document.querySelectorAll(".tres").length'), 1);
+  if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'studio-alat.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  await ev(`document.querySelector('[data-act=toolOpen][data-id=grid]').click()`);
+  await sleep(150);
+  await ev(`document.querySelector('[data-act=toolPick]').click()`);
+  await sleep(500);
+  await ev(`document.querySelector('[data-act=toolRun]').click()`);
+  await sleep(900);
+  assert.strictEqual(await ev('document.querySelectorAll(".tres").length'), 4, 'grid 2×2 → 4 bagian');
+  assert.strictEqual(await ev('window.__savedSize'), '200x150');
+  await ev(`document.querySelector('[data-act=toolOpen][data-id=bg]').click()`);
+  await sleep(150);
+  await ev(`document.querySelector('[data-act=toolPick]').click()`);
+  await sleep(500);
+  await ev(`document.querySelector('[data-act=toolRun]').click()`);
+  await sleep(700);
+  assert.ok(await ev('!!document.querySelector(".tres-img.checker")'), 'hasil transparan');
+  assert.strictEqual(await ev('window.__saved[window.__saved.length - 1].format'), 'png');
+  await ev(`document.querySelector('[data-act=toolOpen][data-id=rename]').click()`);
+  await sleep(150);
+  await ev(`document.querySelector('[data-act=toolRenamePlan]').click()`);
+  await sleep(300);
+  assert.strictEqual(await ev('document.querySelectorAll(".rename-plan li").length'), 6, 'pratinjau ganti nama');
+  // hasil alat → Studio
+  await ev(`document.querySelector('[data-act=toolOpen][data-id=crop]').click()`);
+  await sleep(150);
+  await ev(`document.querySelector('[data-act=toolPick]').click()`);
+  await sleep(500);
+  await ev(`document.querySelector('[data-act=toolRun]').click()`);
+  await sleep(700);
+  await ev(`document.querySelector('.tres [data-act=toolUse]').click()`);
+  await sleep(400);
+  assert.strictEqual(await ev('document.querySelector(".subtab.on").textContent'), 'Buat');
+  assert.ok(await ev('[...document.querySelectorAll(".ref-row .thumb")].some((t) => (t.title || "").includes("Alat"))'), 'hasil alat jadi gambar referensi');
+  // Skill
+  await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: '3', altKey: true, bubbles: true }))`);
+  await sleep(400);
+  assert.strictEqual(await ev('document.querySelectorAll(".sk-item").length'), 25, '24 bawaan + 1 dari admin');
+  assert.ok(await ev('[...document.querySelectorAll(".sk-item")].some((b) => b.textContent.includes("Promo Ramadan"))'), 'skill admin tampil');
+  await ev(`(() => { const t = document.querySelector('[data-input=skField]'); t.value = 'botol kopi susu'; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  assert.ok(await ev('document.querySelector("#sk-prompt").value.startsWith("Professional commercial product photograph of botol kopi susu")'), 'prompt tersusun dari isian');
+  if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'studio-skill.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  await ev(`document.querySelector('[data-act=skQueue]').click()`);
+  await sleep(300);
+  assert.ok(await ev('window.__queued && window.__queued.options.kind === "image" && window.__queued.options.ratio === "1:1" && window.__queued.prompts[0].includes("botol kopi susu")'), 'skill → antrean dengan setelan skill');
+  await ev(`document.querySelector('[data-act=skSel][data-id=b-fix]').click()`);
+  await sleep(150);
+  await ev(`(() => { const t = document.querySelector('[data-input=skField]'); t.value = 'kucing lucu main bola'; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await ev(`document.querySelector('[data-act=skRun]').click()`);
+  await sleep(600);
+  assert.strictEqual(await ev('document.querySelectorAll(".sk-res-item").length'), 1, 'hasil AI: 1 prompt');
+  await ev(`document.querySelector('[data-act=skSel][data-id=b-product]').click()`);
+  await sleep(150);
+  await ev(`document.querySelector('[data-act=skToStudio]').click()`);
+  await sleep(300);
+  assert.ok(await ev('document.querySelector("#prompt").value.includes("botol kopi susu")'), 'skill → Studio');
+  assert.strictEqual(await ev('window.__settings.studio.kind'), 'image');
+  // simpan prompt Studio sebagai skill
+  await ev(`document.querySelector('[data-act=skSaveStudio]').click()`);
+  await sleep(200);
+  await ev(`(() => { const d = document.querySelector('#dialog'); d.querySelector('[name=name]').value = 'Kopi saya'; d.querySelector('[data-primary]').click(); })()`);
+  await sleep(400);
+  assert.strictEqual(await ev('window.__mine && window.__mine[0].name'), 'Kopi saya');
+  await ev(`(() => { const t = document.querySelector('#prompt'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await ev(`document.querySelector('[data-act=studioTab][data-tab=buat]').click()`);
+  await sleep(150);
   // pembaruan ditemukan otomatis di latar (tanpa klik "Periksa pembaruan") → bilah + toast + lencana langsung muncul
   assert.ok(await ev('!document.querySelector(".update-bar")'), 'belum ada pembaruan');
   await ev(`window.__ev.update({ state: 'checking', current: '1.2.0', version: null, percent: 0, portable: false })`);

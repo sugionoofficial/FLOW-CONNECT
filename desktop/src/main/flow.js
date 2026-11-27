@@ -250,7 +250,25 @@ class FlowSession extends EventEmitter {
   }
 
   _isFlow(t) {
-    try { return t.type === 'page' && new URL(t.url).host === this.flowHost; } catch { return false; }
+    try {
+      const u = new URL(t.url);
+      // tab alat Flow (flow.google.com/shared/tool/…) bukan tab kerja Studio
+      return t.type === 'page' && u.host === this.flowHost && !u.pathname.startsWith('/shared/');
+    } catch { return false; }
+  }
+
+  /**
+   * Buka alat Google Flow (flow.google.com/shared/tool/…) di tab baru browser akun ini — jendela DITAMPILKAN
+   * karena alatnya interaktif. Tab kerja Studio tidak diganggu.
+   */
+  async openTool(url) {
+    const u = new URL(String(url || ''));
+    if (u.protocol !== 'https:' || u.host !== this.flowHost || !/^\/shared\/tool\/[0-9a-f-]{36}$/.test(u.pathname)) throw new Error('INVALID_URL');
+    await this.bringToFront();
+    const b = await this._browser();
+    const { targetId } = await b.send('Target.createTarget', { url: u.toString() });
+    await b.send('Target.activateTarget', { targetId }).catch(() => {});
+    return { targetId };
   }
 
   /** Cari (atau buat) tab Google Flow lalu sambungkan CDP ke tab itu. */

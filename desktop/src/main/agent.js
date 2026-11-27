@@ -4,7 +4,7 @@
 // ambil file media, mencari kolom prompt / input file / tombol Generate.
 // Tidak pernah membuat token reCAPTCHA — Generate selalu lewat tombol UI Flow sendiri.
 
-const AGENT_VERSION = 8;
+const AGENT_VERSION = 9;
 
 /* eslint-disable */
 function fcAgent(V, cfg) {
@@ -129,7 +129,9 @@ function fcAgent(V, cfg) {
   // Daftar isi project (Zzl0ze). Tiga bentuk yang dibaca & digabung (diukur komunitas gflow-cli, 2026):
   //  - baris workflow   [workflow, _, _, [judul, [dtk], video?, _, media id utama, …], project, …]
   //  - record GAMBAR    [media id, _, workflow, _, _, _, [[detail… url di 13], _, [lebar, tinggi]]]   (7 slot, tanpa status)
-  //  - record VIDEO     [workflow, project, media id, _, _, [DETAIL… status di 8, poster di 10], _, [[… url video di 8]]]
+  //  - record MEDIA     [workflow, project, media id, _, _, [DETAIL… status di 8, poster di 10], _, [info media, [lebar, tinggi, …, mime di 6]]]
+  //                      dipakai untuk VIDEO maupun GAMBAR (gflow-cli, diukur 2026-11-24): gambar membawa mime image/* di [7][1][6],
+  //                      video hasil generate membawa info media (list) di [7][0], video unggahan [7][0] = null & [7][1] = [l, t, [durasi]].
   // Satu generate x4 bisa berbagi satu workflow → setiap gambar diambil dari record-nya sendiri.
   async function listMedia(pid) {
     if (!/^[A-Za-z0-9-]{1,128}$/.test(pid || '')) throw new Error('INVALID_PROJECT_ID');
@@ -172,17 +174,32 @@ function fcAgent(V, cfg) {
         return;
       }
       if (n.length >= 6 && isUuid(n[0]) && isUuid(n[1]) && isUuid(n[2]) && Array.isArray(n[5])) {
-        var st = at(n, 5, 8, 0);
-        recs.push({ mediaId: n[2], workflowId: n[0], isVideo: true, done: typeof st === 'number' ? st === 3 : null, image: mediaUrl(at(n, 5, 10)), video: mediaUrl(at(n, 7, 0, 8)) || urlIn(n[7], 'video') });
+        var st = at(n, 5, 8, 0), mime = at(n, 7, 1, 6), info = at(n, 7, 0);
+        if (typeof mime === 'string' && /^image\//i.test(mime)) {
+          // GAMBAR dalam bentuk record media (mis. foto Frame/Bahan yang diunggah) — bukan video
+          recs.push({
+            mediaId: n[2], workflowId: n[0], isVideo: false, kind: 'image', noInfo: info == null,
+            done: st !== 1, image: mediaUrl(at(n, 5, 10)) || urlIn(n, 'image', n[2]) || urlIn(n, 'image'), video: null
+          });
+          return;
+        }
+        var vUrl = mediaUrl(at(n, 7, 0, 8)) || urlIn(n[7], 'video');
+        var known = Array.isArray(info) || (info === null && Array.isArray(at(n, 7, 1, 2))) || typeof st === 'number' || !!vUrl;
+        recs.push({ mediaId: n[2], workflowId: n[0], isVideo: true, kind: known ? 'video' : null, done: typeof st === 'number' ? st === 3 : null, image: mediaUrl(at(n, 5, 10)), video: vUrl });
         return;
       }
       for (var i = 0; i < n.length; i++) visit(n[i]);
     })(r.payload);
-    var recWf = {};
+    var recWf = {}, gen7 = {};
+    for (var g = 0; g < recs.length; g++) if (!recs[g].kind && !recs[g].isVideo) gen7[recs[g].mediaId] = 1;
     for (var q = 0; q < recs.length; q++) {
       var rc = recs[q], cur = byId[rc.mediaId];
       recWf[rc.workflowId] = 1;
+      // gambar tanpa info generate & tanpa record hasil generate (7 slot) = gambar yang diunggah (referensi)
+      var up = rc.kind === 'image' && rc.noInfo && !gen7[rc.mediaId];
       if (cur) {
+        if (rc.kind) cur.isVideo = rc.isVideo; // jenis dari record media lebih pasti daripada baris workflow
+        if (up) cur.upload = true;
         if (!cur.image) cur.image = rc.image;
         if (!cur.video) cur.video = rc.video;
         if (rc.done !== null) cur.done = rc.done;
@@ -190,7 +207,8 @@ function fcAgent(V, cfg) {
         continue;
       }
       var m = wfMeta[rc.workflowId] || {};
-      add({ mediaId: rc.mediaId, workflowId: rc.workflowId, title: m.title || '', createdAt: m.createdAt || null, isVideo: rc.isVideo, done: rc.done !== null ? rc.done : true, image: rc.image, video: rc.video, fromRecord: true });
+      var it2 = add({ mediaId: rc.mediaId, workflowId: rc.workflowId, title: m.title || '', createdAt: m.createdAt || null, isVideo: rc.isVideo, done: rc.done !== null ? rc.done : true, image: rc.image, video: rc.video, fromRecord: true });
+      if (up) it2.upload = true;
     }
     // baris workflow yang "media id"-nya tidak punya record, padahal workflow-nya punya → bukan media sungguhan
     items = items.filter(function (it) { return it.fromRecord || !it.workflowId || !recWf[it.workflowId] || recs.some(function (x) { return x.mediaId === it.mediaId; }); });

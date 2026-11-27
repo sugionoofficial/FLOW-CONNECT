@@ -42,4 +42,25 @@ function checkFrames(options, images) {
   }
 }
 
-module.exports = { IMAGE_MODELS, VIDEO_MODELS, DEFAULT_MODEL, VIDEO_SUBS, DEFAULT_SUB, modelFor, durationFor, checkFrames };
+/**
+ * Perkiraan biaya kredit Google Flow per 1 hasil (resolusi 720p, harga Flow Nov 2026).
+ * Gambar Nano Banana = 0 kredit. Video:
+ *   Omni 1.1 Flash 10 dtk = 15 · Omni 1.2 Flash 3/dtk (s.d. 10 dtk) → 10 dtk = 30
+ *   Veo 3.1 Lite 10 · Veo 3.1 Fast 20 · Veo 3.1 Quality 100 (8 dtk)
+ * Model tak dikenal → null (pengguna mengisi biaya sendiri di Bulk Generate).
+ */
+const OMNI11 = { 4: 7, 6: 10, 8: 12, 10: 15 };
+function creditCost(kind, model, duration) {
+  if (kind !== 'video') return 0;
+  const n = norm(model);
+  const d = Number(duration) || durationFor(kind, model);
+  if (n.includes('omni11')) return OMNI11[d] || 15;
+  if (n.includes('omni12')) return d <= 10 ? 3 * d : 30 + 6 * (d - 10);
+  if (n.includes('veo31lite') || n === 'veolite') return 10;
+  if (n.includes('veo31fast')) return 20;
+  if (n.includes('veo31quality')) return 100;
+  return null;
+}
+const FREE_DAILY_CREDITS = 50; // paket gratis Google Flow: 50 kredit / hari / akun
+
+module.exports = { IMAGE_MODELS, VIDEO_MODELS, DEFAULT_MODEL, VIDEO_SUBS, DEFAULT_SUB, FREE_DAILY_CREDITS, modelFor, durationFor, checkFrames, creditCost };

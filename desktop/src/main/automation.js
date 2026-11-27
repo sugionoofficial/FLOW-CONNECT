@@ -43,7 +43,7 @@ class AutomationQueue extends EventEmitter {
   add({ prompts, images = [], tags, accountId, options }) {
     const list = (Array.isArray(prompts) ? prompts : [prompts]).map((p) => String(p || '').trim()).filter(Boolean);
     if (!list.length) throw new Error('INVALID_PROMPT');
-    if (list.length > 200 || this.jobs.length + list.length > 500) throw new Error('QUEUE_FULL');
+    if (list.length > 300 || this.jobs.length + list.length > 600) throw new Error('QUEUE_FULL');
     if (!this.store.data.accounts.some((a) => a.id === accountId)) throw new Error('UNKNOWN_ACCOUNT');
     checkFrames(options ? sanitizeStudio(options) : null, images);
     for (const prompt of list) {

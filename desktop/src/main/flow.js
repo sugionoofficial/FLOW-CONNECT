@@ -547,6 +547,30 @@ class FlowSession extends EventEmitter {
     return null;
   }
 
+  /**
+   * Baca saldo kredit Google Flow akun ini: buka panel "Account details" → baca "N Google Flow credits" → tutup.
+   * HANYA membaca — panel itu juga memuat tombol "Sign out", jadi tidak ada klik lain selain tombol pembukanya.
+   * @returns {Promise<number>}
+   */
+  readCredits({ timeoutMs = 8000 } = {}) {
+    return this._exclusive(async () => {
+      await this.beginWork();
+      try {
+        await this._closeOverlays();
+        let v = await this.call('creditsBalance').catch(() => null); // saldo kadang sudah tampil di halaman
+        if (!v) {
+          const b = await this._waitFor(() => this.call('accountDetailsButton'), 5000, 400);
+          if (!b) throw new Error('CREDITS_NOT_FOUND');
+          await this._click(b);
+          v = await this._waitFor(() => this.call('creditsBalance'), timeoutMs, 300);
+          await this._closeOverlays();
+        }
+        if (!v || !Number.isFinite(v.credits)) throw new Error('CREDITS_NOT_FOUND');
+        return v.credits;
+      } finally { await this.endWork(); }
+    });
+  }
+
   /** Klik tombol "New project" Flow (dan tombol "Create with Google Flow" di halaman sambutan bila perlu). */
   newProject({ timeoutMs = 25000 } = {}) {
     return this._exclusive(async () => {

@@ -63,7 +63,27 @@ const MOCK = `(() => {
     'settings:set': (p) => Object.assign(settings, p),
     'flow:scan': () => ({ models: ['Veo 3.1 - Fast', 'Veo 3.1 - Quality', 'Veo 4 - Preview'], options: [], current: {} }),
     'flow:newProject': (id) => Object.assign(statuses[id], { projectId: 'p2', projectTitle: 'Project baru' }),
-    'flow:run': () => ({ click: { label: 'Create' }, settings: { applied: { kind: 1, model: 1 }, missing: ['duration'] }, items: items.slice(0, 2), files: [] }),
+    'flow:run': () => new Promise((res) => setTimeout(() => res({ click: { label: 'Create' }, settings: { applied: { kind: 1, model: 1 }, missing: ['duration'] }, items: items.slice(0, 2), files: [] }), window.__runDelay || 0)),
+    'flow:credits': (id) => { const a = accounts.find((x) => x.id === id); a.credits = { value: 50, at: Date.now() }; return a.credits; },
+    'bulk:plan': (inp) => {
+      window.__bulkIn = inp;
+      const video = inp.options.kind === 'video';
+      const cost = inp.cost || (video ? (/1[.]1/.test(inp.options.model) ? 15 : 30) : 0);
+      const accs = inp.accounts.map((a) => ({ id: a.id, credits: a.credits, capacity: video ? Math.floor((a.credits || 0) / cost) : null, planned: 0 }));
+      const cap = video ? accs.reduce((s, a) => s + a.capacity, 0) : 300;
+      const target = Math.min(inp.count || (video ? cap : inp.prompts.length * (inp.options.count || 1)), 300, cap);
+      let left = target;
+      accs.forEach((a) => { a.planned = video ? Math.min(a.capacity, left) : Math.ceil(target / accs.length); left -= a.planned; });
+      return { kind: inp.options.kind, perJob: video ? 1 : inp.options.count, cost, target, jobs: target, capacity: cap, credits: target * cost, accounts: accs, warnings: accs.some((a) => a.credits === null) ? ['UNKNOWN_CREDITS'] : [] };
+    },
+    'bulk:start': (inp) => {
+      window.__bulkStart = inp;
+      const t = Date.now() - 65000;
+      return { running: true, activity: '[Kerja · #2/6] Flow sedang membuat…', batch: { id: 'b1', startedAt: t, finishedAt: null, kind: 'video', model: 'Omni 1.1 Flash', duration: 10, cost: 15, perJob: 1, target: 6, options: { ratio: '16:9' }, prompts: ['Drone sawah', 'Kota malam'], parallel: false,
+        accounts: [{ id: 'a1', label: 'Kerja', credits: 35, startCredits: 50, planned: 3, done: 1, failed: 0, used: 15, status: 'running' }, { id: 'a2', label: 'Pribadi', credits: 50, startCredits: 50, planned: 3, done: 0, failed: 0, used: 0, status: 'waiting' }],
+        jobs: [1, 2, 3, 4, 5, 6].map((n) => ({ id: 'j' + n, n, p: (n - 1) % 2, count: 1, status: n === 1 ? 'done' : n === 2 ? 'running' : 'pending', accountId: n <= 2 ? 'a1' : null, startedAt: t + (n === 2 ? 50000 : 0), finishedAt: n === 1 ? t + 48000 : null, results: n === 1 ? ['C:/x/001 Drone sawah.mp4'] : [], error: null })) } };
+    },
+    'bulk:stop': () => null,
     'accounts:login': (id) => new Promise((res) => {
       const ev = window.__ev.login;
       ev({ id, state: 'card' });
@@ -326,9 +346,19 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   assert.ok(await ev('[...document.querySelectorAll("[data-change=studioModel] option")].some((o) => o.value === "Veo 4 - Preview")'), 'model hasil scan tampil');
   // generate (Mode Otomatis) memakai flow:run dengan options
   await ev(`(() => { const t = document.querySelector('#prompt'); t.value = 'Drone di atas sawah'; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await ev('window.__runDelay = 1600');
   await ev(`document.querySelector('[data-act=sendGenerate]').click()`);
-  await sleep(400);
+  await sleep(300);
+  assert.ok(await ev('!!document.querySelector(".stage-clock .runtime")'), 'timer runtime saat Flow membuat');
+  assert.ok(await ev('!!document.querySelector(".runtime-pill .runtime")'), 'pil runtime di kepala Studio');
+  const t0 = await ev('document.querySelector(".stage-clock .runtime").textContent');
+  await sleep(1100);
+  assert.notStrictEqual(await ev('document.querySelector(".stage-clock .runtime") && document.querySelector(".stage-clock .runtime").textContent'), t0, 'timer berdetak');
+  await sleep(500);
+  await ev('window.__runDelay = 0');
   assert.ok(await ev('window.__calls.includes("flow:run")'), 'flow:run dipanggil');
+  assert.ok(await ev('/hasil siap dalam 00:0[12]/.test(document.querySelector(".logcard").textContent)'), 'durasi Generate dicatat');
+  assert.ok(await ev('!document.querySelector(".runtime-pill")'), 'pil runtime hilang setelah selesai');
   assert.ok(await ev('document.querySelector(".logcard").textContent.includes("durasi")'), 'setelan yang tidak ditemukan dilaporkan');
   // project baru
   await ev(`document.querySelector('[data-act=newProject]').click()`);
@@ -394,11 +424,12 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   // Studio → Alat & Skill
   await ev(`document.querySelector('[data-page="studio"]').click()`);
   await sleep(250);
-  assert.deepStrictEqual(await ev('[...document.querySelectorAll(".subtab")].map((b) => b.textContent)'), ['Buat', 'Alat', 'Skill']);
+  assert.deepStrictEqual(await ev('[...document.querySelectorAll(".subtab")].map((b) => b.textContent)'), ['Buat', 'Alat', 'Skill', 'Bulk']);
   await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: '2', altKey: true, bubbles: true }))`);
   await sleep(250);
   assert.strictEqual(await ev('document.querySelector(".subtab.on").textContent'), 'Alat', 'Alt+2 → Alat');
-  assert.strictEqual(await ev('document.querySelectorAll(".tool-card").length'), 18, '6 alat lokal + 12 alat Flow');
+  assert.strictEqual(await ev('document.querySelectorAll(".tool-card").length'), 19, 'Bulk + 6 alat lokal + 12 alat Flow');
+  assert.ok(await ev('!!document.querySelector(".tool-card.bulk-card[data-tab=bulk]")'), 'kartu Bulk Generate di Alat');
   await ev(`document.querySelector('[data-act=flowTool]').click()`);
   await sleep(200);
   assert.ok(await ev('/flow[.]google[.]com[/]shared[/]tool[/]/.test(window.__tool)'), 'alat Flow dibuka di Flow');
@@ -475,6 +506,55 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   await sleep(400);
   assert.strictEqual(await ev('window.__mine && window.__mine[0].name'), 'Kopi saya');
   await ev(`(() => { const t = document.querySelector('#prompt'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  // Studio → Bulk: video mengikuti kredit tiap akun (2 akun × 50 kredit, Omni 1.1 Flash 15 kredit → 2 × 3 = 6 video)
+  await ev(`(() => { const t = document.querySelector('#prompt'); if (t) { t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true })); } })()`);
+  await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: '4', altKey: true, bubbles: true }))`);
+  await sleep(300);
+  assert.strictEqual(await ev('document.querySelector(".subtab.on").textContent'), 'Bulk', 'Alt+4 → Bulk');
+  await ev(`document.querySelector('.bulk-form [data-act=studioOpt][data-k=kind][data-v=video]').click()`);
+  await sleep(200);
+  await ev(`(() => { const s = document.querySelector('.bulk-form [data-change=studioModel]'); s.value = 'Omni 1.1 Flash'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await sleep(300);
+  assert.ok(await ev('document.querySelector("[data-change=bulkAcc][data-id=a1]").checked && !document.querySelector("[data-change=bulkAcc][data-id=a2]").checked'), 'akun yang sudah masuk terpilih otomatis');
+  await ev(`document.querySelector('[data-change=bulkAcc][data-id=a2]').click()`);
+  await sleep(300);
+  await ev(`document.querySelector('[data-act=bulkReadCredits][data-id=a1]').click()`);
+  await sleep(400);
+  assert.ok(await ev('window.__calls.includes("flow:credits")'), 'kredit dibaca dari Flow');
+  assert.ok(await ev('document.querySelector("#bulk-plan").textContent.includes("belum diketahui")'), 'akun tanpa data kredit diperingatkan');
+  await ev(`(() => { const i = document.querySelector('[data-input=bulkCredit][data-id=a2]'); i.value = '50'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await ev(`(() => { const t = document.querySelector('#bulk-prompts'); t.value = 'Drone sawah\\n\\nKota malam\\n'; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await sleep(400);
+  assert.strictEqual(await ev('document.querySelector("#bulk-lines").textContent'), '2 prompt');
+  assert.ok(await ev('document.querySelector("#bulk-plan").textContent.includes("2 akun × 3 = 6 video")'), 'rencana: ' + await ev('document.querySelector("#bulk-plan").textContent'));
+  assert.ok(await ev('document.querySelector("#bulk-plan").textContent.includes("90 kredit")'));
+  assert.ok(await ev('document.querySelector("#bulk-start").textContent.includes("6 video")'));
+  assert.deepStrictEqual(await ev('window.__bulkIn.accounts'), [{ id: 'a1', credits: 50 }, { id: 'a2', credits: 50 }]);
+  if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'studio-bulk-form.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  await ev(`document.querySelector('#bulk-start').click()`);
+  await sleep(300);
+  assert.ok(await ev('document.querySelector("#dialog").open && document.querySelector("#dialog").textContent.includes("6 video")'), 'konfirmasi mulai');
+  await ev(`document.querySelector('#dialog [data-primary]').click()`);
+  await sleep(400);
+  assert.deepStrictEqual(await ev('window.__bulkStart.prompts'), ['Drone sawah', 'Kota malam']);
+  assert.ok(await ev('!!document.querySelector(".bulk-run .bulk-clock .runtime.big")'), 'timer runtime batch');
+  assert.ok(/^01:0\d$/.test(await ev('document.querySelector(".bulk-clock .runtime").textContent')), 'runtime sejak batch dimulai');
+  assert.ok(await ev('document.querySelector(".runtime-pill.on").textContent.includes("Bulk 1/6")'), 'pil Bulk di kepala Studio');
+  assert.ok(await ev('document.querySelector(".bulk-progress i").style.width === "17%"'), 'progres tanpa inline style HTML');
+  assert.strictEqual(await ev('document.querySelectorAll(".bulk-jobs tbody tr").length'), 6);
+  const r0 = await ev('document.querySelector(".bulk-clock .runtime").textContent');
+  await sleep(1100);
+  assert.notStrictEqual(await ev('document.querySelector(".bulk-clock .runtime").textContent'), r0, 'timer batch berdetak');
+  if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'studio-bulk-run.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  // selesai → total durasi tetap + toast
+  await ev(`(() => { const t = Date.now() - 3723000; window.__ev.bulk({ running: false, activity: 'Bulk selesai', batch: { id: 'b1', startedAt: t, finishedAt: t + 3723000, stopped: false, kind: 'video', model: 'Omni 1.1 Flash', duration: 10, cost: 15, perJob: 1, target: 2, options: { ratio: '16:9' }, prompts: ['a'], parallel: false, accounts: [{ id: 'a1', label: 'Kerja', credits: 5, startCredits: 50, planned: 3, done: 2, failed: 0, used: 30, status: 'exhausted', note: 'Kredit Flow habis' }], jobs: [1, 2, 3].map((n) => ({ id: 'j' + n, n, p: 0, count: 1, status: n < 3 ? 'done' : 'skipped', accountId: 'a1', startedAt: t, finishedAt: t + 60000, results: [], error: n < 3 ? null : 'NO_CREDITS_LEFT' })) } }); })()`);
+  await sleep(300);
+  assert.strictEqual(await ev('document.querySelector(".bulk-clock .runtime").textContent'), '1:02:03', 'total durasi');
+  assert.ok(await ev('[...document.querySelectorAll(".toast")].some((t) => t.textContent.includes("Bulk selesai · durasi 1 j 02 m"))'), 'toast durasi');
+  assert.ok(await ev('!!document.querySelector("[data-act=bulkResume]") && document.querySelector(".bulk-jobs").textContent.includes("kredit semua akun sudah habis")'), 'tugas terlewat bisa dilanjutkan');
+  await ev(`document.querySelector('[data-act=bulkView][data-v=form]').click()`);
+  await sleep(200);
+  assert.ok(await ev('!!document.querySelector(".bulk-form")'), 'batch baru');
   await ev(`document.querySelector('[data-act=studioTab][data-tab=buat]').click()`);
   await sleep(150);
   // pembaruan ditemukan otomatis di latar (tanpa klik "Periksa pembaruan") → bilah + toast + lencana langsung muncul

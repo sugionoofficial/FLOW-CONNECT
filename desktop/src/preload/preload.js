@@ -11,13 +11,14 @@ const CHANNELS = [
   'flow:status', 'flow:show', 'flow:navigate', 'flow:listMedia', 'flow:thumb', 'flow:download', 'flow:send', 'flow:afterSend', 'flow:run',
   'flow:newProject', 'flow:scan',
   'queue:add', 'queue:remove', 'queue:retry', 'queue:clear', 'queue:start', 'queue:stop',
+  'flow:credits', 'bulk:state', 'bulk:plan', 'bulk:start', 'bulk:stop', 'bulk:resume', 'bulk:clear',
   'files:pickImages', 'files:register', 'files:preview', 'files:pickFolder', 'files:pickBrowser', 'files:open', 'files:show',
   'files:openDownloads', 'files:forget', 'files:thumb', 'shell:external',
   'assistant:catalog', 'assistant:chat',
   'skills:catalog', 'skills:mine', 'skills:save', 'skills:remove', 'skills:export', 'skills:import',
   'flow:openTool', 'tools:pick', 'tools:register', 'tools:read', 'tools:save', 'tools:renamePlan', 'tools:rename'
 ];
-const EVENTS = ['statuses', 'settings', 'queue', 'activity', 'navigate', 'theme', 'accent', 'license', 'update', 'update-show', 'login'];
+const EVENTS = ['statuses', 'settings', 'queue', 'bulk', 'bulk-activity', 'activity', 'navigate', 'theme', 'accent', 'license', 'update', 'update-show', 'login'];
 
 const api = {};
 for (const c of CHANNELS) api[c] = invoke(c);

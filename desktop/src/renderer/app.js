@@ -92,6 +92,14 @@ const ERR = {
   FLOW_REFUSED: 'Google Flow menolak permintaan ini.',
   INSUFFICIENT_CREDITS: 'Kredit Google Flow tidak cukup untuk setelan ini. Kurangi jumlah / pilih model lebih murah, atau isi ulang kredit.',
   NO_RESULTS: 'Flow tidak mengembalikan hasil.',
+  BULK_RUNNING: 'Bulk Generate sedang berjalan. Tunggu selesai atau hentikan dulu.',
+  NO_ACCOUNTS: 'Pilih minimal satu akun Google untuk Bulk Generate.',
+  UNKNOWN_COST: 'Biaya kredit model ini belum diketahui — isi "Kredit per video" secara manual.',
+  NOT_ENOUGH_CREDITS: 'Kredit akun yang dipilih tidak cukup untuk 1 video pun dengan setelan ini.',
+  CREDITS_NOT_FOUND: 'Saldo kredit tidak terbaca dari Google Flow. Isi jumlah kredit secara manual.',
+  NO_CREDITS_LEFT: 'Terlewat — kredit semua akun sudah habis.',
+  NO_ACCOUNTS_LEFT: 'Terlewat — tidak ada akun yang masih bisa dipakai.',
+  NO_BATCH: 'Belum ada batch Bulk.',
   DAILY_LIMIT: 'Batas chat Asisten Prompt hari ini untuk lisensi Anda sudah tercapai. Coba lagi besok.',
   NO_API_KEY: 'Asisten Prompt belum siap: admin belum memasang kunci API layanan AI.',
   NO_MODEL: 'Belum ada model chat yang diaktifkan admin.',
@@ -113,7 +121,7 @@ const ERR = {
   TOO_MANY_SKILLS: 'Skill saya sudah penuh (maks. 200).',
   NO_SKILLS: 'Belum ada skill untuk diekspor.'
 };
-const DETAIL = new Set(['FLOW_ERROR', 'GENERATE_FAILED', 'FLOW_REFUSED', 'UPLOAD_FAILED', 'UPLOAD_REJECTED', 'REFERENCE_NOT_ATTACHED', 'FRAME_NOT_ATTACHED', 'GENERATE_TIMEOUT', 'GENERATE_NOT_STARTED', 'INSUFFICIENT_CREDITS', 'FLOW_CONTENT_POLICY']);
+const DETAIL = new Set(['FRAMES_REQUIRED', 'FLOW_ERROR', 'GENERATE_FAILED', 'FLOW_REFUSED', 'UPLOAD_FAILED', 'UPLOAD_REJECTED', 'REFERENCE_NOT_ATTACHED', 'FRAME_NOT_ATTACHED', 'GENERATE_TIMEOUT', 'GENERATE_NOT_STARTED', 'INSUFFICIENT_CREDITS', 'FLOW_CONTENT_POLICY']);
 const msg = (e) => {
   const k = (e && e.message) || String(e);
   if (ERR[k] && DETAIL.has(k) && e.detail) return `${ERR[k]} (${e.detail})`;
@@ -132,6 +140,7 @@ const S = {
   settings: null,
   statuses: {},
   queue: { running: false, activity: '', jobs: [] },
+  bulk: { st: { running: false, activity: '', batch: null }, form: null, plan: null, view: '', showAll: false },
   studio: { images: [], previews: {}, prompt: '', busy: '', waitResults: true, log: [], sel: null },
   flowOptions: {},
   login: null,     // { id, state, error } kartu login yang sedang berjalan
@@ -367,15 +376,292 @@ function studioHead() {
         ${a && s.signedIn ? `<span class="pill" title="${esc(s.projectTitle || '')}">${icon('clapperboard')}<span class="ellipsis">${s.projectId ? esc(s.projectTitle || 'Project') : 'Belum ada project'}</span></span>${btn('newProject', 'Project baru', { ic: S.busy.has('newProject' + `data-id="${a.id}"`) ? 'loader-circle' : 'folder-plus', data: `data-id="${a.id}"`, disabled: !!busy })}` : ''}
         ${a && s.connected ? btn('showFlow', '', { ic: 'app-window', cls: 'icon', title: 'Lihat jendela Google Flow', data: `data-id="${a.id}"` }) : ''}
       </div></div>
+      ${runtimePill()}
       ${studioTabs()}`;
 }
-const STUDIO_TABS = [['buat', 'Buat', 'wand-sparkles'], ['alat', 'Alat', 'sliders-horizontal'], ['skill', 'Skill', 'sparkles']];
+const STUDIO_TABS = [['buat', 'Buat', 'wand-sparkles'], ['alat', 'Alat', 'sliders-horizontal'], ['skill', 'Skill', 'sparkles'], ['bulk', 'Bulk', 'layers']];
 function studioTabs() {
   return `<div class="subtabs" role="tablist" aria-label="Bagian Studio">${STUDIO_TABS.map(([id, label, ic], i) =>
     `<button class="subtab ${S.studioTab === id ? 'on' : ''}" role="tab" aria-selected="${S.studioTab === id}" data-act="studioTab" data-tab="${id}" title="${label} (Alt+${i + 1})">${icon(ic)}<span>${label}</span></button>`).join('')}</div>`;
 }
 const baseName = (p) => String(p || '').split(/[\\/]/).pop();
 const stem = (p) => baseName(p).replace(/\.[^.]+$/, '');
+
+// ----- Bulk Generate (Studio → Bulk) + timer runtime -----
+const BULK_MAX = 300;
+const BULK_FORM = { prompts: '', count: '', accounts: {}, cost: '', parallel: false, newProject: true, minDelay: '', maxDelay: '' };
+const BULK_DELAY = { image: [8, 20], video: [15, 40] };
+function bulkForm() {
+  if (!S.bulk.form) {
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem('fc.bulk') || '{}') || {}; } catch { /* rusak → bawaan */ }
+    S.bulk.form = { ...BULK_FORM, ...saved, accounts: { ...(saved.accounts || {}) } };
+  }
+  return S.bulk.form;
+}
+let bulkSaveT = null;
+function bulkSave() {
+  clearTimeout(bulkSaveT);
+  bulkSaveT = setTimeout(() => { try { localStorage.setItem('fc.bulk', JSON.stringify(S.bulk.form)); } catch { /* penuh */ } }, 300);
+}
+/** mm:ss atau j:mm:ss */
+function fmtDur(ms) {
+  const t = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), x = t % 60;
+  const p = (v) => String(v).padStart(2, '0');
+  return h ? `${h}:${p(m)}:${p(x)}` : `${p(m)}:${p(x)}`;
+}
+/** durasi panjang yang mudah dibaca: "1 j 05 m", "12 m 30 d" */
+function fmtDurLong(ms) {
+  const t = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), x = t % 60;
+  return h ? `${h} j ${String(m).padStart(2, '0')} m` : m ? `${m} m ${String(x).padStart(2, '0')} d` : `${x} d`;
+}
+// elemen [data-since] diperbarui 4×/detik tanpa render ulang halaman (hanya bila teksnya berubah)
+const runtimeEl = (since, until, cls = '') => `<span class="runtime ${cls}" data-since="${since}" ${until ? `data-until="${until}"` : ''}>${fmtDur((until || Date.now()) - since)}</span>`;
+function tickRuntime() {
+  const now = Date.now();
+  for (const el of document.querySelectorAll('[data-since]')) {
+    if (el.dataset.until) continue;
+    const t = fmtDur(now - Number(el.dataset.since));
+    if (el.textContent !== t) el.textContent = t;
+  }
+}
+function runtimePill() {
+  const b = S.bulk.st.batch;
+  const bits = [];
+  if (S.studio.busy && S.studio.busyAt) bits.push(`<span class="pill runtime-pill" title="Waktu sejak Generate ditekan">${icon('timer')}<span>${S.studio.busy === 'send' ? 'Mengirim' : 'Generate'}</span>${runtimeEl(S.studio.busyAt)}</span>`);
+  if (b && S.bulk.st.running) {
+    const fin = b.jobs.filter((j) => j.status !== 'pending' && j.status !== 'running').length;
+    bits.push(`<button class="pill runtime-pill on" data-act="studioTab" data-tab="bulk" title="Bulk Generate berjalan — klik untuk melihat">${icon('loader-circle', 'spin')}<span>Bulk ${fin}/${b.jobs.length}</span>${runtimeEl(b.startedAt)}</button>`);
+  }
+  return bits.length ? `<div class="runtime-row">${bits.join('')}</div>` : '';
+}
+
+const bulkAccOn = (a) => { const x = bulkForm().accounts[a.id]; return x && typeof x.on === 'boolean' ? x.on : !!a.signedInAt; };
+function bulkCredits(a) {
+  const x = bulkForm().accounts[a.id];
+  if (x && x.credits !== '' && x.credits !== undefined && x.credits !== null && Number.isFinite(Number(x.credits))) return Math.max(0, Math.round(Number(x.credits)));
+  return a.credits && Number.isFinite(a.credits.value) ? a.credits.value : null;
+}
+const sameDay = (t) => new Date(t).toDateString() === new Date().toDateString();
+function bulkInput() {
+  const f = bulkForm();
+  const accounts = S.settings.accounts.filter(bulkAccOn).map((a) => ({ id: a.id, credits: bulkCredits(a) }));
+  return {
+    prompts: f.prompts.split(/\r?\n/).map((x) => x.trim()).filter(Boolean).slice(0, BULK_MAX), count: Number(f.count) || 0, accounts,
+    cost: Number(f.cost) || null, parallel: !!f.parallel, newProject: f.newProject !== false,
+    minDelay: Number(f.minDelay) || undefined, maxDelay: Number(f.maxDelay) || undefined,
+    images: S.studio.images, tags: refTags(S.studio.images), options: opts()
+  };
+}
+let bulkPlanT = null, bulkPlanSeq = 0;
+function bulkPlanSoon() {
+  clearTimeout(bulkPlanT);
+  bulkPlanT = setTimeout(async () => {
+    const seq = ++bulkPlanSeq;
+    try {
+      const p = await call('bulk:plan', bulkInput());
+      if (seq !== bulkPlanSeq) return;
+      S.bulk.plan = p;
+    } catch (e) { S.bulk.plan = { error: msg(e) }; }
+    const box = $('#bulk-plan');
+    if (box) { box.innerHTML = bulkPlanHtml(); const b = $('#bulk-start'); if (b) b.outerHTML = bulkStartBtn(); }
+  }, 150);
+}
+function bulkEstimate(p) {
+  const video = p.kind === 'video';
+  const gen = video ? 100 : 40; // perkiraan detik per Generate
+  const f = bulkForm();
+  const [d0, d1] = BULK_DELAY[p.kind];
+  const delay = ((Number(f.minDelay) || d0) + (Number(f.maxDelay) || Math.max(d1, Number(f.minDelay) || 0))) / 2;
+  const n = Math.max(1, p.accounts.filter((a) => a.planned > 0).length);
+  const perAcc = Math.ceil(p.jobs / n);
+  const sec = f.parallel ? perAcc * (gen + delay) : Math.max(p.jobs * gen, perAcc * (gen + delay));
+  return sec * 1000;
+}
+const WARN_TEXT = {
+  NO_ACCOUNTS: 'Pilih minimal satu akun.',
+  UNKNOWN_COST: 'Biaya kredit model ini belum diketahui — isi "Kredit per video".',
+  UNKNOWN_CREDITS: 'Ada akun yang kreditnya belum diketahui (dihitung 0). Klik "Baca kredit" atau isi manual.',
+  MAX_BULK: `Dibatasi maks. ${BULK_MAX} hasil per batch.`,
+  NOT_ENOUGH_CREDITS: 'Kredit tidak cukup untuk jumlah yang diminta — jumlah video disesuaikan dengan kredit.'
+};
+function bulkPlanHtml() {
+  const p = S.bulk.plan;
+  if (!p) return `<div class="muted small">${icon('loader-circle', 'spin')} Menghitung rencana…</div>`;
+  if (p.error) return infobar('error', 'circle-x', '', esc(p.error));
+  const video = p.kind === 'video';
+  const accs = S.settings.accounts;
+  const name = (id) => esc((accs.find((a) => a.id === id) || {}).label || 'akun');
+  const used = p.accounts.filter((a) => a.planned > 0);
+  const caps = [...new Set(used.map((a) => a.planned))];
+  let head;
+  if (!p.target) head = `<b>0 ${video ? 'video' : 'gambar'}</b>`;
+  else if (video) head = caps.length === 1 && used.length > 1 ? `<b>${used.length} akun × ${caps[0]} = ${p.target} video</b>` : `<b>${p.target} video</b>`;
+  else head = `<b>${p.target} gambar</b> · ${p.jobs}× Generate${p.perJob > 1 ? ` (${p.perJob} per Generate)` : ''}`;
+  const sub = video
+    ? `${p.cost ? `${p.cost} kredit/video · total ${p.credits} kredit` : ''}${p.capacity > p.target ? ` · kredit cukup untuk ${p.capacity} video` : ''}`
+    : `0 kredit (Nano Banana) · dibagi ke ${used.length || 0} akun`;
+  const rows = p.accounts.map((a) => `<span class="plan-acc ${a.planned ? '' : 'off'}" title="${video ? `${a.credits === null ? '?' : a.credits} kredit ÷ ${p.cost || '?'} = ${a.capacity} video` : ''}">${name(a.id)} <b>${a.planned}</b>${video ? `<span class="faint">/${a.capacity}</span>` : ''}</span>`).join('');
+  const warns = p.warnings.filter((w) => WARN_TEXT[w]).map((w) => `<div class="small warn-text">${icon('triangle-alert')} ${WARN_TEXT[w]}</div>`).join('');
+  return `<div class="plan-head">${icon(video ? 'clapperboard' : 'images')}<span>${head}</span></div>
+    <div class="muted small">${sub}${p.jobs ? ` · perkiraan ±${fmtDurLong(bulkEstimate(p))}` : ''}</div>
+    ${p.accounts.length ? `<div class="plan-accs">${rows}</div>` : ''}${warns}`;
+}
+function bulkStartBtn() {
+  const p = S.bulk.plan;
+  const o = opts();
+  const framesBad = isFrames(o) && S.studio.images.length !== 2;
+  const n = p && !p.error ? p.target : 0;
+  return btn('bulkStart', n ? `Mulai Bulk · ${n} ${o.kind === 'video' ? 'video' : 'gambar'}` : 'Mulai Bulk', { ic: S.busy.has('bulkStart') ? 'loader-circle' : 'play', cls: 'cta', data: 'id="bulk-start"', disabled: !n || framesBad || S.bulk.st.running || !isAuto(), title: framesBad ? ERR.FRAMES_REQUIRED : '' });
+}
+
+function bulkPage() {
+  const B = S.bulk;
+  const b = B.st.batch;
+  const view = B.st.running ? 'run' : B.view || (b ? 'run' : 'form');
+  const gate = isAuto() ? '' : infobar('warning', 'bot', 'Bulk Generate butuh Mode Otomatis.', ' Aplikasi akan menekan Generate di Google Flow untuk Anda, satu per satu dengan jeda acak.', btn('enableAuto', 'Aktifkan…', { ic: 'zap', cls: 'sm primary' }));
+  return gate + (view === 'run' && b ? bulkRunView(b) : bulkFormView());
+}
+
+function bulkFormView() {
+  const f = bulkForm();
+  const o = opts();
+  const video = o.kind === 'video';
+  const accs = S.settings.accounts;
+  const lines = f.prompts.split(/\r?\n/).filter((x) => x.trim()).length;
+  const chip = (k, v, label, ic) => `<button class="chip ${String(o[k]) === String(v) ? 'on' : ''}" data-act="studioOpt" data-k="${k}" data-v="${v}">${ic ? icon(ic) : ''}<span>${label}</span></button>`;
+  const imgs = S.studio.images;
+  const framesBad = isFrames(o) && imgs.length !== 2;
+  const dur = durationFor(o.kind, o.model);
+  const [d0, d1] = BULK_DELAY[o.kind];
+  const accRow = (a) => {
+    const s = st(a.id);
+    const on = bulkAccOn(a);
+    const x = f.accounts[a.id] || {};
+    const read = a.credits && a.credits.at ? a.credits : null;
+    const stale = read && !sameDay(read.at);
+    const k = 'bulkReadCredits' + `data-id="${a.id}"`;
+    return `<div class="bulk-acc ${on ? 'on' : ''}">
+      <label class="check"><input type="checkbox" data-change="bulkAcc" data-id="${a.id}" ${on ? 'checked' : ''}><span class="dot ${statusInfo(a.id).dot}"></span><span class="ellipsis"><b>${esc(a.label)}</b>${a.email ? `<span class="faint small"> · ${esc(a.email)}</span>` : ''}</span></label>
+      ${video ? `<div class="bulk-cred">
+        <input class="input num" type="number" min="0" max="1000000" placeholder="${read ? read.value : '?'}" value="${esc(x.credits ?? '')}" data-input="bulkCredit" data-id="${a.id}" aria-label="Kredit ${esc(a.label)}" title="Kosongkan untuk memakai saldo yang terbaca dari Flow">
+        <span class="faint small">kredit</span>
+        ${btn('bulkReadCredits', '', { ic: S.busy.has(k) ? 'loader-circle' : 'refresh-cw', cls: 'subtle icon sm', title: 'Baca saldo kredit dari Google Flow', data: `data-id="${a.id}"`, disabled: S.busy.has(k) || !a.signedInAt })}
+        <span class="faint small cred-at ${stale ? 'warn-text' : ''}">${read ? `${stale ? 'kemarin/lebih lama' : 'dibaca ' + fmtTime(read.at)}` : s.signedIn ? 'belum dibaca' : 'belum masuk'}</span>
+      </div>` : `<span class="faint small">${s.signedIn ? 'Siap' : a.signedInAt ? 'Disambungkan otomatis' : 'Belum masuk Google'}</span>`}
+    </div>`;
+  };
+  const last = S.bulk.st.batch;
+  return `
+    <div class="bulk">
+      <div class="card bulk-form">
+        <div class="card-head">${icon('layers')}<h3>Bulk Generate</h3><span class="muted small grow">Maks. ${BULK_MAX} hasil per batch · ${video ? 'jumlah video mengikuti kredit Flow semua akun' : 'gambar Nano Banana 0 kredit'}</span>${last ? btn('bulkView', 'Batch terakhir', { ic: 'list-video', cls: 'sm subtle', data: 'data-v="run"' }) : ''}</div>
+        <div class="seg" role="tablist" aria-label="Jenis hasil">
+          <button class="seg-btn ${video ? 'on' : ''}" data-act="studioOpt" data-k="kind" data-v="video" role="tab" aria-selected="${video}">${icon('clapperboard')}<span>Video</span></button>
+          <button class="seg-btn ${!video ? 'on' : ''}" data-act="studioOpt" data-k="kind" data-v="image" role="tab" aria-selected="${!video}">${icon('image')}<span>Gambar</span></button>
+        </div>
+        <div class="opts">
+          <div class="opt wide"><span class="opt-l">${icon('cpu')} Model</span><select class="input" data-change="studioModel" aria-label="Model">${modelList(o.kind).map((m) => `<option value="${esc(m.v)}" ${o.model === m.v ? 'selected' : ''}>${esc(m.v)}${m.d ? ' — ' + esc(m.d) : ''}</option>`).join('')}</select></div>
+          ${video ? `<div class="opt"><span class="opt-l">${icon('film')} Mode</span><div class="chips">${SUBS.map(([v, l, ic]) => chip('sub', v, l, ic)).join('')}</div></div>` : ''}
+          <div class="opt"><span class="opt-l">${icon('ratio')} Rasio</span><div class="chips">${RATIOS[o.kind].map((r) => chip('ratio', r, r)).join('')}</div></div>
+          ${video ? `<div class="opt"><span class="opt-l">${icon('timer')} Durasi</span><div class="chips"><span class="chip on">${dur ? dur + ' dtk' : 'Bawaan Flow'}</span><span class="faint small">720p</span></div></div>`
+            : `<div class="opt"><span class="opt-l">${icon('hash')} Per Generate</span><div class="chips">${[1, 2, 3, 4].map((n) => chip('count', n, 'x' + n)).join('')}</div></div>`}
+          ${video ? `<div class="opt"><span class="opt-l" title="Kredit per video">${icon('gem')} Biaya</span><div class="hrow"><input class="input num" type="number" min="1" max="10000" placeholder="${S.bulk.plan && S.bulk.plan.cost ? S.bulk.plan.cost : '?'}" value="${esc(f.cost)}" data-input="bulkCost" aria-label="Kredit per video"><span class="faint small">kredit/video · kosong = harga Flow 720p</span></div></div>` : ''}
+        </div>
+        <div class="refs-mini ${framesBad ? 'bad' : ''}">${icon(imgs.length ? 'images' : 'image-plus')}<span class="small">${imgs.length ? `${imgs.length} gambar referensi dari tab Buat dipakai di semua tugas` : isFrames(o) ? 'Mode Frame wajib 2 foto (awal & akhir)' : 'Tanpa gambar referensi'}${framesBad ? ` — <b>${ERR.FRAMES_REQUIRED}</b>` : ''}</span>${btn('studioTab', 'Atur di Buat', { cls: 'sm subtle', data: 'data-tab="buat"' })}</div>
+        <label class="field"><span class="hrow">Prompt <span class="faint small">satu per baris · maks. ${BULK_MAX} · dipakai bergiliran</span><span class="right faint small" id="bulk-lines">${lines} prompt</span></span>
+          <textarea id="bulk-prompts" class="input prompt" rows="7" placeholder="${video ? 'Kamera drone di atas sawah terasering saat matahari terbit…\nTimelapse kota Jakarta malam hari, lampu kendaraan…' : 'Foto produk kopi susu gula aren di meja kayu…\nIlustrasi maskot kucing oranye, gaya 3D lucu…'}" data-input="bulkPrompts">${esc(f.prompts)}</textarea></label>
+        <div class="hrow">${btn('bulkImport', 'Impor .txt', { ic: 'upload', cls: 'sm subtle' })}<input type="file" id="bulk-file" accept=".txt,.csv,text/plain" hidden data-change="bulkFile">
+          <label class="field inline grow-0"><span>Jumlah ${video ? 'video' : 'gambar'}</span><input id="bulk-count" class="input num" type="number" min="1" max="${BULK_MAX}" placeholder="${video ? 'maks. kredit' : 'otomatis'}" value="${esc(f.count)}" data-input="bulkCount"></label>
+          <span class="faint small">${video ? 'Kosong = sebanyak kredit semua akun.' : `Kosong = 1 Generate per prompt. Maks. ${BULK_MAX}.`}</span></div>
+      </div>
+      <div class="bulk-side">
+        <div class="card">
+          <div class="card-head">${icon('users')}<h3>Akun Google</h3><span class="muted small grow">${video ? 'Kredit dipakai bergiliran' : 'Tugas dibagi rata'}</span>${video && accs.length ? btn('bulkReadAll', 'Baca semua kredit', { ic: S.busy.has('bulkReadAll') ? 'loader-circle' : 'gem', cls: 'sm', disabled: S.busy.has('bulkReadAll') }) : ''}</div>
+          ${accs.length ? `<div class="bulk-accs">${accs.map(accRow).join('')}</div>` : `<div class="muted small">Belum ada akun. ${btn('go', 'Tambah akun', { cls: 'sm', data: 'data-page="accounts"' })}</div>`}
+          ${video ? '<p class="faint small">Paket gratis Google Flow: 50 kredit/hari/akun. Saldo dibaca dari menu akun Flow (hanya membaca, tidak menekan tombol lain).</p>' : ''}
+        </div>
+        <div class="card bulk-plan-card">
+          <div class="card-head">${icon('chart-pie')}<h3>Rencana</h3></div>
+          <div id="bulk-plan">${bulkPlanHtml()}</div>
+          <details class="bulk-adv"><summary class="small">Opsi lanjutan</summary>
+            <label class="check small"><input type="checkbox" data-change="bulkParallel" ${f.parallel ? 'checked' : ''}> Jalankan semua akun bersamaan (lebih cepat, lebih berat untuk PC)</label>
+            <label class="check small"><input type="checkbox" data-change="bulkNewProject" ${f.newProject !== false ? 'checked' : ''}> Project Flow baru untuk batch ini (dan tiap 100 tugas)</label>
+            <div class="hrow"><label class="field inline"><span>Jeda min.</span><input class="input num" type="number" min="3" max="600" placeholder="${d0}" value="${esc(f.minDelay)}" data-input="bulkMinDelay"></label>
+              <label class="field inline"><span>maks.</span><input class="input num" type="number" min="3" max="1200" placeholder="${d1}" value="${esc(f.maxDelay)}" data-input="bulkMaxDelay"></label><span class="faint small">detik per akun · dilipatgandakan otomatis bila Flow menolak</span></div>
+          </details>
+          <div class="actionbar cta-bar">${bulkStartBtn()}</div>
+          <p class="faint small">${icon('triangle-alert')} Google dapat membatasi akun yang terdeteksi otomatis. Bila Flow mendeteksi "aktivitas tidak biasa", akun itu diistirahatkan dan tugasnya dipindah ke akun lain.</p>
+        </div>
+      </div>
+    </div>`;
+}
+
+const JOB_BADGE = { pending: '<span class="badge">Menunggu</span>', running: '<span class="badge accent">Berjalan</span>', done: '<span class="badge ok">Selesai</span>', failed: '<span class="badge err">Gagal</span>', stopped: '<span class="badge warn">Dihentikan</span>', skipped: '<span class="badge warn">Terlewat</span>' };
+const ACC_BADGE = { ready: '<span class="badge">Siap</span>', running: '<span class="badge accent">Membuat</span>', waiting: '<span class="badge">Jeda</span>', done: '<span class="badge ok">Selesai</span>', exhausted: '<span class="badge warn">Kredit habis</span>', paused: '<span class="badge warn">Diistirahatkan</span>', error: '<span class="badge err">Dilewati</span>' };
+function bulkRunView(b) {
+  const B = S.bulk;
+  const running = B.st.running;
+  const video = b.kind === 'video';
+  const count = (st0) => b.jobs.filter((j) => j.status === st0).length;
+  const done = count('done'), failed = count('failed'), skipped = count('skipped'), stopped = count('stopped'), pending = count('pending') + count('running');
+  const fin = b.jobs.length - pending;
+  const items = b.jobs.filter((j) => j.status === 'done').reduce((s, j) => s + (j.results.length || j.count), 0);
+  const elapsed = (b.finishedAt || Date.now()) - b.startedAt;
+  const eta = running && fin && pending ? (elapsed / fin) * pending : 0;
+  const avg = done ? b.jobs.filter((j) => j.status === 'done' && j.finishedAt && j.startedAt).reduce((s, j) => s + (j.finishedAt - j.startedAt), 0) / done : 0;
+  const status = running ? `<span class="badge accent">${icon('loader-circle', 'spin')} Berjalan</span>` : b.stopped ? '<span class="badge warn">Dihentikan</span>' : '<span class="badge ok">Selesai</span>';
+  const pct = b.jobs.length ? Math.round((fin / b.jobs.length) * 100) : 0;
+  const accName = (id) => esc((b.accounts.find((a) => a.id === id) || {}).label || '—');
+  const list = B.showAll ? b.jobs : b.jobs.slice(0, 60);
+  const resumable = !running && (failed + skipped + stopped) > 0;
+  const firstFile = b.jobs.find((j) => j.results.length && /[\\/]/.test(j.results[0]));
+  return `
+    <div class="card bulk-run">
+      <div class="bulk-run-head">
+        <div class="bulk-title">${icon('layers', 'lg')}<div><h3>Bulk ${video ? 'video' : 'gambar'} ${status}</h3>
+          <div class="muted small">${esc(b.model)}${b.duration ? ` · ${b.duration} dtk` : ''} · ${esc(b.options.ratio)}${video ? ` · ${b.cost} kredit/video` : b.perJob > 1 ? ` · ${b.perJob} per Generate` : ''} · ${b.accounts.length} akun · ${b.parallel ? 'bersamaan' : 'bergiliran'} · mulai ${fmtTime(b.startedAt)}</div></div></div>
+        <div class="bulk-clock" title="${running ? 'Waktu berjalan sejak Bulk dimulai' : 'Total durasi batch'}">${icon('timer')}<div><div class="faint small">${running ? 'Runtime' : 'Total durasi'}</div>${runtimeEl(b.startedAt, running ? null : b.finishedAt, 'big')}</div></div>
+      </div>
+      <div class="progress bulk-progress"><i data-w="${pct}"></i></div>
+      <div class="bulk-stats">
+        <div><b>${items}</b><span class="faint small">/${b.target} ${video ? 'video' : 'gambar'}</span></div>
+        <div><b>${fin}</b><span class="faint small">/${b.jobs.length} tugas</span></div>
+        ${failed ? `<div><b class="err-text">${failed}</b><span class="faint small"> gagal</span></div>` : ''}
+        ${skipped ? `<div><b class="warn-text">${skipped}</b><span class="faint small"> terlewat</span></div>` : ''}
+        ${avg ? `<div><b>${fmtDur(avg)}</b><span class="faint small"> rata-rata/tugas</span></div>` : ''}
+        ${eta ? `<div><b>±${fmtDurLong(eta)}</b><span class="faint small"> lagi</span></div>` : ''}
+        ${video ? `<div><b>${b.accounts.reduce((s, a) => s + (a.used || 0), 0)}</b><span class="faint small"> kredit terpakai</span></div>` : ''}
+      </div>
+      ${running || B.st.activity ? `<div class="activity">${running ? icon('loader-circle', 'spin') : icon('info')}<span id="bulk-act">${esc(B.st.activity)}</span></div>` : ''}
+      <div class="actionbar">
+        ${running ? btn('bulkStop', 'Hentikan', { ic: 'square' }) : ''}
+        ${resumable ? btn('bulkResume', `Lanjutkan sisa (${failed + skipped + stopped})`, { ic: 'rotate-ccw', cls: 'primary', disabled: !isAuto() }) : ''}
+        ${!running ? btn('bulkView', 'Batch baru', { ic: 'plus', cls: resumable ? '' : 'primary', data: 'data-v="form"' }) : ''}
+        ${firstFile ? btn('showFile', 'Buka folder hasil', { ic: 'folder-open', cls: 'subtle', data: `data-path="${esc(firstFile.results[0])}"` }) : ''}
+        ${!running ? btn('bulkClear', 'Hapus riwayat batch', { ic: 'trash-2', cls: 'subtle' }) : ''}
+      </div>
+    </div>
+    <table class="table bulk-accs-t"><thead><tr><th>Akun</th><th>Status</th><th>Selesai</th>${video ? '<th>Kredit</th>' : ''}<th>Catatan</th></tr></thead><tbody>
+      ${b.accounts.map((a) => `<tr><td class="ellipsis"><b>${esc(a.label)}</b></td><td>${ACC_BADGE[a.status] || esc(a.status)}</td>
+        <td>${a.done}${a.planned ? `<span class="faint">/${a.planned}</span>` : ''}${a.failed ? ` <span class="err-text small">· ${a.failed} gagal</span>` : ''}</td>
+        ${video ? `<td>${a.credits === null ? '—' : a.credits}<span class="faint small">${a.startCredits !== null && a.startCredits !== undefined ? ` dari ${a.startCredits}` : ''}</span></td>` : ''}
+        <td class="small muted">${a.note ? esc(ERR[a.note] || a.note) : ''}</td></tr>`).join('')}
+    </tbody></table>
+    <table class="table bulk-jobs"><thead><tr><th class="num">#</th><th>Prompt</th><th>Akun</th><th>Status</th><th>Durasi</th><th>Hasil</th></tr></thead><tbody>
+      ${list.map((j) => `<tr>
+        <td class="num">${j.n}</td>
+        <td class="prompt"><div class="ellipsis" title="${esc(b.prompts[j.p])}">${esc(b.prompts[j.p] || '(tanpa prompt)')}</div>${j.error && j.status !== 'pending' ? `<div class="small err-text">${esc(msg({ message: j.error, detail: j.detail }))}</div>` : ''}</td>
+        <td class="ellipsis">${j.accountId ? accName(j.accountId) : '—'}</td>
+        <td>${JOB_BADGE[j.status] || esc(j.status)}</td>
+        <td class="small">${j.status === 'running' && j.startedAt ? runtimeEl(j.startedAt) : j.finishedAt && j.startedAt ? fmtDur(j.finishedAt - j.startedAt) : '—'}</td>
+        <td>${j.status === 'done' ? (j.results.length && /[\\/]/.test(j.results[0]) ? btn('openFile', `${j.results.length} file`, { ic: 'folder-open', cls: 'sm subtle', data: `data-path="${esc(j.results[0])}"` }) : `${j.results.length || j.count} hasil`) : '—'}</td>
+      </tr>`).join('')}
+    </tbody></table>
+    ${b.jobs.length > 60 ? `<div class="actionbar center">${btn('bulkShowAll', B.showAll ? 'Tampilkan 60 pertama' : `Tampilkan semua ${b.jobs.length} tugas`, { cls: 'sm subtle' })}</div>` : ''}`;
+}
 
 // ----- Alat -----
 function alatPage() {
@@ -384,6 +670,10 @@ function alatPage() {
   const T = S.tool;
   const flowReady = a && s.connected && s.signedIn;
   return `
+    <div class="sec-head"><h2>${icon('layers')} Alat otomatis</h2><span class="badge accent">Mode Otomatis</span><span class="muted small grow">Banyak hasil sekaligus, lintas akun Google.</span></div>
+    <div class="tool-grid"><button class="tool-card bulk-card" data-act="studioTab" data-tab="bulk">
+      <span class="tool-ic">${icon('layers', 'lg')}</span><span class="tool-t"><b>Bulk Generate</b><span class="muted small">Sampai ${BULK_MAX} gambar per batch. Video mengikuti kredit Flow tiap akun — dipakai bergiliran dari semua akun (mis. 5 akun × 3 = 15 video Omni 1.1 Flash).</span></span>
+      ${S.bulk.st.running ? `<span class="badge accent">${icon('loader-circle', 'spin')} Berjalan</span>` : icon('chevron-right', 'faint')}</button></div>
     <div class="sec-head"><h2>${icon('zap')} Alat lokal</h2><span class="badge ok">Gratis · offline</span><span class="muted small grow">Diproses di PC ini — hasil disimpan ke folder Unduhan → Alat.</span></div>
     <div class="tool-grid">${LOCAL_TOOLS.map((t) => `<button class="tool-card ${T.open === t.id ? 'on' : ''}" data-act="toolOpen" data-id="${t.id}" aria-pressed="${T.open === t.id}">
       <span class="tool-ic">${icon(t.icon, 'lg')}</span><span class="tool-t"><b>${t.name}</b><span class="muted small">${t.desc}</span></span></button>`).join('')}</div>
@@ -715,6 +1005,7 @@ const PAGES = {
   studio() {
     if (S.studioTab === 'alat') return studioHead() + alatPage();
     if (S.studioTab === 'skill') return studioHead() + skillPage();
+    if (S.studioTab === 'bulk') return studioHead() + bulkPage();
     const a = acc();
     const s = a ? st(a.id) : {};
     const warn = readiness(false);
@@ -737,7 +1028,7 @@ const PAGES = {
     const cur = items.find((x) => x.mediaId === S.studio.sel) || items[0];
     const local = cur && S.settings.downloads.find((d) => d.mediaId === cur.mediaId);
     const stage = busy
-      ? `<div class="stage-busy"><div class="pulse">${icon('sparkles', 'xl')}</div><div class="stage-title">${busy === 'send' ? 'Mengirim ke Google Flow…' : 'Google Flow sedang membuat…'}</div><div class="muted small" id="act-text">${esc(S.activity)}</div><div class="progress indet"><i></i></div></div>`
+      ? `<div class="stage-busy"><div class="pulse">${icon('sparkles', 'xl')}</div><div class="stage-title">${busy === 'send' ? 'Mengirim ke Google Flow…' : 'Google Flow sedang membuat…'}</div>${S.studio.busyAt ? `<div class="stage-clock">${icon('timer')}${runtimeEl(S.studio.busyAt, null, 'big')}</div>` : ''}<div class="muted small" id="act-text">${esc(S.activity)}</div><div class="progress indet"><i></i></div></div>`
       : cur
         ? (cur.isVideo && local && /\.(mp4|webm)$/i.test(local.path)
           ? `<video class="stage-media" src="${esc(fileUrl(local.path))}" controls loop muted autoplay playsinline></video>`
@@ -1158,6 +1449,7 @@ function render() {
 }
 
 function afterRender() {
+  for (const el of document.querySelectorAll('[data-w]')) el.style.width = Math.max(0, Math.min(100, Number(el.dataset.w) || 0)) + '%';
   const bar = $('#q-bar');
   if (bar) {
     const t = S.queue.jobs.length;
@@ -1281,6 +1573,7 @@ function setStudio(patch) {
   S.settings.studio = o;
   render();
   call('settings:set', { studio: o }).catch((e) => toast(msg(e), 'err'));
+  if (S.studioTab === 'bulk') bulkPlanSoon();
 }
 
 // Kartu login Google: aplikasi menunggu login selesai, lalu menyambung tersembunyi & membuat project baru
@@ -1454,7 +1747,7 @@ const ACTIONS = {
     const a = acc();
     if (!a || S.studio.busy) return;
     if (isFrames(opts()) && S.studio.images.length !== 2) { toast(ERR.FRAMES_REQUIRED, 'err'); return; }
-    S.studio.busy = 'send';
+    S.studio.busy = 'send'; S.studio.busyAt = Date.now();
     S.activity = 'Mengirim ke Google Flow…';
     render();
     try {
@@ -1466,7 +1759,7 @@ const ACTIONS = {
       await call('flow:afterSend', a.id, true);
       toast('Terkirim. Tekan Generate di jendela Google Flow.', 'ok');
     } catch (e) { log(msg(e), 'err'); toast(msg(e), 'err'); }
-    S.studio.busy = '';
+    S.studio.busy = ''; S.studio.busyAt = 0;
     S.activity = '';
     render();
   },
@@ -1476,6 +1769,7 @@ const ACTIONS = {
     if (!S.studio.prompt.trim() && !S.studio.images.length) { toast(ERR.NOTHING_TO_SEND, 'err'); return; }
     if (isFrames(opts()) && S.studio.images.length !== 2) { toast(ERR.FRAMES_REQUIRED, 'err'); return; }
     S.studio.busy = 'generate';
+    S.studio.busyAt = Date.now();
     S.activity = 'Menyiapkan Google Flow…';
     render();
     try {
@@ -1483,13 +1777,15 @@ const ACTIONS = {
       if (r.refs && r.refs.length) log(`${r.refs.length} gambar referensi terunggah di Flow & ditandai: ${r.refs.map((x) => '@' + x.tag).join(', ')}.`, 'ok');
       log(`Generate ditekan${r.click && r.click.label ? ' ("' + r.click.label + '")' : ''}.${settingsNote(r.settings)}${mentionNote(r.mentions)}${r.fellBack ? ' Mode tersembunyi ditolak — beralih ke jendela diperkecil.' : ''}`, 'ok');
       if (r.items) {
-        log(`${r.items.length} hasil siap${r.files.length ? `, ${r.files.length} file diunduh` : ''}.`, 'ok');
-        toast(`${r.items.length} hasil siap${r.files.length ? ' & sudah diunduh' : ''}.`, 'ok');
+        const took = fmtDur(Date.now() - S.studio.busyAt);
+        log(`${r.items.length} hasil siap dalam ${took}${r.files.length ? `, ${r.files.length} file diunduh` : ''}.`, 'ok');
+        toast(`${r.items.length} hasil siap dalam ${took}${r.files.length ? ' & sudah diunduh' : ''}.`, 'ok');
         S.studio.sel = r.items[0] ? r.items[0].mediaId : null;
         galleryMerge(r.items); // langsung tampil, tanpa menunggu daftar Flow
       } else { toast('Generate ditekan. Hasil muncul di pratinjau saat selesai.', 'ok'); galleryFollow(); }
-    } catch (e) { log(msg(e), 'err'); toast(msg(e), 'err'); }
+    } catch (e) { log(`${msg(e)} (setelah ${fmtDur(Date.now() - S.studio.busyAt)})`, 'err'); toast(msg(e), 'err'); }
     S.studio.busy = '';
+    S.studio.busyAt = 0;
     S.activity = '';
     render();
     if (galleryKey()) galleryLoad(false); // muat ulang daftar (tanpa mengosongkan hasil yang sudah tampil)
@@ -1541,6 +1837,52 @@ const ACTIONS = {
 
   // Otomatis
   enableAuto: () => enableAuto(),
+  bulkView: (el) => { S.bulk.view = el.dataset.v; render(); if (el.dataset.v === 'form') bulkPlanSoon(); },
+  bulkShowAll: () => { S.bulk.showAll = !S.bulk.showAll; render(); },
+  bulkImport: () => { const f = $('#bulk-file'); if (f) f.click(); },
+  bulkReadCredits: (el) => bulkRead(el.dataset.id),
+  bulkReadAll: () => busy('bulkReadAll', async () => {
+    const list = S.settings.accounts.filter((a) => bulkAccOn(a) && a.signedInAt);
+    if (!list.length) throw new Error('NO_ACCOUNTS');
+    let ok = 0;
+    for (const a of list) { if (await bulkRead(a.id, true)) ok++; }
+    toast(`Kredit terbaca: ${ok}/${list.length} akun.`, ok === list.length ? 'ok' : 'info');
+  }),
+  bulkStart: async () => {
+    if (S.busy.has('bulkStart')) return;
+    if (!isAuto()) { const ok = await enableAuto(); if (!ok) return; }
+    const input = bulkInput();
+    const p = await call('bulk:plan', input);
+    const video = p.kind === 'video';
+    const names = p.accounts.filter((a) => a.planned).map((a) => `${esc((accById(a.id) || {}).label || 'akun')}: ${a.planned}`).join(' · ');
+    const r = await dialog({
+      title: `Mulai Bulk ${p.target} ${video ? 'video' : 'gambar'}?`,
+      body: `<p>${p.jobs}× Generate di Google Flow${video ? ` · ${p.credits} kredit (${p.cost}/video)` : ''} · perkiraan ±${fmtDurLong(bulkEstimate(p))}.</p><p class="muted small">${names}</p><p class="muted small">Model ${esc(opts().model)} · ${esc(opts().ratio)}${S.studio.images.length ? ` · ${S.studio.images.length} gambar referensi` : ''}. Jendela Flow tetap tersembunyi; Anda bisa menghentikan kapan saja.</p>`,
+      buttons: [{ label: 'Batal', value: 'cancel' }, { label: 'Mulai', value: 'go', primary: true }]
+    });
+    if (!r) return;
+    S.busy.add('bulkStart');
+    try {
+      S.bulk.st = await call('bulk:start', input);
+      S.bulk.view = 'run'; S.bulk.showAll = false;
+      toast('Bulk Generate dimulai.', 'ok');
+    } finally { S.busy.delete('bulkStart'); render(); }
+  },
+  bulkStop: async () => { S.bulk.st = await call('bulk:stop'); render(); },
+  bulkResume: async () => {
+    const b = S.bulk.st.batch;
+    const accounts = b ? b.accounts.map((a) => { const x = accById(a.id); const c = x ? bulkCredits(x) : null; return { id: a.id, credits: c }; }) : [];
+    S.bulk.st = await call('bulk:resume', { accounts });
+    render();
+  },
+  bulkClear: async () => {
+    const r = await dialog({ title: 'Hapus riwayat batch?', body: '<p class="muted">File hasil yang sudah diunduh tidak dihapus.</p>', buttons: [{ label: 'Batal', value: 'cancel' }, { label: 'Hapus', value: 'ok', primary: true }] });
+    if (!r) return;
+    S.bulk.st = await call('bulk:clear');
+    S.bulk.view = 'form';
+    render();
+    bulkPlanSoon();
+  },
   disableAuto: async () => { S.settings = await call('auto:ack', false); toast('Mode Aman aktif.', 'ok'); render(); },
   async queueAdd() {
     if (!S.settings.accounts.length) { toast(ERR.UNKNOWN_ACCOUNT, 'err'); return; }
@@ -2152,6 +2494,24 @@ function studioTab(tab) {
   render();
   if (tab === 'skill') { skillsLoad(false); if (!S.chat.catalog) chatCatalog(false).then(() => render()); }
   if (tab === 'buat') galleryAutoLoad();
+  if (tab === 'bulk') bulkPlanSoon();
+}
+
+/** Baca saldo kredit Flow satu akun (isian manual akun itu dikosongkan agar saldo terbaca yang dipakai). */
+async function bulkRead(id, quiet = false) {
+  const key = 'bulkReadCredits' + `data-id="${id}"`;
+  if (S.busy.has(key)) return false;
+  S.busy.add(key);
+  render();
+  try {
+    const r = await call('flow:credits', id);
+    const a = accById(id);
+    if (a) a.credits = r;
+    const f = bulkForm();
+    if (f.accounts[id]) { f.accounts[id].credits = ''; bulkSave(); }
+    if (!quiet) toast(`${a ? a.label : 'Akun'}: ${r.value} kredit Google Flow.`, 'ok');
+    return true;
+  } catch (e) { toast(`${(accById(id) || {}).label || 'Akun'}: ${msg(e)}`, 'err'); return false; } finally { S.busy.delete(key); render(); bulkPlanSoon(); }
 }
 
 // ---------- Event ----------
@@ -2192,7 +2552,22 @@ Object.assign(CHANGES, {
   skModel: (el) => { S.sk.model = el.value; },
   skModelFlow: (el) => { S.sk.over.model = el.value; render(); },
   toolEdge: (el) => { S.tool.opts.edgeOnly = el.checked; },
-  toolRenameCat: (el) => { S.tool.opts.cat = el.value; S.tool.plan = null; render(); }
+  toolRenameCat: (el) => { S.tool.opts.cat = el.value; S.tool.plan = null; render(); },
+  bulkAcc: (el) => { const f = bulkForm(); f.accounts[el.dataset.id] = { ...(f.accounts[el.dataset.id] || {}), on: el.checked }; bulkSave(); render(); bulkPlanSoon(); },
+  bulkParallel: (el) => { bulkForm().parallel = el.checked; bulkSave(); bulkPlanSoon(); },
+  bulkNewProject: (el) => { bulkForm().newProject = el.checked; bulkSave(); },
+  bulkFile: async (el) => {
+    const file = el.files && el.files[0];
+    el.value = '';
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) throw new Error('FILE_TOO_LARGE');
+    const text = await file.text();
+    const lines = text.split(/\r?\n/).map((x) => x.replace(/^\uFEFF/, '').trim()).filter(Boolean);
+    const f = bulkForm();
+    f.prompts = [...f.prompts.split(/\r?\n/).filter((x) => x.trim()), ...lines].slice(0, BULK_MAX).join('\n');
+    bulkSave(); render(); bulkPlanSoon();
+    toast(`${lines.length} prompt diimpor${lines.length > BULK_MAX ? ` (maks. ${BULK_MAX})` : ''}.`, 'ok');
+  }
 });
 document.addEventListener('change', (e) => {
   const el = e.target.closest('[data-change]');
@@ -2224,6 +2599,18 @@ const INPUTS = {
   },
   skPrompt: (el) => { const was = S.sk.edited == null; S.sk.edited = el.value; if (was) render(); },
   skQuery: (el) => { S.sk.q = el.value; render(); },
+  bulkPrompts: (el) => {
+    bulkForm().prompts = el.value.slice(0, 400000);
+    const n = el.value.split(/\r?\n/).filter((x) => x.trim()).length;
+    const c = $('#bulk-lines');
+    if (c) { c.textContent = `${n} prompt${n > BULK_MAX ? ` (hanya ${BULK_MAX} pertama dipakai)` : ''}`; c.classList.toggle('warn-text', n > BULK_MAX); }
+    bulkSave(); bulkPlanSoon();
+  },
+  bulkCount: (el) => { bulkForm().count = el.value; bulkSave(); bulkPlanSoon(); },
+  bulkCost: (el) => { bulkForm().cost = el.value; bulkSave(); bulkPlanSoon(); },
+  bulkCredit: (el) => { const f = bulkForm(); f.accounts[el.dataset.id] = { ...(f.accounts[el.dataset.id] || {}), credits: el.value }; bulkSave(); bulkPlanSoon(); },
+  bulkMinDelay: (el) => { bulkForm().minDelay = el.value; bulkSave(); bulkPlanSoon(); },
+  bulkMaxDelay: (el) => { bulkForm().maxDelay = el.value; bulkSave(); bulkPlanSoon(); },
   toolSec: (el) => { S.tool.opts.sec = Number(el.value) || 0; },
   toolQuality: (el) => { S.tool.opts.quality = Number(el.value) || 85; const b = $('#tool-q'); if (b) b.textContent = el.value; },
   toolTol: (el) => { S.tool.opts.tol = Number(el.value) || 30; const b = $('#tool-tol'); if (b) b.textContent = el.value; },
@@ -2316,7 +2703,7 @@ document.addEventListener('drop', (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.target && e.target.id === 'license-key') { e.preventDefault(); ACTIONS.licenseActivate(); return; }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.target && e.target.id === 'chat-input') { e.preventDefault(); chatSend(); return; }
-  if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && /^[1-3]$/.test(e.key) && S.page === 'studio' && licensed() && !$('#dialog').open) {
+  if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && /^[1-4]$/.test(e.key) && S.page === 'studio' && licensed() && !$('#dialog').open) {
     e.preventDefault();
     studioTab(STUDIO_TABS[Number(e.key) - 1][0]);
     return;
@@ -2360,6 +2747,7 @@ async function init() {
   S.settings = S.info.settings;
   S.statuses = S.info.statuses || {};
   S.queue = S.info.queue;
+  if (S.info.bulk) S.bulk.st = S.info.bulk;
   S.license = S.info.license;
   S.update = S.info.update;
   S.flowOptions = S.info.flowOptions || {};
@@ -2382,6 +2770,19 @@ async function init() {
     if (same && S.page === 'auto' && $('#q-act')) { $('#q-act').textContent = q.activity; renderStatus(); return; }
     render();
   });
+  fc.on('bulk', (b) => {
+    const sig = (x) => (x.running ? 1 : 0) + '|' + (x.batch ? x.batch.id + x.batch.jobs.map((j) => j.status[0]).join('') + x.batch.accounts.map((a) => a.status).join(',') : '');
+    const before = S.bulk.st;
+    const doneBefore = before.batch ? before.batch.jobs.filter((j) => j.status === 'done').length : 0;
+    const changed = sig(b) !== sig(before);
+    S.bulk.st = b;
+    if (b.batch && b.batch.jobs.filter((j) => j.status === 'done').length > doneBefore) galleryRefreshSoon();
+    if (!changed) return;
+    if (before.running && !b.running && b.batch) toast(`${b.batch.stopped ? 'Bulk dihentikan' : 'Bulk selesai'} · durasi ${fmtDurLong(b.batch.finishedAt - b.batch.startedAt)}.`, b.batch.stopped ? 'info' : 'ok');
+    if (S.page === 'studio') render();
+  });
+  fc.on('bulk-activity', (t) => { S.bulk.st.activity = t; const el = $('#bulk-act'); if (el) el.textContent = t; });
+  setInterval(tickRuntime, 250); // 4×/detik → angka detik selalu tepat waktu
   fc.on('activity', (t) => { S.activity = t; const el = $('#act-text'); if (el) el.textContent = t; renderStatus(); });
   fc.on('license', (l) => {
     const was = licensed();

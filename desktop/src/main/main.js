@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu, Notification, systemPreferences, safeStorage, screen, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu, Notification, systemPreferences, safeStorage, screen, powerMonitor, nativeImage } = require('electron');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -42,6 +42,17 @@ const flowOptions = new Map();  // accountId → pilihan model/rasio yang dibaca
 
 const profileDir = (id) => path.join(app.getPath('userData'), 'profiles', id);
 const thumbsDir = () => path.join(app.getPath('userData'), 'thumbs');
+const THUMB_MAX = 480;
+/** Perkecil gambar untuk thumbnail (JPEG, sisi terpanjang THUMB_MAX px). null bila format tidak dikenal. */
+function smallThumb(img) {
+  if (!img || img.isEmpty()) return null;
+  const { width, height } = img.getSize();
+  if (!width || !height) return null;
+  const k = Math.min(1, THUMB_MAX / Math.max(width, height));
+  const out = k < 1 ? img.resize({ width: Math.max(1, Math.round(width * k)), height: Math.max(1, Math.round(height * k)), quality: 'good' }) : img;
+  return out.toJPEG(82);
+}
+const jpegUrl = (buf) => 'data:image/jpeg;base64,' + buf.toString('base64');
 
 function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
@@ -389,6 +400,13 @@ function registerIpc() {
     if (hit) {
       buffer = fs.readFileSync(path.join(thumbsDir(), hit));
       mime = { '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' }[path.extname(hit)] || 'image/jpeg';
+      if (buffer.length > 160 * 1024 && /png|jpeg/.test(mime)) { // cache lama berukuran penuh → perkecil sekali
+        const small = smallThumb(nativeImage.createFromBuffer(buffer));
+        if (small) {
+          try { fs.unlinkSync(path.join(thumbsDir(), hit)); fs.writeFileSync(path.join(thumbsDir(), item.mediaId + '.jpg'), small); } catch { /* biarkan */ }
+          return jpegUrl(small);
+        }
+      }
     } else {
       const s = await connected(id);
       const fresh = async () => { const m = await s.getMedia(item.mediaId).catch(() => ({})); return m.image || null; }; // URL dari record media (as29s)
@@ -400,9 +418,33 @@ function registerIpc() {
         ({ buffer, mime } = await s.fetchMedia(again));
       }
       if (!/^image\//.test(mime)) return null;
+      const small = /png|jpeg/.test(mime) ? smallThumb(nativeImage.createFromBuffer(buffer)) : null;
+      if (small) { fs.writeFileSync(path.join(thumbsDir(), item.mediaId + '.jpg'), small); return jpegUrl(small); }
       fs.writeFileSync(path.join(thumbsDir(), item.mediaId + ({ 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif' }[mime] || '.jpg')), buffer);
     }
     return `data:${mime};base64,${buffer.toString('base64')}`;
+  });
+  // thumbnail file unduhan (gambar & video) → { url } | { missing: true } | null; disimpan di cache per isi file
+  handle('files:thumb', async (p) => {
+    const rec = store.data.downloads.find((d) => d.path === p);
+    if (!rec) throw new Error('INVALID_FILE');
+    let stat;
+    try { stat = fs.statSync(p); } catch { return { missing: true }; }
+    fs.mkdirSync(thumbsDir(), { recursive: true });
+    const key = crypto.createHash('sha1').update(p + '|' + stat.size + '|' + stat.mtimeMs).digest('hex').slice(0, 24);
+    const cache = path.join(thumbsDir(), 'dl-' + key + '.jpg');
+    if (fs.existsSync(cache)) return { url: jpegUrl(fs.readFileSync(cache)) };
+    let small = null;
+    // Windows/macOS: thumbnail sistem (juga untuk video)
+    try { small = smallThumb(await nativeImage.createThumbnailFromPath(p, { width: THUMB_MAX, height: THUMB_MAX })); } catch { /* tidak didukung */ }
+    if (!small && /\.(png|jpe?g)$/i.test(p) && stat.size < 64 * 1024 * 1024) small = smallThumb(nativeImage.createFromPath(p));
+    if (!small && rec.mediaId && /^[A-Za-z0-9-]{1,128}$/.test(rec.mediaId)) { // video: poster dari Flow yang pernah dimuat galeri
+      const hit = fs.readdirSync(thumbsDir()).find((f) => f.startsWith(rec.mediaId + '.'));
+      if (hit) small = smallThumb(nativeImage.createFromPath(path.join(thumbsDir(), hit)));
+    }
+    if (!small) return null;
+    fs.writeFileSync(cache, small);
+    return { url: jpegUrl(small) };
   });
   handle('flow:download', async (id, item) => {
     const acc = account(id);

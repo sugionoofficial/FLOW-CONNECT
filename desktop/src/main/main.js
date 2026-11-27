@@ -645,11 +645,23 @@ function registerIpc() {
   });
 
   // Saldo kredit Google Flow per akun (dibaca dari panel "Account details" Flow; hanya membaca)
+  // Baca saldo kredit: sambungkan akun otomatis (seperti Bulk). Flow tampak keluar akun di mode tersembunyi →
+  // coba sekali lagi di jendela diperkecil walau akun belum pernah ditandai masuk (signedInAt kosong).
   handle('flow:credits', async (id) => {
     if (bulk.running) throw new Error('BULK_RUNNING');
+    if (queue.running) throw new Error('QUEUE_RUNNING');
+    if (logins.has(id)) throw new Error('LOGIN_IN_PROGRESS');
+    account(id);
     const s = await connectAccount(id);
-    const st = await s.status();
+    let st = await s.status();
+    if (!st.signedIn && s.mode === 'hidden') {
+      await s.relaunch('minimized');
+      st = await s.status();
+      if (st.signedIn) markHeadlessFailed(id, 'Flow keluar akun di mode tersembunyi');
+    }
+    await refreshStatus(id).catch(() => {});
     if (!st.signedIn) throw new Error('NOT_SIGNED_IN');
+    if (!account(id).signedInAt) { account(id).signedInAt = Date.now(); store.save(); }
     const credits = await s.readCredits();
     const a = account(id);
     a.credits = { value: credits, at: Date.now() };
@@ -672,17 +684,19 @@ function registerIpc() {
   handle('queue:stop', () => { queue.stop(); return queue.state(); });
 
   // Berkas
-  handle('files:pickImages', async () => {
+  // max: Studio 10 gambar; Bulk (satu gambar per prompt) sampai 300
+  const pickMax = (m) => Math.min(300, Math.max(1, Number(m) || 10));
+  handle('files:pickImages', async (max) => {
     const r = await dialog.showOpenDialog(win, {
       title: 'Pilih gambar referensi', properties: ['openFile', 'multiSelections'],
       filters: [{ name: 'Gambar', extensions: Object.keys(IMAGE_EXT).map((e) => e.slice(1)) }]
     });
-    const list = r.canceled ? [] : r.filePaths.filter(checkImage).slice(0, 10);
+    const list = r.canceled ? [] : r.filePaths.filter(checkImage).slice(0, pickMax(max));
     list.forEach((p) => allowedFiles.add(p));
     return list;
   });
-  handle('files:register', (paths) => {
-    const list = (Array.isArray(paths) ? paths : []).filter(checkImage).slice(0, 10);
+  handle('files:register', (paths, max) => {
+    const list = (Array.isArray(paths) ? paths : []).filter(checkImage).slice(0, pickMax(max));
     list.forEach((p) => allowedFiles.add(p));
     return list;
   });

@@ -96,6 +96,7 @@ class FlowSession extends EventEmitter {
     this.flowHost = new URL(this.flowUrl).host;
     this.agentCfg = o.agentCfg || { mediaHosts: ['flow-content.google', 'lh3.googleusercontent.com'] };
     this.uploads = o.uploads || new Set(); // media id gambar referensi yang diunggah aplikasi (bukan hasil generate)
+    this._refCache = new Map(); // "project|file|ukuran|waktu" → hasil unggah (Bulk: gambar yang sama cukup diunggah sekali per project)
     // hasil generate yang dikembalikan Flow ke aplikasi, per project → tetap tampil di galeri walau daftar Flow terlambat/berubah
     this.known = o.known || new Map();
     this.extraArgs = o.extraArgs || [];
@@ -548,27 +549,55 @@ class FlowSession extends EventEmitter {
   }
 
   /**
-   * Baca saldo kredit Google Flow akun ini: buka panel "Account details" → baca "N Google Flow credits" → tutup.
-   * HANYA membaca — panel itu juga memuat tombol "Sign out", jadi tidak ada klik lain selain tombol pembukanya.
+   * Baca saldo kredit Google Flow akun ini: buka panel "Account details" → baca "N Google Flow credits"
+   * (paket Google AI: "N AI credits") → tutup panel lewat "Close account panel" (panel ini tidak tertutup dengan Escape).
+   * HANYA membaca — panel itu juga memuat "Sign out", jadi tidak ada klik lain selain tombol buka & tutup panel.
+   * Gagal sekali → halaman Flow dimuat ulang lalu dicoba lagi. Galat CREDITS_NOT_FOUND membawa cuplikan isi panel.
    * @returns {Promise<number>}
    */
   readCredits({ timeoutMs = 8000 } = {}) {
     return this._exclusive(async () => {
       await this.beginWork();
+      let detail = null;
       try {
-        await this._closeOverlays();
-        let v = await this.call('creditsBalance').catch(() => null); // saldo kadang sudah tampil di halaman
-        if (!v) {
-          const b = await this._waitFor(() => this.call('accountDetailsButton'), 5000, 400);
-          if (!b) throw new Error('CREDITS_NOT_FOUND');
-          await this._click(b);
-          v = await this._waitFor(() => this.call('creditsBalance'), timeoutMs, 300);
-          await this._closeOverlays();
+        for (let attempt = 0; attempt < 2; attempt++) {
+          if (attempt) {
+            const st = await this.status().catch(() => ({}));
+            await this.navigate(st.projectId ? `https://flow.google.com/project/${st.projectId}?hl=en` : this.flowUrl).catch(() => {});
+            await sleep(2500);
+          }
+          await this._closeAccountPanel();
+          await this.call('scrollTopPage').catch(() => {});
+          let v = await this.call('creditsBalance').catch(() => null); // saldo kadang sudah tampil di halaman
+          if (!v) {
+            const b = await this._waitFor(() => this.call('accountDetailsButton'), 6000, 400);
+            if (!b) { detail = 'tombol "Account details" tidak ditemukan di halaman Flow'; continue; }
+            await this._click(b);
+            v = await this._waitFor(() => this.call('creditsBalance'), timeoutMs, 300);
+            if (!v) {
+              const txt = await this.call('accountPanelText').catch(() => '');
+              detail = txt ? `panel akun: "${txt}"` : 'panel akun tidak terbuka';
+            }
+            await this._closeAccountPanel();
+          }
+          if (v && Number.isFinite(v.credits)) return v.credits;
         }
-        if (!v || !Number.isFinite(v.credits)) throw new Error('CREDITS_NOT_FOUND');
-        return v.credits;
+        const e = new Error('CREDITS_NOT_FOUND');
+        e.detail = detail;
+        throw e;
       } finally { await this.endWork(); }
     });
+  }
+
+  /** Tutup panel akun Flow (tombol "Close account panel"), lalu menu/popover lain dengan Escape. */
+  async _closeAccountPanel() {
+    for (let i = 0; i < 2; i++) {
+      const c = await this.call('accountPanelClose').catch(() => null);
+      if (!c) break;
+      await this._click(c);
+      await sleep(400);
+    }
+    await this._closeOverlays();
   }
 
   /** Klik tombol "New project" Flow (dan tombol "Create with Google Flow" di halaman sambutan bila perlu). */
@@ -1086,17 +1115,50 @@ class FlowSession extends EventEmitter {
    * dengan penanda "@" yang menunjuk aset hasil unggahan. Gambar yang tidak disebut di prompt tetap ditandai di awal.
    * job: { prompt, images:[path], tags:[tag], options:{kind, sub} }
    * → { refs:[{tag, name, mediaId}], mentions:{ok:[], missing:[]}, frames:n }
+   *
+   * job.reuseRefs (Bulk): gambar yang sudah diunggah ke project ini dipakai ulang lewat "@" tanpa diunggah lagi.
+   * Bila Flow tidak lagi menawarkan gambar lama itu, semua gambar tugas ini diunggah ulang (sekali).
    */
   async prepareComposer(job, say = () => {}) {
+    if (!job.reuseRefs) return this._prepareComposer(job, say, false);
+    try { return await this._prepareComposer(job, say, true); } catch (e) {
+      if (!e.cachedRef) throw e;
+      say('Gambar lama tidak ditawarkan Flow — mengunggah ulang…');
+      for (const k of e.cachedRef) this._refCache.delete(k);
+      return this._prepareComposer(job, say, false);
+    }
+  }
+
+  _refKey(projectId, file) {
+    try { const st = fs.statSync(file); return `${projectId}|${file}|${st.size}|${Math.round(st.mtimeMs)}`; } catch { return null; }
+  }
+
+  async _prepareComposer(job, say, reuse) {
     const images = job.images || [];
     const tags = sanitizeTags(job.tags, images);
     const refs = [];
+    const keep = job.reuseRefs ? ((await this.status().catch(() => ({}))).projectId || null) : null;
+    const usedKeys = [];
     for (let i = 0; i < images.length; i++) {
+      const key = keep ? this._refKey(keep, images[i]) : null;
+      const hit = reuse && key ? this._refCache.get(key) : null;
+      if (hit) {
+        say(`Memakai gambar @${tags[i]} yang sudah ada di project…`);
+        refs.push({ ...hit, tag: tags[i] });
+        usedKeys.push(key);
+        continue;
+      }
       say(`Mengunggah gambar ${i + 1}/${images.length} ke Google Flow…`);
       const r = await this.uploadReference(images[i], tags[i]);
       refs.push(r);
+      if (key) {
+        if (this._refCache.size > 600) this._refCache.clear();
+        this._refCache.set(key, { mediaId: r.mediaId, name: r.name, stem: r.stem, tag: r.tag });
+      }
       await sleep(rand(800, 1600));
     }
+    // gambar pakai-ulang gagal dipasang → minta unggah ulang (lihat prepareComposer)
+    const fromCache = (e) => { if (usedKeys.length) e.cachedRef = usedKeys; return e; };
     const prompt = String(job.prompt || '');
     const o = job.options || {};
     const frames = o.kind === 'video' && o.sub === 'frames' && refs.length ? refs.slice(0, 2) : [];
@@ -1110,7 +1172,7 @@ class FlowSession extends EventEmitter {
     await this.clearPrompt();
     for (const r of frames) {
       say(`Memasang ${frames.indexOf(r) ? 'frame akhir' : 'frame awal'} @${r.tag}…`);
-      if (!(await this._attachFrame(r.stem))) throw fail('FRAME_NOT_ATTACHED', '@' + r.tag);
+      if (!(await this._attachFrame(r.stem))) throw fromCache(fail('FRAME_NOT_ATTACHED', '@' + r.tag));
       result.frames++;
     }
     const needChips = segments.some((sg) => sg.ref !== undefined || sg.mention !== undefined);
@@ -1132,7 +1194,7 @@ class FlowSession extends EventEmitter {
       } else if (sg.ref !== undefined) {
         const r = refs[sg.ref];
         say(`Menandai @${r.tag} di prompt…`);
-        if (!(await this._mention(r.stem))) throw fail('REFERENCE_NOT_ATTACHED', '@' + r.tag + (this.lastOffered && this.lastOffered.length ? ' (Flow menawarkan: ' + this.lastOffered.join(', ') + ')' : ''));
+        if (!(await this._mention(r.stem))) throw fromCache(fail('REFERENCE_NOT_ATTACHED', '@' + r.tag + (this.lastOffered && this.lastOffered.length ? ' (Flow menawarkan: ' + this.lastOffered.join(', ') + ')' : '')));
         result.mentions.ok.push(r.tag);
         prevChip = true;
       } else {
@@ -1143,7 +1205,7 @@ class FlowSession extends EventEmitter {
     // periksa: setiap gambar referensi harus terpasang sebagai chip sebelum Generate
     const chips = await this.call('mentionChips');
     const want = result.mentions.ok.length;
-    if (chips.length < want) throw fail('REFERENCE_NOT_ATTACHED', `${chips.length}/${want} chip`);
+    if (chips.length < want) throw fromCache(fail('REFERENCE_NOT_ATTACHED', `${chips.length}/${want} chip`));
     return result;
   }
 

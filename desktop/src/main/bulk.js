@@ -5,6 +5,9 @@
 //   semua akun — mis. 5 akun × 50 kredit, Omni 1.1 Flash 10 dtk (15 kredit) → 5 × 3 = 15 video.
 // • Satu tugas = satu kali Generate di Flow. Jeda acak per akun; jeda dilipatgandakan bila Flow menolak.
 // • Kredit habis → tugas pindah ke akun lain yang masih punya kredit; "unusual activity" → akun diistirahatkan.
+// • Gambar referensi: "shared" = gambar yang sama di semua tugas (maks. 10; Frame = 2 foto), atau
+//   "each" = satu gambar per prompt (gambar ke-i ↔ prompt ke-i, bergiliran; Frame = berpasangan awal+akhir), maks. 300.
+//   Gambar yang sama diunggah sekali per project lalu dipakai ulang (lihat FlowSession.prepareComposer reuseRefs).
 // • Batch menyimpan startedAt/finishedAt → timer runtime di Studio.
 const path = require('path');
 const crypto = require('crypto');
@@ -16,6 +19,8 @@ const { checkFrames, creditCost, durationFor } = require('./catalog');
 
 const MAX_BULK = 300;          // batas hasil per batch (gambar maupun video)
 const MAX_PROMPTS = 300;
+const MAX_SHARED_IMAGES = 10;
+const MAX_EACH_IMAGES = 300;
 const PROJECT_EVERY = 100;     // project Flow baru tiap 100 tugas per akun (project terlalu penuh → Flow melambat)
 const DELAY = { image: [8, 20], video: [15, 40] }; // jeda bawaan (detik) antar tugas di akun yang sama
 const MAX_BACKOFF = 8;
@@ -26,6 +31,29 @@ const JOB_FATAL = new Set(['FLOW_CONTENT_POLICY', 'INVALID_PROMPT', 'INVALID_IMA
 // galat yang membuat AKUN berhenti dipakai di batch ini (tugasnya dikembalikan ke antrean untuk akun lain)
 const ACCOUNT_FATAL = new Set(['NOT_SIGNED_IN', 'BROWSER_NOT_FOUND', 'BROWSER_LAUNCH_FAILED', 'PROFILE_IN_USE', 'BROWSER_CLOSED',
   'CDP_CONNECT_FAILED', 'UNKNOWN_ACCOUNT', 'LOGIN_IN_PROGRESS']);
+
+/**
+ * Satuan kerja dari prompt + gambar.
+ * @returns {{ refMode:'shared'|'each', images:string[], groups:number[][]|null, prompts:string[], units:number }}
+ */
+function bulkUnits(input, options) {
+  const refMode = input.refMode === 'each' ? 'each' : 'shared';
+  const frames = options.kind === 'video' && options.sub === 'frames';
+  const prompts = cleanPrompts(input.prompts);
+  const images = (Array.isArray(input.images) ? input.images : []).filter((x) => typeof x === 'string').slice(0, refMode === 'each' ? MAX_EACH_IMAGES : MAX_SHARED_IMAGES);
+  let groups = null;
+  if (refMode === 'each' && images.length) {
+    const size = frames ? 2 : 1;
+    if (images.length % size) {
+      const e = new Error('FRAMES_REQUIRED');
+      e.detail = `${images.length} foto — mode Frame per prompt butuh pasangan foto awal + akhir`;
+      throw e;
+    }
+    groups = [];
+    for (let i = 0; i + size <= images.length; i += size) groups.push(size === 2 ? [i, i + 1] : [i]);
+  } else checkFrames(options, images);
+  return { refMode, images, groups, prompts, units: Math.max(prompts.length, groups ? groups.length : 0, images.length && !groups ? 1 : 0) };
+}
 
 const clampInt = (v, lo, hi, def) => {
   const n = Math.round(Number(v));
@@ -122,8 +150,13 @@ class BulkRunner extends EventEmitter {
 
   plan(input) {
     const o = sanitizeStudio(input.options || {});
-    const prompts = cleanPrompts(input.prompts);
-    return planBulk({ kind: o.kind, count: input.count, perJob: o.count, prompts: prompts.length, accounts: this._accounts(input.accounts), cost: BulkRunner.costFor(o, input.cost) });
+    let u, refError = null;
+    try { u = bulkUnits(input, o); } catch (e) {
+      refError = { code: e.message, detail: e.detail || null };
+      u = { units: cleanPrompts(input.prompts).length, groups: null, refMode: input.refMode === 'each' ? 'each' : 'shared' };
+    }
+    const plan = planBulk({ kind: o.kind, count: input.count, perJob: o.count, prompts: u.units, accounts: this._accounts(input.accounts), cost: BulkRunner.costFor(o, input.cost) });
+    return { ...plan, refMode: u.refMode, units: u.units, groups: u.groups ? u.groups.length : 0, refError };
   }
 
   _accounts(list) {
@@ -141,16 +174,14 @@ class BulkRunner extends EventEmitter {
     if (this.isBusy()) throw new Error('QUEUE_RUNNING');
     const options = sanitizeStudio(input.options || {});
     const video = options.kind === 'video';
-    const prompts = cleanPrompts(input.prompts);
-    const images = (Array.isArray(input.images) ? input.images : []).slice(0, 10);
-    if (!prompts.length && !images.length) throw new Error('NOTHING_TO_SEND');
+    const { refMode, images, groups, prompts, units } = bulkUnits(input, options);
+    if (!units) throw new Error('NOTHING_TO_SEND');
     if (prompts.some((p) => p.length > 8000)) throw new Error('INVALID_PROMPT');
-    checkFrames(options, images);
     const accounts = this._accounts(input.accounts);
     if (!accounts.length) throw new Error('NO_ACCOUNTS');
     const cost = video ? BulkRunner.costFor(options, input.cost) : 0;
     if (video && !(cost > 0)) throw new Error('UNKNOWN_COST');
-    const plan = planBulk({ kind: options.kind, count: input.count, perJob: options.count, prompts: prompts.length, accounts, cost });
+    const plan = planBulk({ kind: options.kind, count: input.count, perJob: options.count, prompts: units, accounts, cost });
     if (!plan.jobs) throw new Error(video ? 'NOT_ENOUGH_CREDITS' : 'NOTHING_TO_SEND');
     const list = prompts.length ? prompts : [''];
     const jobs = [];
@@ -158,7 +189,7 @@ class BulkRunner extends EventEmitter {
     for (let i = 0; i < plan.jobs; i++) {
       const n = Math.min(plan.perJob, left);
       left -= n;
-      jobs.push({ id: crypto.randomUUID(), n: i + 1, p: i % list.length, count: n, status: 'pending', accountId: null, attempts: 0, results: [], error: null, detail: null });
+      jobs.push({ id: crypto.randomUUID(), n: i + 1, p: i % list.length, g: groups ? i % groups.length : null, count: n, status: 'pending', accountId: null, attempts: 0, results: [], error: null, detail: null });
     }
     const [dmin, dmax] = DELAY[options.kind];
     const minDelay = clampInt(input.minDelay, 3, 600, dmin);
@@ -168,7 +199,7 @@ class BulkRunner extends EventEmitter {
     this.store.data.bulk = {
       id: crypto.randomUUID(), createdAt: now, startedAt: now, finishedAt: null, updatedAt: now, stopped: false,
       kind: options.kind, model: options.model, duration: options.duration, cost, perJob: plan.perJob, target: plan.target,
-      options: { ...options, count: plan.perJob }, images, tags: sanitizeTags(input.tags, images), prompts: list,
+      options: { ...options, count: plan.perJob }, images, refMode, groups, tags: groups ? null : sanitizeTags(input.tags, images), prompts: list,
       parallel: !!input.parallel, newProject: input.newProject !== false, autoDownload: s.auto.autoDownload,
       minDelay, maxDelay: Math.max(minDelay, clampInt(input.maxDelay, 3, 1200, dmax)),
       folder: `Bulk ${stamp.getFullYear()}-${pad(stamp.getMonth() + 1)}-${pad(stamp.getDate())} ${pad(stamp.getHours())}.${pad(stamp.getMinutes())}.${pad(stamp.getSeconds())}`,
@@ -315,6 +346,7 @@ class BulkRunner extends EventEmitter {
     const video = b.kind === 'video';
     const tag = `${acct.label} · #${job.n}/${b.jobs.length}`;
     const prompt = b.prompts[job.p] || '';
+    const { images, tags } = jobImages(b, job);
     try {
       this._log(`[${tag}] Menyambungkan ke Google Flow…`);
       const session = await this.getSession(acct.id);
@@ -323,7 +355,7 @@ class BulkRunner extends EventEmitter {
         await session.newProject().catch((e) => this._log(`[${tag}] Project baru belum dibuat: ${e.message}`));
       }
       acct.jobsRun++;
-      const res = await session.generate({ prompt, images: b.images, tags: b.tags, options: { ...b.options, count: job.count } }, {
+      const res = await session.generate({ prompt, images, tags, reuseRefs: true, options: { ...b.options, count: job.count } }, {
         onLog: (t) => this._log(`[${tag}] ${t}`),
         shouldStop: () => this.stopRequested,
         timeoutMs: this.store.data.auto.timeoutMin * 60000,
@@ -334,7 +366,8 @@ class BulkRunner extends EventEmitter {
       job.results = [];
       if (b.autoDownload) {
         const dir = path.join(this.store.data.downloadDir, b.folder);
-        const base = `${String(job.n).padStart(3, '0')} ${prompt.replace(/\s+/g, ' ').slice(0, 40)}`.trim();
+        const label = b.groups && images.length ? path.basename(images[0]).replace(/\.[^.]+$/, '') : prompt.replace(/\s+/g, ' ');
+        const base = `${String(job.n).padStart(3, '0')} ${label.slice(0, 40)}`.trim();
         for (const item of res.items) {
           this._log(`[${tag}] Mengunduh hasil…`);
           const file = await session.download({ ...item, title: base }, dir);
@@ -405,6 +438,15 @@ class BulkRunner extends EventEmitter {
   }
 }
 
+/** Gambar referensi sebuah tugas: semua gambar (shared) atau kelompoknya sendiri (each). */
+function jobImages(b, job) {
+  if (b.groups && b.groups.length && job.g !== null && job.g !== undefined) {
+    const images = (b.groups[job.g] || []).map((i) => b.images[i]).filter(Boolean);
+    return { images, tags: sanitizeTags(null, images) };
+  }
+  return { images: b.images || [], tags: b.tags || sanitizeTags(null, b.images || []) };
+}
+
 function cleanPrompts(list) {
   const arr = Array.isArray(list) ? list : String(list || '').split(/\r?\n/);
   return arr.map((p) => String(p || '').trim()).filter(Boolean).slice(0, MAX_PROMPTS);
@@ -417,4 +459,4 @@ function fmtDuration(ms) {
   return h ? `${h}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`;
 }
 
-module.exports = { BulkRunner, planBulk, cleanPrompts, fmtDuration, MAX_BULK, DELAY };
+module.exports = { BulkRunner, planBulk, bulkUnits, jobImages, cleanPrompts, fmtDuration, MAX_BULK, DELAY };

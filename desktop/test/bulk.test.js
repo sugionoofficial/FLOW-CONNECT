@@ -2,7 +2,7 @@
 // Bulk Generate: rencana kredit per akun, antre lintas akun, batas 300, perpindahan saat kredit habis, timer batch.
 const test = require('node:test');
 const assert = require('node:assert');
-const { BulkRunner, planBulk, fmtDuration, MAX_BULK } = require('../src/main/bulk');
+const { BulkRunner, planBulk, bulkUnits, jobImages, fmtDuration, MAX_BULK } = require('../src/main/bulk');
 const { creditCost, FREE_DAILY_CREDITS } = require('../src/main/catalog');
 
 const ACCS = [1, 2, 3, 4, 5].map((i) => ({ id: 'a' + i, label: 'Akun ' + i }));
@@ -160,4 +160,58 @@ test('Bulk: wajib Mode Otomatis, akun & kredit; berhenti → tugas "dihentikan";
   assert.ok(before < 50);
   assert.strictEqual(fmtDuration(65000), '01:05');
   assert.strictEqual(fmtDuration(3723000), '1:02:03');
+});
+
+test('Gambar referensi Bulk: "sama untuk semua" (maks. 10) vs "satu per prompt" (maks. 300, Frame = pasangan)', async () => {
+  const img = (n) => Array.from({ length: n }, (_, i) => `/r/foto ${i + 1}.png`);
+  const IMG = { kind: 'image' }, FR = { kind: 'video', sub: 'frames' }, ING = { kind: 'video', sub: 'ingredients' };
+  // sama untuk semua: dibatasi 10, satu set untuk semua tugas
+  let u = bulkUnits({ prompts: ['a', 'b'], images: img(12) }, IMG);
+  assert.strictEqual(u.refMode, 'shared');
+  assert.strictEqual(u.images.length, 10);
+  assert.strictEqual(u.groups, null);
+  assert.strictEqual(u.units, 2);
+  assert.strictEqual(bulkUnits({ prompts: [], images: img(1) }, IMG).units, 1); // gambar saja tanpa prompt → 1 variasi
+  assert.throws(() => bulkUnits({ prompts: ['a'], images: img(3) }, FR), /FRAMES_REQUIRED/);
+  // satu per prompt: gambar i ↔ prompt i, jumlah variasi = yang terbanyak
+  u = bulkUnits({ prompts: ['a', 'b'], images: img(5), refMode: 'each' }, ING);
+  assert.deepStrictEqual(u.groups, [[0], [1], [2], [3], [4]]);
+  assert.strictEqual(u.units, 5);
+  assert.strictEqual(bulkUnits({ prompts: [], images: img(320), refMode: 'each' }, IMG).units, 300);
+  // Frame per prompt: pasangan awal+akhir; ganjil → galat dengan rincian
+  u = bulkUnits({ prompts: ['gerak'], images: img(6), refMode: 'each' }, FR);
+  assert.deepStrictEqual(u.groups, [[0, 1], [2, 3], [4, 5]]);
+  assert.strictEqual(u.units, 3);
+  assert.throws(() => bulkUnits({ prompts: ['x'], images: img(5), refMode: 'each' }, FR), (e) => e.message === 'FRAMES_REQUIRED' && /5 foto/.test(e.detail));
+  // jobImages: kelompok per tugas; tag dari nama file
+  const b = { images: img(4), groups: [[0, 1], [2, 3]], tags: null };
+  assert.deepStrictEqual(jobImages(b, { g: 1 }).images, ['/r/foto 3.png', '/r/foto 4.png']);
+  assert.strictEqual(jobImages(b, { g: 1 }).tags.length, 2);
+  assert.deepStrictEqual(jobImages({ images: img(2), groups: null, tags: ['a', 'b'] }, { g: null }), { images: img(2), tags: ['a', 'b'] });
+
+  // rencana: refError tidak melempar, jumlah variasi ikut gambar
+  const store = mkStore(ACCS.slice(0, 2));
+  const seen = [];
+  const get = async (id) => ({
+    newProject: async () => {},
+    generate: async (job) => { seen.push([id, job.prompt, job.images, job.reuseRefs]); return { items: [{ mediaId: 'm' + seen.length }], projectId: 'p' }; }
+  });
+  const r = new BulkRunner({ store, getSession: get, unitMs: 1 });
+  let p = r.plan({ prompts: ['x'], images: img(3), refMode: 'each', options: FR, accounts: [{ id: 'a1', credits: 50 }] });
+  assert.strictEqual(p.refError.code, 'FRAMES_REQUIRED');
+  p = r.plan({ prompts: ['x'], images: img(4), refMode: 'each', options: IMG, accounts: [{ id: 'a1' }] });
+  assert.deepStrictEqual([p.refError, p.refMode, p.units, p.groups, p.target], [null, 'each', 4, 4, 4]);
+  // berjalan: tiap tugas memakai gambarnya sendiri, prompt bergiliran
+  r.start({ prompts: ['p1', 'p2'], images: img(4), refMode: 'each', options: { kind: 'image', count: 1 }, accounts: [{ id: 'a1' }, { id: 'a2' }], minDelay: 3, maxDelay: 3 });
+  const res = await done(r);
+  assert.strictEqual(res.done, 4);
+  const byImg = Object.fromEntries(seen.map((x) => [x[2][0], x[1]]));
+  assert.deepStrictEqual(byImg, { '/r/foto 1.png': 'p1', '/r/foto 2.png': 'p2', '/r/foto 3.png': 'p1', '/r/foto 4.png': 'p2' });
+  assert.ok(seen.every((x) => x[2].length === 1 && x[3] === true));
+  // sama untuk semua: setiap tugas membawa set yang sama
+  seen.length = 0;
+  r.start({ prompts: ['p1', 'p2', 'p3'], images: img(2), options: { kind: 'image', count: 1 }, accounts: [{ id: 'a1' }], minDelay: 3, maxDelay: 3 });
+  await done(r);
+  assert.strictEqual(seen.length, 3);
+  assert.ok(seen.every((x) => x[2].length === 2));
 });

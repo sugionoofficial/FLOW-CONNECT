@@ -74,7 +74,11 @@ const MOCK = `(() => {
       const target = Math.min(inp.count || (video ? cap : inp.prompts.length * (inp.options.count || 1)), 300, cap);
       let left = target;
       accs.forEach((a) => { a.planned = video ? Math.min(a.capacity, left) : Math.ceil(target / accs.length); left -= a.planned; });
-      return { kind: inp.options.kind, perJob: video ? 1 : inp.options.count, cost, target, jobs: target, capacity: cap, credits: target * cost, accounts: accs, warnings: accs.some((a) => a.credits === null) ? ['UNKNOWN_CREDITS'] : [] };
+      const fr = video && inp.options.sub === 'frames';
+      const each = inp.refMode === 'each' && inp.images.length;
+      const refError = each && fr && inp.images.length % 2 ? { code: 'FRAMES_REQUIRED', detail: inp.images.length + ' foto — mode Frame per prompt butuh pasangan foto awal + akhir' } : null;
+      const groups = each && !refError ? inp.images.length / (fr ? 2 : 1) : 0;
+      return { kind: inp.options.kind, perJob: video ? 1 : inp.options.count, cost, target, jobs: target, capacity: cap, credits: target * cost, accounts: accs, warnings: accs.some((a) => a.credits === null) ? ['UNKNOWN_CREDITS'] : [], refMode: inp.refMode, groups, units: Math.max(inp.prompts.length, groups), refError };
     },
     'bulk:start': (inp) => {
       window.__bulkStart = inp;
@@ -100,8 +104,8 @@ const MOCK = `(() => {
       { id: '22222222-2222-2222-2222-222222222222', provider: 'opencode', provider_name: 'OpenCode Console', model: 'deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash', category: 'chat', is_default: false, ready: true }
     ].concat(window.__catExtra || []); },
     'assistant:chat': (req) => new Promise((res) => setTimeout(() => res({ reply: 'Siap! Ini prompt untuk **' + (req.mode === 'image' ? 'gambar' : 'video') + '** kamu:\\n\\n\\u0060\\u0060\\u0060prompt\\nAerial drone shot slowly gliding over Bali rice terraces at sunrise, soft mist, cinematic\\n\\u0060\\u0060\\u0060\\n\\nMau saya buat versi 9:16?', model: { id: req.model, label: 'GPT 5 Nano' } }), 300)),
-    'files:pickImages': () => ['/foto/Kucing Oren.png', '/foto/latar.jpg'],
-    'files:register': (p) => p,
+    'files:pickImages': (max) => { window.__pickMax = max; return ['/foto/Kucing Oren.png', '/foto/latar.jpg']; },
+    'files:register': (p, max) => { window.__regMax = max; return p; },
     'files:preview': () => svg(['#888', '#ccc']),
     'skills:catalog': () => [{ id: 'admin-1', name: 'Promo Ramadan', description: 'Skill dari admin', category: 'image', icon: 'sparkles', template: 'Poster promo Ramadan untuk {Produk}, nuansa hijau emas', settings: { ratio: '9:16' }, refs: { min: 0, max: 0 }, source: 'admin' }],
     'skills:mine': () => window.__mine || [],
@@ -518,6 +522,7 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   assert.ok(await ev('document.querySelector("[data-change=bulkAcc][data-id=a1]").checked && !document.querySelector("[data-change=bulkAcc][data-id=a2]").checked'), 'akun yang sudah masuk terpilih otomatis');
   await ev(`document.querySelector('[data-change=bulkAcc][data-id=a2]').click()`);
   await sleep(300);
+  assert.ok(await ev('!document.querySelector("[data-act=bulkReadCredits][data-id=a2]").disabled'), 'kredit akun yang belum ditandai masuk tetap bisa dibaca (disambungkan otomatis)');
   await ev(`document.querySelector('[data-act=bulkReadCredits][data-id=a1]').click()`);
   await sleep(400);
   assert.ok(await ev('window.__calls.includes("flow:credits")'), 'kredit dibaca dari Flow');
@@ -555,6 +560,40 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   await ev(`document.querySelector('[data-act=bulkView][data-v=form]').click()`);
   await sleep(200);
   assert.ok(await ev('!!document.querySelector(".bulk-form")'), 'batch baru');
+  // gambar referensi Bulk: "sama untuk semua" (maks. 10) ↔ "satu per prompt" (maks. 300; Frame = pasangan awal + akhir)
+  assert.ok(await ev('!!document.querySelector(".bulk-refs #bulk-drop") && document.querySelector("[data-act=bulkRefMode][data-v=shared]").classList.contains("on")'), 'bagian gambar referensi di Bulk');
+  await ev(`document.querySelector('.bulk-form [data-act=studioOpt][data-k=sub][data-v=ingredients]').click()`);
+  await sleep(200);
+  await ev(`document.querySelector('[data-act=bulkPickImages]').click()`);
+  await sleep(500);
+  assert.strictEqual(await ev('window.__pickMax'), 10);
+  assert.strictEqual(await ev('document.querySelectorAll(".bulk-refs .thumb:not(.add) img").length'), 2, 'thumbnail referensi');
+  assert.strictEqual(await ev('document.querySelector("#bulk-ref-count").textContent'), '2/10');
+  await ev(`(() => { const t = document.querySelector('#bulk-prompts'); t.value = 'Kucing menari'; t.selectionStart = t.selectionEnd = 0; document.querySelector('.bulk-refs .reftag').click(); })()`);
+  await sleep(400);
+  assert.match(await ev('document.querySelector("#bulk-prompts").value'), /^@\S+ Kucing menari$/, 'klik @tag → disisipkan ke prompt');
+  assert.deepStrictEqual(await ev('[window.__bulkIn.refMode, window.__bulkIn.images.length, window.__bulkIn.tags.length]'), ['shared', 2, 2]);
+  await ev(`document.querySelector('[data-act=bulkRefMode][data-v=each]').click()`);
+  await sleep(200);
+  await ev(`document.querySelector('.bulk-form [data-act=studioOpt][data-k=sub][data-v=frames]').click()`);
+  await sleep(200);
+  await ev(`document.querySelector('[data-act=bulkPickImages]').click()`);
+  await sleep(500);
+  assert.deepStrictEqual(await ev('[window.__pickMax, window.__regMax]'), [300, 300], 'satu per prompt: pilih sampai 300');
+  assert.deepStrictEqual(await ev('[...document.querySelectorAll(".bulk-refs .thumb .tag")].map((t) => t.textContent)'), ['1 awal', '1 akhir', '2 awal', '2 akhir'], 'Frame per prompt = pasangan');
+  assert.deepStrictEqual(await ev('[window.__bulkIn.refMode, window.__bulkIn.images.length, window.__bulkIn.tags]'), ['each', 4, null]);
+  await ev(`document.querySelector('[data-act=bulkRemoveImage][data-i="3"]').click()`);
+  await sleep(400);
+  assert.ok(await ev('document.querySelector(".bulk-refs").textContent.includes("3 foto") && document.querySelector("#bulk-start").disabled'), 'jumlah foto ganjil → galat & tombol mulai nonaktif');
+  assert.ok(await ev('document.querySelector("#bulk-plan").textContent.includes("pasangan")'));
+  await ev(`document.querySelector('[data-act=bulkRemoveImage][data-i="2"]').click()`);
+  await sleep(400);
+  assert.ok(await ev('!document.querySelector("#bulk-start").disabled && document.querySelector("#bulk-plan").textContent.includes("1 pasang foto")'), 'pasangan lengkap → siap: ' + await ev('document.querySelector("#bulk-plan").textContent'));
+  assert.strictEqual(await ev('JSON.parse(localStorage.getItem("fc.bulk")).refMode'), 'each', 'mode referensi tersimpan');
+  if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'studio-bulk-refs.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  await ev(`document.querySelector('[data-act=bulkClearImages]').click()`);
+  await ev(`document.querySelector('[data-act=bulkRefMode][data-v=shared]').click()`);
+  await sleep(200);
   await ev(`document.querySelector('[data-act=studioTab][data-tab=buat]').click()`);
   await sleep(150);
   // pembaruan ditemukan otomatis di latar (tanpa klik "Periksa pembaruan") → bilah + toast + lencana langsung muncul

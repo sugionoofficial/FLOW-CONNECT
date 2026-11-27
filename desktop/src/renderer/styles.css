@@ -886,9 +886,15 @@ button.runtime-pill:hover { background: var(--hover); }
 .bulk-cred { display: flex; align-items: center; gap: 6px; }
 .bulk-cred .input.num { width: 76px; height: 30px; }
 .bulk-cred .cred-at { min-width: 84px; }
-.refs-mini { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius); background: var(--card-2); border: 1px dashed var(--stroke-2); color: var(--text-2); }
-.refs-mini .btn { margin-left: auto; }
-.refs-mini.bad { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
+.bulk-refs { display: grid; gap: 8px; padding: 10px 12px; border-radius: var(--radius); background: var(--card-2); border: 1px solid var(--stroke); }
+.bulk-refs .refs-head { display: flex; align-items: center; gap: 10px; margin: 0; flex-wrap: wrap; }
+.bulk-refs .refs-head .right { margin-left: auto; }
+.seg.mini { display: inline-grid; grid-template-columns: auto auto; padding: 2px; gap: 2px; border-radius: 8px; background: var(--card); }
+.seg.mini .seg-btn { height: 28px; padding: 0 10px; font-size: 12px; gap: 6px; }
+.bulk-refs .ref-row { max-height: 230px; overflow-y: auto; }
+.bulk-refs .ref-row .thumb { width: 58px; height: 58px; }
+.thumb.more { background: var(--card); display: grid; place-content: center; text-align: center; color: var(--text-2); gap: 0; }
+.bulk-refs .hrow:empty { display: none; }
 .grow-0 { flex: 0 0 auto; }
 .plan-head { display: flex; align-items: center; gap: 10px; font-size: 17px; font-family: var(--font-display); }
 .plan-head .ic { color: var(--accent); }

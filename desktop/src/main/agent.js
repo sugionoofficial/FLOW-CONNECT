@@ -4,7 +4,7 @@
 // ambil file media, mencari kolom prompt / input file / tombol Generate.
 // Tidak pernah membuat token reCAPTCHA — Generate selalu lewat tombol UI Flow sendiri.
 
-const AGENT_VERSION = 10;
+const AGENT_VERSION = 11;
 
 /* eslint-disable */
 function fcAgent(V, cfg) {
@@ -686,51 +686,95 @@ function fcAgent(V, cfg) {
   }
 
   // ---------- Saldo kredit Flow (panel "Account details") ----------
-  // HANYA membaca: panel ini juga memuat "Sign out" — jangan pernah klik apa pun di dalamnya.
-  var ACCOUNT_BTN = /^(account details|detail akun|google account:?.*)$/i;
+  // HANYA membaca: panel ini juga memuat "Sign out" — selain tombol pembuka & tombol tutup panel, jangan klik apa pun.
+  var SIGN_OUT = /sign ?out|log ?out|keluar|switch account|ganti akun|add account|tambah akun/i;
   function accountDetailsButton() {
-    var els = document.querySelectorAll('button, [role="button"], a[aria-label]');
-    var best = null;
+    var els = document.querySelectorAll('button, [role="button"]');
+    var exact = null, loose = null;
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (!visible(el)) continue;
+      var aria = (el.getAttribute('aria-label') || '').trim();
+      var lab = aria || labelOf(el);
+      if (SIGN_OUT.test(lab)) continue;
+      if (/^(account details|detail akun|account menu|menu akun)$/i.test(aria) || /^(account details|detail akun)$/i.test(lab)) { exact = el; break; }
+      // tombol avatar/paket: label tersembunyi "Account details" di dalamnya, atau aria "Google Account: …"
+      if (!loose && (/^google account\b/i.test(aria) || /account details|detail akun/i.test(el.textContent || ''))) loose = el;
+    }
+    var hit = exact || loose;
+    return hit ? box(hit) : null;
+  }
+  // tombol "Close account panel" (panel akun Flow tidak tertutup dengan Escape)
+  function accountPanelClose() {
+    var els = document.querySelectorAll('button, [role="button"]');
     for (var i = 0; i < els.length; i++) {
       var el = els[i];
       if (!visible(el)) continue;
       var lab = (el.getAttribute('aria-label') || labelOf(el) || '').trim();
-      if (/sign ?out|log ?out|keluar/i.test(lab)) continue;
-      if (/^(account details|detail akun)$/i.test(lab)) return box(el);
-      if (!best && ACCOUNT_BTN.test(lab)) best = el;
+      if (/^(close account panel|tutup panel akun|close account details)$/i.test(lab)) return box(el);
     }
-    return best ? box(best) : null;
+    return null;
   }
-  var CREDITS_RE = /(\d[\d.,]*)\s*(?:google\s+)?flow\s+credits?|(?:google\s+)?flow\s+credits?\D{0,24}?(\d[\d.,]*)/i;
-  function creditsNumber(t) {
-    var m = CREDITS_RE.exec(String(t || '').replace(/\s+/g, ' '));
-    if (!m) return null;
-    var n = parseInt((m[1] || m[2] || '').replace(/[.,]/g, ''), 10);
-    return isFinite(n) && n >= 0 && n < 10000000 ? n : null;
+  var CREDIT_WORD = '(?:google\\s+)?(?:flow\\s+|ai\\s+)?(?:credits?|kredit)';
+  var CREDITS_A = new RegExp('(\\d[\\d.,]*)\\s*' + CREDIT_WORD + '(?!\\s*(?:cost|per))', 'i');
+  var CREDITS_B = new RegExp('(?:google\\s+)?(?:flow|ai)\\s+(?:credits?|kredit)\\D{0,30}?(\\d[\\d.,]*)', 'i');
+  function toNum(t) {
+    var n = parseInt(String(t || '').replace(/[.,\s]/g, ''), 10);
+    return isFinite(n) && n >= 0 && n < 100000000 ? n : null;
   }
-  function creditsBalance() {
-    // tautan "N Google Flow credits" di panel akun (utama), lalu elemen teks terkecil yang memuatnya
-    var links = document.querySelectorAll('a[href], [role="link"], button, [role="button"], [role="menuitem"]');
-    for (var i = 0; i < links.length; i++) {
-      if (!visible(links[i])) continue;
-      var n = creditsNumber(labelOf(links[i]) + ' ' + (links[i].textContent || ''));
-      if (n !== null) return { credits: n };
-    }
+  function creditsNumber(t, loose) {
+    t = String(t || '').replace(/\s+/g, ' ');
+    if (/add (ai )?credits|get (more )?credits|beli kredit|tambah kredit/i.test(t) && !/\d/.test(t.replace(/add (ai )?credits/ig, ''))) return null;
+    var m = CREDITS_B.exec(t) || (loose ? CREDITS_A.exec(t) : (/\b(flow|ai|google)\b/i.test(t) && CREDITS_A.exec(t)));
+    return m ? toNum(m[1]) : null;
+  }
+  // panel akun yang sedang terbuka: overlay/dialog yang memuat tombol tutup panel, alamat email, atau "credits"
+  function accountPanel() {
     var ov = overlays();
     for (var j = ov.length - 1; j >= 0; j--) {
-      var els = ov[j].querySelectorAll('*');
+      if (ov[j].querySelector('.credit-cost-label')) continue; // popover setelan (label biaya), bukan panel akun
+      var t = ov[j].textContent || '';
+      if (/(flow|ai)\s+credits?|kredit|sign ?out|close account panel|@[a-z0-9.-]+\.[a-z]{2,}/i.test(t) || ov[j].querySelector('[aria-label="Close account panel"]')) return ov[j];
+    }
+    var c = accountPanelClose();
+    if (c) {
+      var el = document.elementFromPoint(c.x, c.y);
+      for (var k = 0; el && k < 12; k++, el = el.parentElement) if ((el.textContent || '').length > 40) return el;
+    }
+    return null;
+  }
+  function creditsBalance() {
+    // 1) tautan/tombol "N Google Flow credits" (paket gratis) / "N AI credits" (paket Google AI)
+    var links = document.querySelectorAll('a[href], [role="link"], button, [role="button"], [role="menuitem"]');
+    for (var i = 0; i < links.length; i++) {
+      if (!visible(links[i]) || SIGN_OUT.test(labelOf(links[i]))) continue;
+      var n = creditsNumber(labelOf(links[i]) + ' ' + (links[i].textContent || ''), false);
+      if (n !== null) return { credits: n, via: 'link' };
+    }
+    // 2) teks terkecil di panel akun yang memuat angka + "credits"
+    var panel = accountPanel();
+    if (panel) {
+      var els = panel.querySelectorAll('*');
       for (var k = els.length - 1; k >= 0; k--) {
         var el = els[k];
-        if (el.children.length > 3 || !visible(el)) continue;
-        var v = creditsNumber(el.textContent);
-        if (v !== null) return { credits: v };
+        if (el.children.length > 4 || !visible(el)) continue;
+        var v = creditsNumber(el.textContent, true);
+        if (v !== null) return { credits: v, via: 'panel' };
       }
     }
     return null;
   }
+  // diagnosa bila saldo tak terbaca: cuplikan teks panel akun (email disamarkan)
+  function accountPanelText() {
+    var p = accountPanel();
+    var t = p ? (p.innerText || p.textContent || '') : '';
+    return t.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '•••@•••').replace(/\s+/g, ' ').trim().slice(0, 160);
+  }
+  function scrollTopPage() { try { window.scrollTo(0, 0); } catch (e) { /* abaikan */ } return true; }
 
   var api = {
-    accountDetailsButton: accountDetailsButton, creditsBalance: creditsBalance,
+    accountDetailsButton: accountDetailsButton, creditsBalance: creditsBalance, accountPanelClose: accountPanelClose,
+    accountPanelText: accountPanelText, scrollTopPage: scrollTopPage,
     status: status, listMedia: listMedia, getMedia: getMedia, fetchB64: fetchB64, focusPrompt: focusPrompt,
     promptText: promptText, setPromptFallback: setPromptFallback, markFileInput: markFileInput, pasteFiles: pasteFiles,
     findGenerate: findGenerate, find: find, newProjectTarget: newProjectTarget, settingsTrigger: settingsTrigger,

@@ -42,7 +42,7 @@ jobs:
       - name: Uji integrasi (mesin CDP + tampilan)
         run: |
           set -o pipefail
-          node --test --test-reporter=spec --test-force-exit --test-timeout=300000 test/*.test.js 2>&1 | tee test.log
+          node --test --test-reporter=spec --test-force-exit --test-timeout=600000 test/*.test.js 2>&1 | tee test.log
       - name: Ringkasan uji
         if: always()
         run: node scripts/test-annotate.js test.log

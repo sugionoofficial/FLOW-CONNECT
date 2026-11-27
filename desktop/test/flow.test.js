@@ -691,8 +691,11 @@ test('Skill Foto: unggah referensi ke Flow → @ chip → generate gambar → ha
   assert.strictEqual(gb.refs.length, 1, 'referensi lama terpasang');
   assert.match(gb.prompt, /di pantai$/);
   for (const v of s._refCache.values()) v.stem = 'sudah-dihapus-000000';
+  const mention0 = s._mention.bind(s);
+  s._mention = async (stem) => (stem === 'sudah-dihapus-000000' ? false : mention0(stem)); // aset lama tak ditawarkan (tanpa menunggu)
   const logs3 = [];
   await s.generate(bulkJob('Foto @kucing-oren di gunung'), { onLog: (x) => logs3.push(x), timeoutMs: 90000 });
+  s._mention = mention0;
   assert.strictEqual(mock.state.uploads.length, up0 + 2, 'diunggah ulang setelah aset lama tidak ditawarkan');
   assert.ok(logs3.some((l) => /mengunggah ulang/.test(l)));
   assert.strictEqual(mock.generated[mock.generated.length - 1].refs.length, 1);

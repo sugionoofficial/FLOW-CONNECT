@@ -17,6 +17,7 @@ const SRC = path.join(__dirname, '..', 'src');
 
 const MOCK = `(() => {
   const now = Date.now();
+  const day0 = new Date(new Date(now).setHours(12, 0, 0, 0)).getTime(); // tengah hari ini → pengelompokan tanggal tidak bergantung jam uji
   const accounts = [
     { id: 'a1', label: 'Kerja', email: 'studio.kerja@gmail.com', createdAt: now, signedInAt: now },
     { id: 'a2', label: 'Pribadi', email: null, createdAt: now, headlessFailedAt: now, headlessReason: 'Flow keluar akun' }
@@ -27,8 +28,11 @@ const MOCK = `(() => {
     downloadDir: 'C:\\\\Users\\\\Sugiono\\\\Downloads\\\\FLOW CONNECT', mode: 'auto', autoAck: '2026-11-25T00:00:00Z',
     auto: { minDelay: 45, maxDelay: 120, maxPerRun: 10, timeoutMin: 8, autoDownload: true, stopOnError: true },
     downloads: [
-      { path: 'C:\\\\x\\\\Kucing neon - 1a2b3c4d.png', name: 'Kucing neon - 1a2b3c4d.png', mediaId: 'm1', accountId: 'a1', at: now - 60000 },
-      { path: 'C:\\\\x\\\\Hujan di sawah - 9f8e7d6c.mp4', name: 'Hujan di sawah - 9f8e7d6c.mp4', mediaId: 'm2', accountId: 'a1', at: now - 3600000 }
+      { path: 'C:\\\\x\\\\Kucing neon - 1a2b3c4d.png', name: 'Kucing neon - 1a2b3c4d.png', mediaId: 'm1', accountId: 'a1', at: day0 - 60000 },
+      { path: 'C:\\\\x\\\\Hujan di sawah - 9f8e7d6c.mp4', name: 'Hujan di sawah - 9f8e7d6c.mp4', mediaId: 'm2', accountId: 'a1', at: day0 - 3600000 },
+      { path: 'C:\\\\x\\\\Kopi tubruk pagi - 5e6f7a8b.png', name: 'Kopi tubruk pagi - 5e6f7a8b.png', mediaId: 'm3', accountId: 'a1', at: day0 - 24 * 3600000 },
+      { path: 'C:\\\\x\\\\Kebun kopi berkabut - 0a1b2c3d.png', name: 'Kebun kopi berkabut - 0a1b2c3d.png', mediaId: 'm4', accountId: 'a2', at: day0 - 25 * 3600000 },
+      { path: 'C:\\\\x\\\\Dipindahkan - 77777777.png', name: 'Dipindahkan - 77777777.png', mediaId: 'm5', accountId: 'a1', at: day0 - 9 * 86400000 }
     ]
   };
   const statuses = { a1: { connected: true, signedIn: true, account: 'studio.kerja@gmail.com', projectId: 'p1', projectTitle: 'Iklan Kopi Nusantara' }, a2: { connected: false } };
@@ -41,7 +45,7 @@ const MOCK = `(() => {
   const svg = (c) => 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="' + c[0] + '"/><stop offset="1" stop-color="' + c[1] + '"/></linearGradient></defs><rect width="200" height="200" fill="url(#g)"/></svg>');
   const items = [['#6b3e1f','#e2b07a'],['#0f3057','#00587a'],['#2d6a4f','#95d5b2'],['#3d0c11','#d4a373'],['#22223b','#9a8c98'],['#ffb703','#fb8500']].map((c, i) => ({
     mediaId: 'm' + i + '-0000-0000-0000-000000000000', title: ['Kopi tubruk pagi hari','Barista latte art wayang','Kebun kopi berkabut','Biji kopi berjatuhan','Kemasan kopi minimalis','Senja di kedai kopi'][i],
-    createdAt: now - i * 3600000, isVideo: i === 1, done: i !== 5, image: svg(c), video: null }));
+    createdAt: day0 - [0, 1, 24, 25, 100, 960][i] * 3600000, isVideo: i === 1, done: i !== 5, image: svg(c), video: null }));
   const gate = location.search === '?gate';
   let license = gate ? { state: 'none', deviceId: '7f3a9c2e-0000' }
     : { state: 'valid', hint: 'FC-7KQ2M…H4ZPA', checkedAt: now - 600000, deviceId: '7f3a9c2e-0000', info: { ok: true, label: 'PC Studio', email: 'sugiono@flowconnect.id', devices: 2, max_devices: 3, expires_at: null } };
@@ -69,6 +73,7 @@ const MOCK = `(() => {
     'accounts:resetHeadless': (id) => { const a = accounts.find((x) => x.id === id); delete a.headlessFailedAt; return settings; },
     'flow:listMedia': () => items,
     'flow:thumb': (id, it) => it.image,
+    'files:thumb': (p) => (/Dipindahkan/.test(p) ? { missing: true } : { url: svg(/[.]mp4$/.test(p) ? ['#1d3557', '#a8dadc'] : ['#7f5539', '#ddb892']) }),
     'files:pickImages': () => ['/foto/Kucing Oren.png', '/foto/latar.jpg'],
     'files:register': (p) => p,
     'files:preview': () => svg(['#888', '#ccc'])
@@ -137,6 +142,38 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   await sleep(700);
   assert.strictEqual(await ev('document.querySelectorAll(".tile").length'), 6);
   assert.ok(await ev('document.querySelectorAll(".tile img").length') >= 5);
+  // galeri per tanggal: Hari ini, Kemarin, lalu tanggal lengkap
+  const heads = await ev('[...document.querySelectorAll("#page .day-head h3")].map((h) => h.textContent)');
+  assert.strictEqual(heads[0], 'Hari ini');
+  assert.strictEqual(heads[1], 'Kemarin');
+  assert.ok(heads.length >= 3 && heads.slice(2).every((h) => /\d{4}$/.test(h)), 'tanggal lengkap: ' + heads.join(' | '));
+  assert.strictEqual(await ev('document.querySelectorAll("#page .day")[0].querySelectorAll(".tile").length'), 2);
+  await ev(`document.querySelector('[data-act=gallerySelectDay]').click()`);
+  await sleep(100);
+  assert.strictEqual(await ev('document.querySelectorAll(".tile.sel").length'), 2, 'pilih semua hasil hari ini');
+  await ev(`document.querySelector('[data-act=gallerySelectDay]').click()`);
+  await sleep(100);
+  assert.strictEqual(await ev('document.querySelectorAll(".tile.sel").length'), 0);
+  // unduhan per tanggal dengan thumbnail (gambar & video), file hilang ditandai
+  await ev(`document.querySelector('[data-page="downloads"]').click()`);
+  await sleep(500);
+  assert.strictEqual(await ev('document.querySelectorAll(".dl-tile").length'), 5);
+  assert.deepStrictEqual((await ev('[...document.querySelectorAll("#page .day-head h3")].map((h) => h.textContent)')).slice(0, 2), ['Hari ini', 'Kemarin']);
+  assert.strictEqual(await ev('document.querySelectorAll("#page .day").length'), 3);
+  assert.strictEqual(await ev('document.querySelectorAll(".dl-tile img.pic").length'), 4, 'thumbnail untuk 4 file yang ada');
+  assert.ok(await ev('document.querySelector(".dl-tile.missing .badge.warn").textContent.includes("tidak ditemukan")'));
+  assert.ok(await ev('!!document.querySelector(".dl-tile .badge") && [...document.querySelectorAll(".dl-tile .badge")].some((b) => b.textContent.includes("Video"))'));
+  await ev(`document.querySelector('.dl-tile button.media').click()`);
+  await sleep(100);
+  assert.ok(await ev('window.__calls.includes("files:open")'), 'klik thumbnail membuka file');
+  if (SHOTS) {
+    for (const [pg, name] of [['downloads', 'unduhan-tanggal'], ['gallery', 'galeri-tanggal']]) {
+      await ev(`document.querySelector('[data-page="${pg}"]').click()`);
+      await sleep(600);
+      const { data } = await page.send('Page.captureScreenshot', { format: 'png' });
+      fs.writeFileSync(path.join(SHOTS, `${name}.png`), Buffer.from(data, 'base64'));
+    }
+  }
   // Studio: Video/Gambar, mode, model, rasio → tersimpan ke settings.studio
   await ev(`document.querySelector('[data-page="studio"]').click()`);
   await sleep(300);

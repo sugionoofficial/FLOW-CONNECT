@@ -111,7 +111,7 @@ jobs:
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
 
-            **Baru di versi ini:** perbaikan galeri & pratinjau — hasil generate gambar (termasuk x2–x4 sekaligus) kini selalu tampil. Aplikasi membaca format daftar project Google Flow terbaru (satu generate berisi beberapa gambar), dan setiap hasil yang dikembalikan Flow disimpan sehingga tetap muncul walau daftar Flow terlambat. Gambar kedaluwarsa dimuat ulang otomatis. Sebelumnya (v1.3.4): login Google tidak lagi ditolak "This browser or app may not be secure".
+            **Baru di versi ini:** halaman **Unduhan** dan **Galeri** kini dikelompokkan per tanggal (Hari ini, Kemarin, lalu tanggal lengkap) dan menampilkan thumbnail — termasuk video (thumbnail Windows / poster Flow). Klik thumbnail di Unduhan untuk membuka file; file yang sudah dipindah ditandai. Di Galeri tersedia tombol "Pilih" per tanggal, dan thumbnail kini lebih ringan. Sebelumnya (v1.3.5): hasil gambar x2–x4 selalu tampil di galeri & pratinjau.
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

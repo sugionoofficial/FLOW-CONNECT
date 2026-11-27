@@ -111,6 +111,7 @@ const S = {
   flowOptions: {},
   login: null,     // { id, state, error } kartu login yang sedang berjalan
   gallery: { key: '', items: [], loading: false, error: null, thumbs: {}, selected: new Set(), busy: new Set() },
+  dlThumbs: {}, // path file unduhan → undefined (belum) · false (memuat) · null (tidak ada) · {url} · {missing}
   busy: new Set(),
   activity: '',
   license: null,
@@ -125,6 +126,30 @@ const st = (id) => S.statuses[id] || { connected: false };
 const isAuto = () => S.settings && S.settings.mode === 'auto' && !!S.settings.autoAck;
 const fmtTime = (t) => new Date(t).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
 const fmtDate = (t) => new Date(t).toLocaleString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+// pengelompokan per tanggal (zona waktu PC)
+const dayKey = (t) => { if (!t) return 'none'; const d = new Date(t); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
+const longDate = (t) => new Date(t).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+function dayLabel(t) {
+  if (!t) return { label: 'Tanpa tanggal', sub: '' };
+  const now = new Date();
+  const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const k = dayKey(t);
+  if (k === dayKey(now.getTime())) return { label: 'Hari ini', sub: longDate(t) };
+  if (k === dayKey(y.getTime())) return { label: 'Kemarin', sub: longDate(t) };
+  return { label: longDate(t), sub: '' };
+}
+/** [{key, label, sub, items}] terbaru di atas; yang tanpa tanggal paling bawah. */
+function byDay(list, at) {
+  const groups = [], idx = {};
+  [...list].sort((a, b) => (at(b) || 0) - (at(a) || 0)).forEach((x) => {
+    const k = dayKey(at(x));
+    if (!(k in idx)) { idx[k] = groups.length; groups.push({ key: k, ...dayLabel(at(x)), items: [] }); }
+    groups[idx[k]].items.push(x);
+  });
+  return groups;
+}
+const dayHead = (g, unit, extra = '') => `<div class="day-head"><h3>${esc(g.label)}</h3><span class="muted small">${g.sub ? esc(g.sub) + ' · ' : ''}${g.items.length} ${unit}</span><span class="grow"></span>${extra}</div>`;
+const VIDEO_FILE = /\.(mp4|webm|mov|m4v)$/i;
 const fileUrl = (p) => {
   const u = String(p).replace(/\\/g, '/').split('/').map((x, i) => (i === 0 && /^[A-Za-z]:$/.test(x) ? x : encodeURIComponent(x))).join('/');
   return u.startsWith('/') ? 'file://' + u : 'file:///' + u;
@@ -396,17 +421,22 @@ const PAGES = {
       ${g.error ? infobar('error', 'circle-x', 'Gagal memuat galeri.', ' ' + esc(msg({ message: g.error })), btn('galleryRefresh', 'Coba lagi', { ic: 'rotate-ccw' })) : ''}
       ${g.loading && !g.items.length ? '<div class="activity"><div class="progress indet grow"><i></i></div></div>' : ''}
       ${!warn && !g.loading && !g.items.length && !g.error ? `<div class="card empty">${icon('images', 'xl')}<div>Belum ada hasil di project ini.</div></div>` : ''}
-      ${!warn ? `<div class="gallery">${g.items.map((it) => `
+      ${!warn ? byDay(g.items, (i) => i.createdAt).map((grp) => {
+        const sel = grp.items.filter((i) => i.done);
+        const all = sel.length && sel.every((i) => g.selected.has(i.mediaId));
+        return `<section class="day">${dayHead(grp, 'hasil', sel.length ? btn('gallerySelectDay', all ? 'Batal pilih' : 'Pilih', { ic: 'check', cls: 'sm subtle', data: `data-day="${grp.key}"` }) : '')}
+        <div class="gallery">${grp.items.map((it) => `
         <div class="tile ${g.selected.has(it.mediaId) ? 'sel' : ''}">
           <div class="media">
-            ${thumbSrc(it) ? `<img src="${esc(thumbSrc(it))}" alt="">` : icon(it.isVideo ? 'video' : 'file-image', 'xl')}
+            ${icon(it.isVideo ? 'video' : 'file-image', 'xl')}${thumbSrc(it) ? `<img class="pic" src="${esc(thumbSrc(it))}" alt="" loading="lazy">` : ''}
             <input type="checkbox" data-change="gallerySel" data-id="${it.mediaId}" ${g.selected.has(it.mediaId) ? 'checked' : ''} aria-label="Pilih">
             ${it.isVideo ? '<span class="badge">Video</span>' : ''}${!it.done ? '<span class="badge">Memproses…</span>' : ''}
           </div>
-          <div class="meta"><div class="grow"><div class="t" title="${esc(it.title)}">${esc(it.title || (it.isVideo ? 'Video' : 'Gambar'))}</div><div class="d">${it.createdAt ? fmtDate(it.createdAt) : ''}</div></div>
+          <div class="meta"><div class="grow"><div class="t" title="${esc(it.title)}">${esc(it.title || (it.isVideo ? 'Video' : 'Gambar'))}</div><div class="d">${it.createdAt ? fmtTime(it.createdAt) : ''}${S.settings.downloads.some((d) => d.mediaId === it.mediaId) ? ' · Sudah diunduh' : ''}</div></div>
             ${btn('galleryDownload', '', { ic: g.busy.has(it.mediaId) ? 'loader-circle' : 'download', cls: 'subtle sm icon' + (g.busy.has(it.mediaId) ? ' busy' : ''), title: 'Unduh', data: `data-id="${it.mediaId}"`, disabled: !it.done || g.busy.has(it.mediaId) })}
           </div>
-        </div>`).join('')}</div>` : ''}`;
+        </div>`).join('')}</div></section>`;
+      }).join('') : ''}`;
   },
 
   auto() {
@@ -452,16 +482,24 @@ const PAGES = {
 
   downloads() {
     const d = S.settings.downloads;
+    const tile = (x) => {
+      const isV = VIDEO_FILE.test(x.name);
+      const th = S.dlThumbs[x.path];
+      const src = th && th.url ? th.url : (th === null && !isV ? fileUrl(x.path) : '');
+      return `<div class="tile dl-tile${th && th.missing ? ' missing' : ''}">
+        <button class="media" data-act="openFile" data-path="${esc(x.path)}" title="Buka ${esc(x.name)}">
+          ${icon(isV ? 'video' : 'file-image', 'xl')}${src ? `<img class="pic" src="${esc(src)}" alt="" loading="lazy">` : ''}
+          ${isV ? `<span class="badge">${icon('play')}Video</span>` : ''}${th && th.missing ? '<span class="badge warn">File tidak ditemukan</span>' : ''}
+        </button>
+        <div class="meta"><div class="grow"><div class="t" title="${esc(x.path)}">${esc(x.name)}</div><div class="d">${fmtTime(x.at)} · ${esc((accById(x.accountId) || {}).label || '—')}</div></div>
+          ${btn('showFile', '', { ic: 'folder-open', cls: 'sm subtle icon', title: 'Tampilkan di folder', data: `data-path="${esc(x.path)}"` })}${btn('forgetFile', '', { ic: 'x', cls: 'sm subtle icon', title: 'Hapus dari daftar', data: `data-path="${esc(x.path)}"` })}
+        </div>
+      </div>`;
+    };
     return `
       <div class="page-head"><h1>Unduhan</h1><div class="tools">${btn('openDownloads', 'Buka folder unduhan', { ic: 'folder-open' })}</div></div>
-      <p class="subtitle mono">${esc(S.settings.downloadDir)}</p>
-      ${d.length ? `<table class="table"><thead><tr><th>Nama</th><th>Akun</th><th>Waktu</th><th class="act"></th></tr></thead><tbody>
-        ${d.map((x) => `<tr>
-          <td><div class="hrow">${icon(/\.(mp4|webm)$/i.test(x.name) ? 'video' : 'file-image', 'faint')}<span class="ellipsis" title="${esc(x.path)}">${esc(x.name)}</span></div></td>
-          <td class="ellipsis">${esc((accById(x.accountId) || {}).label || '—')}</td>
-          <td class="muted">${fmtDate(x.at)}</td>
-          <td class="act">${btn('openFile', 'Buka', { cls: 'sm', data: `data-path="${esc(x.path)}"` })}${btn('showFile', '', { ic: 'folder-open', cls: 'sm subtle icon', title: 'Tampilkan di folder', data: `data-path="${esc(x.path)}"` })}${btn('forgetFile', '', { ic: 'x', cls: 'sm subtle icon', title: 'Hapus dari daftar', data: `data-path="${esc(x.path)}"` })}</td>
-        </tr>`).join('')}</tbody></table>`
+      <p class="subtitle"><span class="mono">${esc(S.settings.downloadDir)}</span>${d.length ? ` · ${d.length} file` : ''}</p>
+      ${d.length ? byDay(d, (x) => x.at).map((grp) => `<section class="day">${dayHead(grp, 'file')}<div class="gallery">${grp.items.map(tile).join('')}</div></section>`).join('')
         : `<div class="card empty">${icon('download', 'xl')}<div>Belum ada unduhan.</div><div class="muted small">Unduh hasil dari Galeri, atau aktifkan unduh otomatis di Mode Otomatis.</div></div>`}`;
   },
 
@@ -673,6 +711,7 @@ function afterRender() {
     bar.style.width = (t ? (d / t) * 100 : 0) + '%';
   }
   if (S.page === 'gallery' || S.page === 'studio') loadThumbs();
+  if (['downloads', 'gallery', 'studio'].includes(S.page)) loadDlThumbs();
 }
 
 function go(page) {
@@ -995,6 +1034,13 @@ const ACTIONS = {
   // Galeri
   galleryRefresh: () => { S.gallery.thumbs = Object.fromEntries(Object.entries(S.gallery.thumbs).filter(([, v]) => v)); return galleryLoad(true); },
   thumbRetry: (el) => { delete S.gallery.thumbs[el.dataset.id]; render(); },
+  gallerySelectDay: (el) => {
+    const g = S.gallery;
+    const day = g.items.filter((i) => i.done && dayKey(i.createdAt) === el.dataset.day);
+    if (day.every((i) => g.selected.has(i.mediaId))) day.forEach((i) => g.selected.delete(i.mediaId));
+    else day.forEach((i) => g.selected.add(i.mediaId));
+    render();
+  },
   gallerySelectAll: () => {
     const g = S.gallery;
     if (g.selected.size === g.items.length) g.selected.clear();
@@ -1169,7 +1215,31 @@ function thumbSrc(it, local) {
   const t = S.gallery.thumbs[it.mediaId];
   if (t) return t;
   const l = local || S.settings.downloads.find((d) => d.mediaId === it.mediaId);
-  return l && /\.(png|jpe?g|webp|gif)$/i.test(l.path) ? fileUrl(l.path) : '';
+  if (!l) return '';
+  const dt = S.dlThumbs[l.path];
+  if (dt && dt.url) return dt.url;
+  return /\.(png|jpe?g|webp|gif)$/i.test(l.path) && !(dt && dt.missing) ? fileUrl(l.path) : '';
+}
+// thumbnail file unduhan (dibuat aplikasi, kecil) — halaman Unduhan, dan cadangan galeri bila Flow tidak memberi gambar
+let dlThumbRunning = 0;
+function loadDlThumbs() {
+  let paths = [];
+  if (S.page === 'downloads') paths = S.settings.downloads.map((d) => d.path);
+  else if (S.page === 'gallery' || S.page === 'studio') {
+    const g = S.gallery;
+    paths = g.items.filter((i) => g.thumbs[i.mediaId] === null || (i.isVideo && !g.thumbs[i.mediaId]))
+      .map((i) => (S.settings.downloads.find((d) => d.mediaId === i.mediaId) || {}).path).filter(Boolean);
+  }
+  const todo = paths.filter((p) => S.dlThumbs[p] === undefined);
+  while (dlThumbRunning < 3 && todo.length) {
+    const p = todo.shift();
+    S.dlThumbs[p] = false;
+    dlThumbRunning++;
+    call('files:thumb', p)
+      .then((r) => { S.dlThumbs[p] = r || null; })
+      .catch(() => { S.dlThumbs[p] = null; })
+      .finally(() => { dlThumbRunning--; if (['downloads', 'gallery', 'studio'].includes(S.page)) render(); });
+  }
 }
 let thumbRunning = 0;
 function loadThumbs() {
@@ -1207,6 +1277,8 @@ async function downloadItems(ids) {
 }
 
 // ---------- Event ----------
+// thumbnail gagal dimuat (file dipindah/terhapus) → sembunyikan, ikon di belakangnya terlihat
+document.addEventListener('error', (e) => { const t = e.target; if (t && t.tagName === 'IMG' && t.classList.contains('pic')) t.classList.add('gone'); }, true);
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-act]');
   if (!el || el.disabled || $('#dialog').contains(el)) return;

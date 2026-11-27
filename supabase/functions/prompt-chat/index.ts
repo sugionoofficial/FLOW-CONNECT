@@ -39,7 +39,11 @@ const perM = (v: unknown) => {
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 1e6 * 10000) / 10000 : null
 }
 
-type Msg = { role: 'user' | 'assistant'; content: string }
+type Part = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }
+type Msg = { role: 'user' | 'assistant'; content: string | Part[] }
+// gambar opsional (skill "Rekayasa balik prompt"): data URL kecil, ditempel ke pesan pengguna terakhir — butuh model yang mendukung gambar
+const IMAGE_RE = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/
+const MAX_IMAGE = 4_500_000
 function cleanMessages(raw: unknown): Msg[] {
   if (!Array.isArray(raw)) return []
   return raw
@@ -131,6 +135,12 @@ Deno.serve(async (req) => {
 
   const messages = cleanMessages(body.messages)
   if (!messages.length || messages[messages.length - 1].role !== 'user') return json({ error: 'EMPTY_MESSAGE' }, 400)
+  if (body.image != null) {
+    const img = String(body.image)
+    if (img.length > MAX_IMAGE || !IMAGE_RE.test(img)) return json({ error: 'INVALID_IMAGE' }, 400)
+    const last = messages[messages.length - 1]
+    last.content = [{ type: 'text', text: String(last.content) }, { type: 'image_url', image_url: { url: img } }]
+  }
 
   // ── 2) pengaturan & batas harian ──
   const { data: settings } = await admin.from('ai_settings').select('*').eq('id', 1).single()

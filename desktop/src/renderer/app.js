@@ -1,5 +1,7 @@
 // Tampilan FLOW CONNECT Desktop — JavaScript biasa, tanpa framework, tanpa akses Node (lihat preload).
 import { icon } from './icons.js';
+import { FLOW_TOOLS, LOCAL_TOOLS, BUILTIN_SKILLS, SKILL_ICONS, parseFields, compose, missingFields, aiMode } from './skills.js';
+import { RATIO_LIST, loadBitmap, toBlob, cropRatio, gridSplit, resizeMax, removeBackground, loadVideo, videoFrame } from './imagetools.js';
 
 const fc = window.fc;
 const $ = (s, r = document) => r.querySelector(s);
@@ -95,7 +97,21 @@ const ERR = {
   NO_MODEL: 'Belum ada model chat yang diaktifkan admin.',
   PROVIDER_ERROR: 'Layanan AI sedang bermasalah. Coba lagi sebentar lagi.',
   UNSUPPORTED_PROVIDER: 'Model chat yang dipilih admin belum didukung.',
-  EMPTY_MESSAGE: 'Tulis pesan terlebih dahulu.'
+  EMPTY_MESSAGE: 'Tulis pesan terlebih dahulu.',
+  INVALID_FILE: 'Berkas tidak bisa dibuka. Pilih ulang berkasnya.',
+  UNSUPPORTED_FORMAT: 'Format HEIC belum didukung alat lokal. Ubah ke JPG/PNG terlebih dahulu.',
+  FILE_TOO_LARGE: 'Berkas terlalu besar.',
+  IMAGE_DECODE_FAILED: 'Gambar tidak bisa dibaca.',
+  VIDEO_DECODE_FAILED: 'Video tidak bisa diputar di aplikasi (coba MP4/WebM).',
+  VIDEO_SEEK_FAILED: 'Tidak bisa melompat ke detik itu di video.',
+  ENCODE_FAILED: 'Gagal menyimpan hasil gambar.',
+  INVALID_OUTPUT: 'Hasil alat tidak valid.',
+  NAME_CONFLICT: 'Nama berkas bentrok.',
+  RENAME_NEEDS_TOKEN: 'Pola nama wajib memuat {nama} atau {n} agar setiap berkas punya nama berbeda.',
+  INVALID_SKILL: 'Skill tidak valid: nama dan templat wajib diisi.',
+  INVALID_SKILL_FILE: 'Berkas skill tidak valid (harus .json hasil ekspor FLOW CONNECT).',
+  TOO_MANY_SKILLS: 'Skill saya sudah penuh (maks. 200).',
+  NO_SKILLS: 'Belum ada skill untuk diekspor.'
 };
 const DETAIL = new Set(['FLOW_ERROR', 'GENERATE_FAILED', 'FLOW_REFUSED', 'UPLOAD_FAILED', 'UPLOAD_REJECTED', 'REFERENCE_NOT_ATTACHED', 'FRAME_NOT_ATTACHED', 'GENERATE_TIMEOUT', 'GENERATE_NOT_STARTED', 'INSUFFICIENT_CREDITS', 'FLOW_CONTENT_POLICY']);
 const msg = (e) => {
@@ -109,6 +125,9 @@ const msg = (e) => {
 // ---------- State ----------
 const S = {
   page: 'home',
+  studioTab: 'buat', // Studio → Buat · Alat · Skill
+  tool: { open: null, src: null, files: [], opts: {}, results: [], urls: [], busy: false, plan: null },
+  sk: { group: 'all', q: '', sel: 'b-product', values: {}, edited: null, images: [], over: {}, busy: '', result: null, admin: null, adminError: null, mine: null, model: '' },
   info: null,
   settings: null,
   statuses: {},
@@ -338,6 +357,273 @@ function chatPromptAt(el) {
   return m ? chatPrompts(m.content)[Number(el.dataset.b)] || '' : '';
 }
 
+// ---------- Studio → Buat · Alat · Skill ----------
+function studioHead() {
+  const a = acc();
+  const s = a ? st(a.id) : {};
+  const busy = S.studio.busy;
+  return `
+      <div class="page-head"><h1>Studio</h1><div class="tools">${accountPicker()}
+        ${a && s.signedIn ? `<span class="pill" title="${esc(s.projectTitle || '')}">${icon('clapperboard')}<span class="ellipsis">${s.projectId ? esc(s.projectTitle || 'Project') : 'Belum ada project'}</span></span>${btn('newProject', 'Project baru', { ic: S.busy.has('newProject' + `data-id="${a.id}"`) ? 'loader-circle' : 'folder-plus', data: `data-id="${a.id}"`, disabled: !!busy })}` : ''}
+        ${a && s.connected ? btn('showFlow', '', { ic: 'app-window', cls: 'icon', title: 'Lihat jendela Google Flow', data: `data-id="${a.id}"` }) : ''}
+      </div></div>
+      ${studioTabs()}`;
+}
+const STUDIO_TABS = [['buat', 'Buat', 'wand-sparkles'], ['alat', 'Alat', 'sliders-horizontal'], ['skill', 'Skill', 'sparkles']];
+function studioTabs() {
+  return `<div class="subtabs" role="tablist" aria-label="Bagian Studio">${STUDIO_TABS.map(([id, label, ic], i) =>
+    `<button class="subtab ${S.studioTab === id ? 'on' : ''}" role="tab" aria-selected="${S.studioTab === id}" data-act="studioTab" data-tab="${id}" title="${label} (Alt+${i + 1})">${icon(ic)}<span>${label}</span></button>`).join('')}</div>`;
+}
+const baseName = (p) => String(p || '').split(/[\\/]/).pop();
+const stem = (p) => baseName(p).replace(/\.[^.]+$/, '');
+
+// ----- Alat -----
+function alatPage() {
+  const a = acc();
+  const s = a ? st(a.id) : {};
+  const T = S.tool;
+  const flowReady = a && s.connected && s.signedIn;
+  return `
+    <div class="sec-head"><h2>${icon('zap')} Alat lokal</h2><span class="badge ok">Gratis · offline</span><span class="muted small grow">Diproses di PC ini — hasil disimpan ke folder Unduhan → Alat.</span></div>
+    <div class="tool-grid">${LOCAL_TOOLS.map((t) => `<button class="tool-card ${T.open === t.id ? 'on' : ''}" data-act="toolOpen" data-id="${t.id}" aria-pressed="${T.open === t.id}">
+      <span class="tool-ic">${icon(t.icon, 'lg')}</span><span class="tool-t"><b>${t.name}</b><span class="muted small">${t.desc}</span></span></button>`).join('')}</div>
+    ${T.open ? toolPanel() : ''}
+    <div class="sec-head"><h2>${icon('app-window')} Alat Google Flow</h2><span class="muted small grow">Dibuka di jendela Google Flow akun aktif — browser ditampilkan karena alatnya interaktif.</span></div>
+    ${flowReady ? '' : readiness(false) || ''}
+    <div class="tool-grid">${FLOW_TOOLS.map((t) => `<div class="tool-card flow">
+      <span class="tool-ic">${icon(t.icon, 'lg')}</span>
+      <span class="tool-t"><b>${esc(t.name)}</b><span class="muted small">${esc(t.desc)}</span><span class="faint small">oleh ${esc(t.author)}</span></span>
+      ${btn('flowTool', 'Buka', { ic: S.busy.has('flowTool' + `data-id="${t.id}"`) ? 'loader-circle' : 'external-link', cls: 'sm', data: `data-id="${t.id}"`, disabled: !a, title: `Buka ${t.name} di Google Flow` })}
+    </div>`).join('')}</div>`;
+}
+
+const TOOL_KIND = { frame: 'video', convert: 'images', rename: null };
+function toolPanel() {
+  const T = S.tool;
+  const t = LOCAL_TOOLS.find((x) => x.id === T.open);
+  const o = T.opts;
+  const kind = TOOL_KIND[t.id] === undefined ? 'image' : TOOL_KIND[t.id];
+  const chip = (k, v, label) => `<button class="chip ${String(o[k]) === String(v) ? 'on' : ''}" data-act="toolOpt" data-k="${k}" data-v="${v}">${label}</button>`;
+  const src = T.src;
+  const srcBox = kind === null ? '' : kind === 'images'
+    ? `<div class="tool-src" id="tool-drop">${T.files.length
+      ? `<div class="tool-files">${T.files.map((f, i) => `<div class="tf">${icon('file-image')}<span class="ellipsis">${esc(f.name)}</span>${btn('toolFileRemove', '', { ic: 'x', cls: 'subtle icon sm', title: 'Hapus', data: `data-i="${i}"` })}</div>`).join('')}</div>`
+      : `<div class="tool-empty">${icon('images', 'xl')}<div class="muted small">Pilih atau seret gambar ke sini (bisa banyak sekaligus).</div></div>`}
+      <div class="hrow">${btn('toolPick', T.files.length ? 'Tambah gambar…' : 'Pilih gambar…', { ic: 'folder-open', cls: T.files.length ? 'sm' : 'sm primary' })}${T.files.length ? btn('toolClear', 'Kosongkan', { cls: 'sm subtle' }) : ''}</div></div>`
+    : `<div class="tool-src" id="tool-drop">${src
+      ? (src.kind === 'video'
+        ? `<video id="tool-video" class="tool-media" src="${esc(src.url)}" controls muted playsinline preload="auto"></video>`
+        : `<img class="tool-media ${t.id === 'bg' ? 'checker' : ''}" src="${esc(src.url)}" alt="">`)
+      : `<div class="tool-empty">${icon(kind === 'video' ? 'video' : 'image', 'xl')}<div class="muted small">Pilih atau seret ${kind === 'video' ? 'video (MP4/WebM/MOV)' : 'gambar'} ke sini.</div></div>`}
+      <div class="hrow">${btn('toolPick', src ? 'Ganti…' : (kind === 'video' ? 'Pilih video…' : 'Pilih gambar…'), { ic: 'folder-open', cls: src ? 'sm' : 'sm primary' })}${src ? `<span class="faint small ellipsis">${esc(src.name)}${src.w ? ` · ${src.w}×${src.h}` : ''}${src.dur ? ` · ${src.dur.toFixed(1)} dtk` : ''}</span>` : ''}</div></div>`;
+  let opts = '', run = '';
+  if (t.id === 'frame') {
+    opts = `<div class="opt"><span class="opt-l">${icon('timer')} Ambil frame</span><div class="chips">${chip('at', 'start', 'Awal')}${chip('at', 'end', 'Akhir')}${chip('at', 'now', 'Posisi pemutar')}${chip('at', 'sec', 'Detik ke-')}</div></div>
+      ${o.at === 'sec' ? `<label class="field inline"><span>Detik</span><input id="tool-sec" class="input num" type="number" min="0" step="0.1" value="${esc(o.sec)}" data-input="toolSec"></label>` : ''}
+      <p class="faint small">Tip: frame <b>akhir</b> video sebelumnya → <b>frame awal</b> video berikutnya agar adegan menyambung.</p>`;
+    run = 'Ambil frame';
+  } else if (t.id === 'crop') {
+    opts = `<div class="opt"><span class="opt-l">${icon('ratio')} Rasio</span><div class="chips">${RATIO_LIST.map((r) => chip('ratio', r, r)).join('')}</div></div>
+      <div class="opt"><span class="opt-l">${icon('crop')} Posisi potong</span><div class="chips">${chip('anchor', 'start', 'Atas / kiri')}${chip('anchor', 'center', 'Tengah')}${chip('anchor', 'end', 'Bawah / kanan')}</div></div>`;
+    run = 'Potong';
+  } else if (t.id === 'grid') {
+    opts = `<div class="opt"><span class="opt-l">${icon('grid-2x2')} Grid</span><div class="chips">${chip('grid', '2', '2 × 2')}${chip('grid', '3', '3 × 3')}${chip('grid', '2x1', '2 kolom')}${chip('grid', '1x2', '2 baris')}</div></div>`;
+    run = 'Pecah grid';
+  } else if (t.id === 'convert') {
+    opts = `<div class="opt"><span class="opt-l">${icon('file-output')} Format</span><div class="chips">${chip('format', 'png', 'PNG')}${chip('format', 'jpg', 'JPG')}${chip('format', 'webp', 'WebP')}</div></div>
+      ${o.format !== 'png' ? `<label class="field inline"><span>Kualitas <b id="tool-q">${o.quality}</b>%</span><input class="range" type="range" min="40" max="100" step="1" value="${o.quality}" data-input="toolQuality" aria-label="Kualitas"></label>` : ''}
+      <div class="opt"><span class="opt-l">${icon('maximize-2')} Ukuran maks.</span><div class="chips">${chip('max', '0', 'Asli')}${chip('max', '2048', '2048 px')}${chip('max', '1080', '1080 px')}${chip('max', '720', '720 px')}</div></div>`;
+    run = T.files.length > 1 ? `Konversi ${T.files.length} gambar` : 'Konversi';
+  } else if (t.id === 'bg') {
+    opts = `<div class="opt"><span class="opt-l">${icon('pipette')} Warna latar</span><div class="chips">${chip('mode', 'auto', 'Otomatis')}${chip('mode', 'white', 'Putih')}${chip('mode', 'green', 'Hijau (green screen)')}</div></div>
+      <label class="field inline"><span>Toleransi <b id="tool-tol">${o.tol}</b></span><input class="range" type="range" min="5" max="80" step="1" value="${o.tol}" data-input="toolTol" aria-label="Toleransi"></label>
+      <label class="check small"><input type="checkbox" data-change="toolEdge" ${o.edgeOnly ? 'checked' : ''}> Hanya latar yang tersambung ke tepi (bagian putih di dalam objek aman)</label>
+      <p class="faint small">Cocok untuk latar polos. Untuk latar rumit gunakan alat Google Flow / Editor Gambar.</p>`;
+    run = 'Hapus latar';
+  } else if (t.id === 'rename') {
+    const n = (S.settings.downloads || []).length;
+    opts = `<label class="field"><span>Pola nama</span><input id="tool-pattern" class="input" maxlength="120" value="${esc(o.pattern)}" data-input="toolPattern" placeholder="{tanggal} {nama}"></label>
+      <div class="faint small">Token: <code>{nama}</code> nama lama · <code>{n}</code> nomor urut · <code>{tanggal}</code> · <code>{jam}</code> · <code>{akun}</code> · <code>{jenis}</code></div>
+      <div class="opt-row">
+        <label class="field inline"><span>Jenis</span><select class="input" data-change="toolRenameCat">${[['all', 'Semua'], ['image', 'Gambar'], ['video', 'Video'], ['audio', 'Audio']].map(([v, l]) => `<option value="${v}" ${o.cat === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label class="field inline"><span>Mulai dari</span><input id="tool-start" class="input num" type="number" min="0" max="99999" value="${esc(o.start)}" data-input="toolStart"></label>
+      </div>
+      ${T.plan ? `<div class="rename-plan"><div class="faint small">${T.plan.filter((p) => p.from !== p.to).length} dari ${T.plan.length} berkas akan berganti nama${T.plan.length > 60 ? ' (60 pertama ditampilkan)' : ''}</div>
+        <ul>${T.plan.slice(0, 60).map((p) => `<li class="${p.from === p.to ? 'same' : ''}"><span class="ellipsis">${esc(baseName(p.from))}</span>${icon('arrow-right')}<b class="ellipsis">${esc(p.name)}</b></li>`).join('')}</ul></div>` : ''}`;
+    return `<div class="card tool-panel" id="tool-panel">
+      <div class="card-head">${icon(t.icon)}<h3>${t.name}</h3><span class="muted small grow">${n} berkas di daftar Unduhan</span>${btn('toolClose', '', { ic: 'x', cls: 'subtle icon sm', title: 'Tutup' })}</div>
+      <div class="tool-opts">${opts}</div>
+      <div class="actionbar">${btn('toolRenamePlan', 'Pratinjau', { ic: S.busy.has('toolRenamePlan') ? 'loader-circle' : 'eye', disabled: !n })}${btn('toolRename', T.plan ? `Ganti nama ${T.plan.filter((p) => p.from !== p.to).length} berkas` : 'Ganti nama', { ic: S.busy.has('toolRename') ? 'loader-circle' : 'text-cursor-input', cls: 'primary', disabled: !T.plan || !T.plan.some((p) => p.from !== p.to) })}</div>
+    </div>`;
+  }
+  const canRun = kind === 'images' ? T.files.length > 0 : !!src;
+  return `<div class="card tool-panel" id="tool-panel">
+    <div class="card-head">${icon(t.icon)}<h3>${t.name}</h3><span class="muted small grow">${t.desc}</span>${btn('toolClose', '', { ic: 'x', cls: 'subtle icon sm', title: 'Tutup' })}</div>
+    <div class="tool-body">
+      ${srcBox}
+      <div class="tool-opts">${opts}
+        <div class="actionbar">${btn('toolRun', T.busy ? 'Memproses…' : run, { ic: T.busy ? 'loader-circle' : 'sparkles', cls: 'primary', disabled: !canRun || T.busy })}${T.results.length ? btn('openToolsFolder', 'Buka folder Alat', { ic: 'folder-open', cls: 'subtle' }) : ''}</div>
+      </div>
+    </div>
+    ${T.results.length ? `<div class="tool-results">${T.results.map((r, i) => `<div class="tres">
+      <div class="tres-img ${r.alpha ? 'checker' : ''}"><img src="${esc(r.url)}" alt=""></div>
+      <div class="tres-t"><span class="small ellipsis" title="${esc(r.path)}">${esc(baseName(r.path))}</span><span class="faint small">${r.w}×${r.h}</span></div>
+      <div class="tres-a">
+        ${t.id === 'frame' ? btn('toolUse', 'Frame awal', { cls: 'sm', data: `data-i="${i}" data-slot="0"`, title: 'Jadikan foto awal mode Frame di Studio' }) + btn('toolUse', 'Frame akhir', { cls: 'sm', data: `data-i="${i}" data-slot="1"`, title: 'Jadikan foto akhir mode Frame di Studio' }) : ''}
+        ${btn('toolUse', t.id === 'frame' ? 'Bahan' : 'Pakai di Studio', { ic: 'wand-sparkles', cls: 'sm subtle', data: `data-i="${i}"`, title: 'Tambahkan sebagai gambar referensi di Studio' })}
+        ${btn('showFile', '', { ic: 'folder-open', cls: 'sm subtle icon', title: 'Tampilkan di folder', data: `data-path="${esc(r.path)}"` })}
+      </div></div>`).join('')}</div>` : ''}
+  </div>`;
+}
+
+// ----- Skill -----
+const SK_GROUPS = [['all', 'Semua'], ['image', 'Gambar'], ['video', 'Video'], ['ai', 'AI'], ['mine', 'Skill saya'], ['admin', 'Dari admin']];
+const SK_SRC = { builtin: '', mine: 'Skill saya', admin: 'Dari admin' };
+function allSkills() {
+  return [
+    ...BUILTIN_SKILLS.map((x) => ({ ...x, source: 'builtin' })),
+    ...(S.sk.admin || []).map((x) => ({ ...x, source: 'admin', desc: x.description })),
+    ...(S.sk.mine || []).map((x) => ({ ...x, source: 'mine', desc: x.description }))
+  ];
+}
+function skVisible() {
+  const k = S.sk;
+  const q = k.q.trim().toLowerCase();
+  return allSkills().filter((x) => (k.group === 'all' || (k.group === 'mine' || k.group === 'admin' ? x.source === k.group : x.category === k.group))
+    && (!q || (x.name + ' ' + (x.desc || '')).toLowerCase().includes(q)));
+}
+function curSkill() {
+  const all = allSkills();
+  return all.find((x) => x.id === S.sk.sel) || skVisible()[0] || all[0];
+}
+const skValues = (sk) => S.sk.values[sk.id] || (S.sk.values[sk.id] = {});
+const skPrompt = (sk) => (S.sk.edited != null ? S.sk.edited : compose(sk.template, skValues(sk), refTags(S.sk.images)));
+/** Setelan Flow hasil skill = setelan Studio sekarang + setelan skill + pilihan di panel skill. */
+function skillOpts(sk) {
+  const base = opts();
+  const s = sk.settings || {};
+  const over = S.sk.over;
+  const kind = sk.category === 'ai' ? aiMode(sk, skValues(sk)) : s.kind || base.kind;
+  const models = { ...DEFAULT_MODEL, ...(base.models || {}) };
+  let model = over.model || (s.model && KIND_RE[kind].test(s.model) ? s.model : models[kind]);
+  if (!model || !KIND_RE[kind].test(model)) model = DEFAULT_MODEL[kind];
+  models[kind] = model;
+  let ratio = over.ratio || s.ratio || base.ratio;
+  if (!RATIOS[kind].includes(ratio)) ratio = '16:9';
+  const count = over.count || s.count || base.count;
+  const sub = kind === 'video' ? (s.sub === 'frames' ? 'frames' : sk.category === 'ai' ? base.sub : 'ingredients') : base.sub;
+  return { ...base, kind, sub, model, models, ratio, count, duration: durationFor(kind, model), apply: true };
+}
+function skillCheck(sk) {
+  const miss = missingFields(sk.template, skValues(sk));
+  if (miss.length && S.sk.edited == null) throw new Error('Isi dulu: ' + miss.join(', ') + '.');
+  const r = sk.refs || { min: 0, max: 0 };
+  if (S.sk.images.length < r.min) throw new Error(r.min === 2 && r.max === 2 ? ERR.FRAMES_REQUIRED : `Skill ini butuh ${r.min} foto referensi.`);
+}
+
+function skillPage() {
+  const k = S.sk;
+  const list = skVisible();
+  const sk = curSkill();
+  const counts = { all: 0, image: 0, video: 0, ai: 0, mine: 0, admin: 0 };
+  for (const x of allSkills()) { counts.all++; counts[x.category]++; if (x.source !== 'builtin') counts[x.source]++; }
+  return `
+    <div class="skills">
+      <div class="card sk-list">
+        <div class="sk-search">${icon('search', 'faint')}<input id="sk-q" class="input" placeholder="Cari skill…" value="${esc(k.q)}" data-input="skQuery" aria-label="Cari skill"></div>
+        <div class="chips sk-groups">${SK_GROUPS.map(([id, label]) => `<button class="chip ${k.group === id ? 'on' : ''}" data-act="skGroup" data-g="${id}">${label}<span class="count">${counts[id]}</span></button>`).join('')}</div>
+        <div class="sk-items" role="listbox" aria-label="Daftar skill">
+          ${list.length ? list.map((x) => `<button class="sk-item ${sk && sk.id === x.id ? 'on' : ''}" role="option" aria-selected="${!!sk && sk.id === x.id}" data-act="skSel" data-id="${esc(x.id)}">
+            <span class="sk-ic ${x.category}">${icon(x.icon || 'sparkles')}</span><span class="sk-t"><b class="ellipsis">${esc(x.name)}</b><span class="faint small ellipsis">${esc(x.desc || '')}</span></span>${x.source !== 'builtin' ? `<span class="badge ${x.source === 'admin' ? 'accent' : ''}">${x.source === 'admin' ? 'Admin' : 'Saya'}</span>` : ''}</button>`).join('')
+            : `<div class="muted small sk-none">${k.group === 'mine' ? 'Belum ada skill buatan Anda. Simpan prompt Studio sebagai skill, atau impor berkas .json.' : k.group === 'admin' ? (k.adminError ? 'Skill dari admin tidak bisa dimuat (offline?).' : 'Admin belum menambahkan skill.') : 'Tidak ada skill yang cocok.'}</div>`}
+        </div>
+        <div class="sk-foot">${btn('skNew', 'Skill baru', { ic: 'plus', cls: 'sm' })}${btn('skImport', 'Impor', { ic: 'upload', cls: 'sm subtle' })}${btn('skExport', 'Ekspor', { ic: 'download', cls: 'sm subtle', disabled: !(k.mine || []).length, title: 'Ekspor semua Skill saya (.json)' })}${btn('skReload', '', { ic: S.busy.has('skReload') ? 'loader-circle' : 'refresh-cw', cls: 'sm subtle icon', title: 'Muat ulang skill dari admin' })}</div>
+      </div>
+      ${sk ? skillPanel(sk) : '<div class="card empty">Pilih skill.</div>'}
+    </div>`;
+}
+
+function skillPanel(sk) {
+  const k = S.sk;
+  const vals = skValues(sk);
+  const fields = parseFields(sk.template);
+  const ai = sk.category === 'ai';
+  const eff = skillOpts(sk);
+  const r = sk.refs || { min: 0, max: 0 };
+  const frames = !ai && eff.kind === 'video' && eff.sub === 'frames';
+  const tags = refTags(k.images);
+  const prompt = ai ? '' : skPrompt(sk);
+  const busy = k.busy;
+  const field = (f, i) => {
+    const id = `skf-${i}`;
+    const v = vals[f.label] ?? '';
+    if (f.options) return `<label class="field"><span>${esc(f.label)}</span><select id="${id}" class="input" data-change="skField" data-k="${esc(f.label)}">${f.options.map((o) => `<option value="${esc(o.label)}" ${(v || f.options[0].label) === o.label ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select></label>`;
+    return `<label class="field ${f.long ? 'wide' : ''}"><span>${esc(f.label)}</span>${f.long
+      ? `<textarea id="${id}" class="input" rows="${/cerita|prompt|brief/i.test(f.label) ? 4 : 2}" maxlength="3000" data-input="skField" data-k="${esc(f.label)}">${esc(v)}</textarea>`
+      : `<input id="${id}" class="input" maxlength="300" value="${esc(v)}" data-input="skField" data-k="${esc(f.label)}">`}</label>`;
+  };
+  const chip = (key, v, label) => `<button class="chip ${String(eff[key]) === String(v) ? 'on' : ''}" data-act="skOpt" data-k="${key}" data-v="${v}">${label}</button>`;
+  const models = MODELS[eff.kind].map(([v]) => v);
+  if (!models.includes(eff.model)) models.push(eff.model);
+  const chatList = chatModels();
+  const refsBox = r.max > 0 ? `<div class="refs sk-refs">
+      <div class="refs-head"><b>${frames ? 'Frame awal &amp; akhir' : 'Foto referensi'}</b><span class="faint small">${frames ? 'Wajib 2 foto: ke-1 awal, ke-2 akhir.' : r.min ? `Wajib ${r.min} foto.` : 'Opsional.'}${!frames && k.images.length ? ' Dirujuk di prompt sebagai @tag.' : ''}</span><span class="right faint small">${k.images.length}/${r.max}</span></div>
+      <div class="ref-row" id="sk-drop">
+        ${k.images.map((p, i) => `<div class="thumb" title="${esc(p)}">${S.studio.previews[p] ? `<img src="${S.studio.previews[p]}" alt="">` : icon('file-image', 'lg')}<span class="tag">${frames ? (i === 0 ? 'Awal' : 'Akhir') : '@' + esc(tags[i])}</span>${btn('skImgRemove', '', { ic: 'x', cls: 'x sm', title: 'Hapus', data: `data-i="${i}"` })}</div>`).join('')}
+        ${k.images.length < r.max ? `<button class="thumb add" data-act="skPick" title="Pilih foto (atau seret ke sini)">${icon('image-plus', 'lg')}<span class="small">${frames ? (k.images.length ? 'Frame akhir' : 'Frame awal') : 'Tambah'}</span></button>` : ''}
+      </div></div>` : '';
+  const head = `<div class="sk-head"><span class="sk-ic big ${sk.category}">${icon(sk.icon || 'sparkles', 'lg')}</span><div class="grow"><h3>${esc(sk.name)}</h3><div class="muted small">${esc(sk.desc || '')}</div></div>
+    <div class="hrow">${SK_SRC[sk.source] ? `<span class="badge ${sk.source === 'admin' ? 'accent' : ''}">${SK_SRC[sk.source]}</span>` : ''}
+      ${sk.source === 'mine' ? btn('skEdit', '', { ic: 'pencil', cls: 'subtle icon sm', title: 'Ubah skill' }) + btn('skExportOne', '', { ic: 'file-json', cls: 'subtle icon sm', title: 'Ekspor skill ini (.json)' }) + btn('skDelete', '', { ic: 'trash-2', cls: 'subtle icon sm danger', title: 'Hapus skill' })
+        : !ai ? btn('skCopy', '', { ic: 'copy', cls: 'subtle icon sm', title: 'Salin ke Skill saya (lalu ubah sesuka hati)' }) : ''}</div></div>`;
+
+  if (ai) {
+    const res = k.result && k.result.id === sk.id ? k.result : null;
+    return `<div class="card sk-panel">${head}
+      <div class="sk-form">${fields.map(field).join('')}</div>
+      ${refsBox}
+      ${sk.ai === 'reverse' ? `<label class="field inline"><span>Model AI</span><select class="input" data-change="skModel">${chatList.length ? chatList.map((m) => `<option value="${esc(m.id)}" ${(k.model || S.chat.model) === m.id ? 'selected' : ''}>${esc(m.label)}</option>`).join('') : '<option value="">Memuat…</option>'}</select></label><p class="faint small">Butuh model chat yang bisa membaca gambar (mis. model vision di OpenRouter). Bila gagal, pilih model lain atau minta admin menambahkannya.</p>` : ''}
+      <div class="actionbar">${btn('skRun', busy === 'run' ? 'Memproses…' : sk.ai === 'director' ? 'Buka di Asisten Prompt' : 'Jalankan', { ic: busy === 'run' ? 'loader-circle' : sk.ai === 'director' ? 'message-square-text' : 'sparkles', cls: 'primary', disabled: !!busy })}
+        <span class="faint small grow">Memakai model chat dari admin (kuota Asisten Prompt).</span></div>
+      ${res ? skResult(sk, res) : ''}
+    </div>`;
+  }
+  const res = sk.ai === 'scenes' && k.result && k.result.id === sk.id ? k.result : null;
+  return `<div class="card sk-panel">${head}
+    <div class="sk-form">${fields.map(field).join('')}</div>
+    ${refsBox}
+    <div class="opts sk-opts">
+      <div class="opt"><span class="opt-l">${icon(eff.kind === 'video' ? 'clapperboard' : 'image')} Jenis</span><span class="chip on">${eff.kind === 'video' ? `Video · ${frames ? 'Frame' : 'Bahan'}` : 'Gambar'}</span></div>
+      <div class="opt wide"><span class="opt-l">${icon('cpu')} Model</span><select class="input" data-change="skModelFlow" aria-label="Model">${models.map((m) => `<option value="${esc(m)}" ${eff.model === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
+      <div class="opt"><span class="opt-l">${icon('ratio')} Rasio</span><div class="chips">${RATIOS[eff.kind].map((x) => chip('ratio', x, x)).join('')}</div></div>
+      <div class="opt"><span class="opt-l">${icon('hash')} Jumlah</span><div class="chips">${[1, 2, 3, 4].map((n) => chip('count', n, 'x' + n)).join('')}</div></div>
+    </div>
+    ${sk.ai === 'scenes' ? `
+      <div class="actionbar">${btn('skRun', busy === 'run' ? 'AI menyusun adegan…' : 'Pecah jadi adegan', { ic: busy === 'run' ? 'loader-circle' : 'list-video', cls: 'primary', disabled: !!busy })}<span class="faint small grow">Setiap adegan menjadi 1 tugas di antrean Otomatis (setelan di atas).</span></div>
+      ${res ? skResult(sk, res) : ''}`
+    : `<div class="sk-prompt">
+      <div class="sk-prompt-head"><b>Prompt</b><span class="faint small grow">${k.edited != null ? 'Diubah manual' : 'Tersusun otomatis dari isian'}</span>${k.edited != null ? btn('skReset', 'Kembalikan', { ic: 'rotate-ccw', cls: 'sm subtle' }) : ''}${btn('skRefine', busy === 'refine' ? 'Menyempurnakan…' : 'Sempurnakan dengan Asisten Prompt', { ic: busy === 'refine' ? 'loader-circle' : 'sparkles', cls: 'sm', disabled: !!busy || !prompt.trim() })}</div>
+      <textarea id="sk-prompt" class="input prompt" rows="5" maxlength="8000" data-input="skPrompt">${esc(prompt)}</textarea>
+    </div>
+    <div class="actionbar cta-bar">
+      ${btn('skGenerate', isAuto() ? 'Generate sekarang' : 'Kirim ke Flow sekarang', { ic: 'sparkles', cls: 'cta', disabled: !!busy || !!S.studio.busy || !acc() })}
+      ${btn('skToStudio', 'Kirim ke Studio', { ic: 'wand-sparkles', disabled: !!busy })}
+      ${btn('skQueue', 'Tambah ke antrean', { ic: 'list-plus', disabled: !!busy || !S.settings.accounts.length, title: 'Tambah ke antrean Mode Otomatis' })}
+    </div>`}
+  </div>`;
+}
+
+function skResult(sk, res) {
+  const scenes = sk.ai === 'scenes';
+  return `<div class="sk-result">
+    <div class="sk-prompt-head"><b>${scenes ? `${res.prompts.length} adegan` : 'Hasil'}</b><span class="faint small grow">${res.model ? esc(res.model) : ''}</span>
+      ${scenes && res.prompts.length ? btn('skResQueue', `Tambah ${res.prompts.length} adegan ke antrean`, { ic: 'list-plus', cls: 'sm primary' }) : ''}</div>
+    ${res.prompts.length ? res.prompts.map((p, i) => `<div class="sk-res-item"><div class="sk-res-n">${scenes ? 'Adegan ' + (i + 1) : 'Prompt' + (res.prompts.length > 1 ? ' ' + (i + 1) : '')}</div><div class="sk-res-text">${esc(p)}</div>
+      <div class="hrow">${btn('skResUse', 'Pakai di Studio', { ic: 'wand-sparkles', cls: 'sm', data: `data-i="${i}"` })}${btn('skResQueue', 'Antrean', { ic: 'list-plus', cls: 'sm subtle', data: `data-i="${i}"` })}${btn('skResCopy', '', { ic: 'copy', cls: 'sm subtle icon', title: 'Salin', data: `data-i="${i}"` })}</div></div>`).join('')
+    : `<div class="sk-res-text">${esc(res.reply)}</div>`}
+  </div>`;
+}
+
 const PAGES = {
   home() {
     const a = acc();
@@ -427,6 +713,8 @@ const PAGES = {
   },
 
   studio() {
+    if (S.studioTab === 'alat') return studioHead() + alatPage();
+    if (S.studioTab === 'skill') return studioHead() + skillPage();
     const a = acc();
     const s = a ? st(a.id) : {};
     const warn = readiness(false);
@@ -441,6 +729,7 @@ const PAGES = {
     const tags = refTags(imgs);
     const refHint = !video ? (imgs.length ? 'Ketik @ di prompt untuk menunjuk gambar.' : 'Opsional — untuk edit / gaya.') : frames ? (imgs.length > 2 ? 'Mode Frame hanya memakai 2 foto — hapus foto lainnya.' : 'Foto ke-1 = frame awal, ke-2 = frame akhir.') : imgs.length ? 'Ketik @ di prompt untuk menunjuk bahan.' : 'Maks. 3 bahan agar konsisten antar adegan.';
     const framesOk = !frames || imgs.length === 2;
+    const endFirst = frames && imgs.length === 1 && S.studio.endFirst === imgs[0]; // foto akhir dipasang lebih dulu (dari Alat)
     const dur = durationFor(o.kind, o.model);
     const models = modelList(o.kind);
     const g = S.gallery;
@@ -456,10 +745,7 @@ const PAGES = {
             : `<div class="stage-empty">${icon(cur.isVideo ? 'video' : 'file-image', 'xl')}<div class="muted">${!cur.done ? 'Masih diproses Flow…' : g.thumbs[cur.mediaId] === null ? 'Pratinjau tidak tersedia.' : 'Memuat pratinjau…'}</div>${cur.done && g.thumbs[cur.mediaId] === null ? btn('thumbRetry', 'Coba lagi', { ic: 'refresh-cw', cls: 'sm subtle', data: `data-id="${cur.mediaId}"` }) : ''}</div>`)
         : `<div class="stage-empty">${icon('square-play', 'xl')}<div class="stage-title">Hasil generate tampil di sini</div><div class="muted small">Tulis prompt, pilih model, lalu tekan ${isAuto() ? 'Generate' : 'Kirim ke Flow'}.</div></div>`;
     return `
-      <div class="page-head"><h1>Studio</h1><div class="tools">${accountPicker()}
-        ${a && s.signedIn ? `<span class="pill" title="${esc(s.projectTitle || '')}">${icon('clapperboard')}<span class="ellipsis">${s.projectId ? esc(s.projectTitle || 'Project') : 'Belum ada project'}</span></span>${btn('newProject', 'Project baru', { ic: S.busy.has('newProject' + `data-id="${a.id}"`) ? 'loader-circle' : 'folder-plus', data: `data-id="${a.id}"`, disabled: !!busy })}` : ''}
-        ${a && s.connected ? btn('showFlow', '', { ic: 'app-window', cls: 'icon', title: 'Lihat jendela Google Flow', data: `data-id="${a.id}"` }) : ''}
-      </div></div>
+      ${studioHead()}
       ${warn || ''}
       <div class="studio">
         <div class="card composer">
@@ -471,14 +757,14 @@ const PAGES = {
           <div class="prompt-wrap">
             <textarea id="prompt" class="input prompt" rows="6" maxlength="8000" placeholder="${video ? 'Kamera drone perlahan maju di atas sawah terasering Bali saat matahari terbit, kabut tipis, sinematik…' : 'Foto produk kopi susu gula aren di meja kayu, cahaya pagi, gaya editorial…'}" data-input="prompt">${esc(S.studio.prompt)}</textarea>
             <div class="mention-pop" id="mention-pop" role="listbox" hidden></div>
-            <div class="prompt-foot"><span class="faint small" id="count">${S.studio.prompt.length}/8000</span><span class="faint small">${imgs.length ? '@ = tandai gambar · ' : ''}Ctrl+Enter</span></div>
+            <div class="prompt-foot"><span class="faint small" id="count">${S.studio.prompt.length}/8000</span>${btn('skSaveStudio', 'Simpan sebagai skill', { ic: 'bookmark-plus', cls: 'subtle sm', title: 'Simpan prompt & setelan ini ke Studio → Skill → Skill saya' })}<span class="faint small">${imgs.length ? '@ = tandai gambar · ' : ''}Ctrl+Enter</span></div>
           </div>
           <div class="refs">
-            <div class="refs-head"><b>${refLabel}</b><span class="faint small ${frames && !framesOk ? 'warn-text' : ''}">${refHint}</span><span class="right faint small">${imgs.length}/${frames ? 2 : 10}</span></div>
+            <div class="refs-head"><b>${refLabel}</b><span class="faint small ${frames && !framesOk ? 'warn-text' : ''}">${refHint}</span><span class="right faint small">${imgs.length}/${frames ? 2 : 10}</span>${frames && imgs.length >= 2 ? btn('swapFrames', '', { ic: 'arrow-right-left', cls: 'subtle icon sm', title: 'Tukar frame awal ↔ akhir' }) : ''}</div>
             <div class="ref-row" id="drop">
-              ${imgs.map((p, i) => `<div class="thumb ${frames && i > 1 ? 'extra' : ''}" title="${esc(p)}">${S.studio.previews[p] ? `<img src="${S.studio.previews[p]}" alt="">` : icon('file-image', 'lg')}${frames ? `<span class="tag">${i === 0 ? 'Awal' : i === 1 ? 'Akhir' : 'Tidak dipakai'}</span>` : `<button class="reftag" data-act="insertTag" data-tag="${esc(tags[i])}" title="Sisipkan @${esc(tags[i])} ke prompt">@${esc(tags[i])}</button>`}${btn('removeImage', '', { ic: 'x', cls: 'x sm', title: 'Hapus', data: `data-i="${i}"` })}</div>`).join('')}
+              ${imgs.map((p, i) => `<div class="thumb ${frames && i > 1 ? 'extra' : ''}" title="${esc(p)}">${S.studio.previews[p] ? `<img src="${S.studio.previews[p]}" alt="">` : icon('file-image', 'lg')}${frames ? `<span class="tag">${endFirst || i === 1 ? 'Akhir' : i === 0 ? 'Awal' : 'Tidak dipakai'}</span>` : `<button class="reftag" data-act="insertTag" data-tag="${esc(tags[i])}" title="Sisipkan @${esc(tags[i])} ke prompt">@${esc(tags[i])}</button>`}${btn('removeImage', '', { ic: 'x', cls: 'x sm', title: 'Hapus', data: `data-i="${i}"` })}</div>`).join('')}
               ${frames
-                ? [0, 1].filter((i) => i >= imgs.length).map((i) => `<button class="thumb add slot" data-act="pickImages" title="Pilih foto ${i ? 'akhir' : 'awal'}">${icon('image-plus', 'lg')}<span class="small">Frame ${i ? 'akhir' : 'awal'}</span></button>`).join('')
+                ? [0, 1].filter((i) => i >= imgs.length).map((i) => (endFirst ? 'awal' : i ? 'akhir' : 'awal')).map((w) => `<button class="thumb add slot" data-act="pickImages" title="Pilih foto ${w}">${icon('image-plus', 'lg')}<span class="small">Frame ${w}</span></button>`).join('')
                 : `<button class="thumb add" data-act="pickImages" title="Tambah gambar (atau seret ke sini)">${icon('image-plus', 'lg')}<span class="small">Tambah</span></button>`}
             </div>
           </div>
@@ -856,10 +1142,14 @@ function render() {
   const ae = document.activeElement;
   const keep = ae && ae.id && $('#page').contains(ae) ? { id: ae.id, s: ae.selectionStart, e: ae.selectionEnd } : null;
   const scroll = $('#page').scrollTop;
+  const tv = $('#tool-video');
+  const tvTime = tv ? tv.currentTime : 0;
   renderNav();
   renderStatus();
   $('#page').innerHTML = updateBanner() + PAGES[S.page]();
   $('#page').scrollTop = scroll;
+  const tv2 = $('#tool-video');
+  if (tv2 && tvTime) tv2.addEventListener('loadedmetadata', () => { tv2.currentTime = tvTime; }, { once: true });
   if (keep) {
     const el = document.getElementById(keep.id);
     if (el) { el.focus(); try { el.setSelectionRange(keep.s, keep.e); } catch { /* bukan input teks */ } }
@@ -886,6 +1176,7 @@ function go(page) {
   render();
   $('#page').focus();
   if (page === 'gallery' || page === 'studio') galleryAutoLoad();
+  if (page === 'studio' && S.studioTab === 'skill') { skillsLoad(false); if (!S.chat.catalog) chatCatalog(false).then(() => render()); }
   if (page === 'assistant') {
     S.chat.scroll = true;
     if (S.chat.catalog && !S.chat.catalogError) render();
@@ -947,7 +1238,9 @@ async function addImages(paths) {
   const max = isFrames(opts()) ? 2 : 10;
   for (const p of list) {
     if (S.studio.images.length >= max) { toast(max === 2 ? 'Mode Frame hanya memakai 2 foto: frame awal & frame akhir.' : 'Maksimal 10 gambar.', 'err'); break; }
-    if (!S.studio.images.includes(p)) S.studio.images.push(p);
+    if (S.studio.images.includes(p)) continue;
+    if (S.studio.endFirst && S.studio.images.length === 1 && S.studio.images[0] === S.studio.endFirst) { S.studio.images.unshift(p); S.studio.endFirst = null; }
+    else S.studio.images.push(p);
   }
   render();
   for (const p of list) {
@@ -1154,7 +1447,7 @@ const ACTIONS = {
 
   // Studio
   pickImages: async () => { const list = await call('files:pickImages'); if (list.length) addImages(list); },
-  removeImage: (el) => { S.studio.images.splice(Number(el.dataset.i), 1); render(); },
+  removeImage: (el) => { S.studio.images.splice(Number(el.dataset.i), 1); if (!S.studio.images.includes(S.studio.endFirst)) S.studio.endFirst = null; render(); },
   insertTag: (el) => insertMention(el.dataset.tag, false),
   clearImages: () => { S.studio.images = []; render(); },
   async send() {
@@ -1223,6 +1516,7 @@ const ACTIONS = {
     S.studio.prompt = t.slice(0, 8000);
     const kind = chatMode();
     if (S.settings && S.settings.studio && S.settings.studio.kind !== kind) setStudio({ kind });
+    S.studioTab = 'buat';
     go('studio');
     toast('Prompt dipindahkan ke Studio. Periksa lalu tekan ' + (isAuto() ? 'Generate.' : 'Kirim ke Flow.'), 'ok');
   },
@@ -1471,6 +1765,395 @@ async function downloadItems(ids) {
   return last;
 }
 
+// ---------- Studio → Alat & Skill: aksi ----------
+const TOOL_DEFAULTS = { at: 'end', sec: 0, ratio: '16:9', anchor: 'center', grid: '2', format: 'webp', quality: 85, max: '0', mode: 'auto', tol: 30, edgeOnly: true, pattern: '{tanggal} {nama}', cat: 'all', start: 1 };
+function toolReset(keepOpen) {
+  const T = S.tool;
+  for (const u of T.urls) URL.revokeObjectURL(u);
+  S.tool = { open: keepOpen ? T.open : null, src: null, files: [], opts: { ...TOOL_DEFAULTS, ...T.opts }, results: [], urls: [], busy: false, plan: null };
+}
+async function toolLoad(path) {
+  const r = await call('tools:read', path);
+  const blob = new Blob([r.data], { type: r.mime });
+  const url = URL.createObjectURL(blob);
+  S.tool.urls.push(url);
+  const src = { path, name: r.name || baseName(path), blob, url, kind: /^video\//.test(r.mime) ? 'video' : 'image' };
+  if (src.kind === 'image') {
+    const bmp = await loadBitmap(blob);
+    src.w = bmp.width; src.h = bmp.height;
+    bmp.close();
+  }
+  return src;
+}
+async function toolAddPaths(paths) {
+  const T = S.tool;
+  const kind = TOOL_KIND[T.open] === undefined ? 'image' : TOOL_KIND[T.open];
+  if (!kind || !paths.length) return;
+  T.busy = true; render();
+  try {
+    if (kind === 'images') {
+      for (const p of paths) if (!T.files.some((f) => f.path === p)) T.files.push({ path: p, name: baseName(p) });
+      T.files = T.files.slice(0, 50);
+    } else {
+      const src = await toolLoad(paths[0]);
+      if (src.kind !== (kind === 'video' ? 'video' : 'image')) throw new Error(kind === 'video' ? 'Pilih berkas video.' : 'Pilih berkas gambar.');
+      if (src.kind === 'video') {
+        const v = await loadVideo(src.url);
+        src.dur = Number.isFinite(v.duration) ? v.duration : 0;
+        v.removeAttribute('src'); v.load();
+      }
+      S.tool.src = src;
+      T.results = T.results.slice(0, 24);
+    }
+  } finally { T.busy = false; render(); }
+}
+async function toolSave(c, name, format = 'png', quality = 0.92, extra = {}) {
+  const blob = await toBlob(c, format, quality);
+  const data = new Uint8Array(await blob.arrayBuffer());
+  const path = await call('tools:save', { name, data, format });
+  const url = URL.createObjectURL(blob);
+  S.tool.urls.push(url);
+  S.tool.results.unshift({ path, url, w: c.width, h: c.height, ...extra });
+  return path;
+}
+async function toolRun() {
+  const T = S.tool, o = T.opts;
+  if (T.busy) return;
+  T.busy = true; render();
+  let n = 0;
+  try {
+    if (T.open === 'frame') {
+      const v = await loadVideo(T.src.url);
+      const live = $('#tool-video');
+      const t = o.at === 'start' ? 0 : o.at === 'end' ? v.duration : o.at === 'now' ? (live ? live.currentTime : 0) : Number(o.sec) || 0;
+      const { canvas, at } = await videoFrame(v, t);
+      v.removeAttribute('src'); v.load();
+      await toolSave(canvas, `${stem(T.src.name)} - frame ${o.at === 'start' ? 'awal' : o.at === 'end' ? 'akhir' : at.toFixed(1) + ' dtk'}`, 'png');
+      n = 1;
+    } else if (T.open === 'convert') {
+      for (const f of T.files) {
+        const src = await toolLoad(f.path);
+        const bmp = await loadBitmap(src.blob);
+        const c = resizeMax(bmp, Number(o.max) || 0);
+        bmp.close();
+        await toolSave(c, stem(f.name), o.format, o.quality / 100);
+        n++;
+        S.activity = `Konversi ${n}/${T.files.length}…`; renderStatus();
+      }
+      S.activity = '';
+    } else {
+      const bmp = await loadBitmap(T.src.blob);
+      const name = stem(T.src.name);
+      const fmt = /\.jpe?g$/i.test(T.src.name) ? 'jpg' : 'png';
+      if (T.open === 'crop') {
+        await toolSave(cropRatio(bmp, o.ratio, o.anchor), `${name} - ${o.ratio.replace(':', 'x')}`, fmt);
+        n = 1;
+      } else if (T.open === 'grid') {
+        const [cols, rows] = o.grid === '2x1' ? [2, 1] : o.grid === '1x2' ? [1, 2] : [Number(o.grid), Number(o.grid)];
+        const parts = gridSplit(bmp, cols, rows);
+        for (let i = parts.length - 1; i >= 0; i--) await toolSave(parts[i], `${name} - bagian ${i + 1}`, fmt);
+        n = parts.length;
+      } else if (T.open === 'bg') {
+        await toolSave(removeBackground(bmp, { mode: o.mode, tolerance: o.tol, edgeOnly: o.edgeOnly }), `${name} - tanpa latar`, 'png', 1, { alpha: true });
+        n = 1;
+      }
+      bmp.close();
+    }
+    toast(`${n} berkas disimpan di folder Unduhan → Alat.`, 'ok');
+  } catch (e) { toast(msg(e), 'err'); }
+  T.busy = false;
+  render();
+}
+/** Pasang hasil alat di Studio: slot 0/1 = foto awal/akhir mode Frame; tanpa slot = gambar referensi. */
+async function placeInStudio(path, slot) {
+  if (slot == null) {
+    if (isFrames(opts()) && S.studio.images.length >= 2) setStudio({ sub: 'ingredients' });
+    await addImages([path]);
+  } else {
+    await call('files:register', [path]);
+    if (!isFrames(opts())) setStudio(opts().kind === 'video' ? { sub: 'frames' } : { kind: 'video', sub: 'frames' });
+    const imgs = S.studio.images.slice(0, 2);
+    if (slot === 0) { imgs[0] = path; S.studio.endFirst = null; }
+    else if (imgs.length) imgs[1] = path;
+    else { imgs[0] = path; S.studio.endFirst = path; } // foto akhir dulu → foto berikutnya jadi frame awal
+    S.studio.images = imgs.filter(Boolean);
+    if (S.studio.previews[path] === undefined) S.studio.previews[path] = (await call('files:preview', path).catch(() => null)) || null;
+  }
+  S.studioTab = 'buat';
+  go('studio');
+  toast(slot === 0 ? 'Dipasang sebagai frame awal.' : slot === 1 ? (S.studio.endFirst ? 'Dipasang sebagai frame akhir — tambahkan foto awal.' : 'Dipasang sebagai frame akhir.') : 'Ditambahkan ke Studio.', 'ok');
+}
+
+async function skillsLoad(force) {
+  const k = S.sk;
+  try { k.mine = await call('skills:mine'); } catch { k.mine = k.mine || []; }
+  try { k.admin = await call('skills:catalog', !!force); k.adminError = null; } catch (e) { k.adminError = e.message; k.admin = k.admin || []; }
+  if (S.page === 'studio' && S.studioTab === 'skill') render();
+}
+function skSelect(id) {
+  const k = S.sk;
+  if (k.sel === id) return;
+  k.sel = id; k.edited = null; k.over = {}; k.result = null;
+  const sk = allSkills().find((x) => x.id === id);
+  const max = sk && sk.refs ? sk.refs.max : 0;
+  k.images = k.images.slice(0, max);
+}
+async function skAddImages(paths) {
+  const sk = curSkill();
+  const max = sk && sk.refs ? sk.refs.max : 0;
+  if (!max) return;
+  const list = await call('files:register', paths);
+  if (paths.length && !list.length) { toast(ERR.INVALID_IMAGE, 'err'); return; }
+  for (const p of list) if (S.sk.images.length < max && !S.sk.images.includes(p)) S.sk.images.push(p);
+  S.sk.edited = null;
+  render();
+  for (const p of list) if (S.studio.previews[p] === undefined) S.studio.previews[p] = (await call('files:preview', p).catch(() => null)) || null;
+  render();
+}
+/** Terapkan skill ke Studio (prompt, foto, setelan). */
+function skApply(sk, prompt) {
+  const eff = skillOpts(sk);
+  S.studio.prompt = String(prompt || '').slice(0, 8000);
+  if (sk.category !== 'ai') { S.studio.images = [...S.sk.images]; S.studio.endFirst = null; }
+  S.settings.studio = eff;
+  call('settings:set', { studio: eff }).catch((e) => toast(msg(e), 'err'));
+  S.studioTab = 'buat';
+}
+function skMessage(sk) { return compose(sk.template, skValues(sk), refTags(S.sk.images)); }
+async function skChat(text, mode, extra = {}) {
+  const models = chatModels();
+  const model = extra.model || (models.find((m) => m.id === S.chat.model) || models.find((m) => m.is_default) || models[0] || {}).id;
+  const r = await call('assistant:chat', { messages: [{ role: 'user', content: text.slice(0, 6000) }], mode, model, imagePath: extra.imagePath });
+  return { ...r, prompts: r.prompts && r.prompts.length ? r.prompts : chatPrompts(r.reply || '') };
+}
+async function skQueueAdd(prompts, eff, images) {
+  if (!S.settings.accounts.length) throw new Error('UNKNOWN_ACCOUNT');
+  if (!isAuto()) { const ok = await enableAuto(); if (!ok) return false; }
+  S.queue = await call('queue:add', { prompts, images, tags: refTags(images), accountId: S.settings.activeAccountId, options: eff });
+  toast(`${prompts.length} tugas ditambahkan ke antrean Otomatis.`, 'ok');
+  render();
+  return true;
+}
+
+/** Dialog buat / ubah "Skill saya". */
+async function skillEditor(init = {}) {
+  const s0 = init.settings || {};
+  const kind0 = s0.kind || init.category || opts().kind;
+  const refs0 = init.refs || { min: 0, max: 0 };
+  const refKey = refs0.min === 2 ? 'two' : refs0.min === 1 && refs0.max === 1 ? 'one' : refs0.min >= 1 ? 'many' : refs0.max > 0 ? 'opt' : 'none';
+  const allModels = [...MODELS.video.map(([v]) => ['video', v]), ...MODELS.image.map(([v]) => ['image', v])];
+  const r = await dialog({
+    title: init.id ? 'Ubah skill' : 'Skill baru',
+    body: `<div class="sk-editor">
+      <label class="field"><span>Nama</span><input class="input" name="name" maxlength="60" value="${esc(init.name || '')}" placeholder="mis. Foto produk kopi"></label>
+      <label class="field"><span>Deskripsi (opsional)</span><input class="input" name="description" maxlength="200" value="${esc(init.description || init.desc || '')}"></label>
+      <div class="grid2">
+        <label class="field"><span>Jenis</span><select class="input" name="kind"><option value="video" ${kind0 === 'video' ? 'selected' : ''}>Video</option><option value="image" ${kind0 === 'image' ? 'selected' : ''}>Gambar</option></select></label>
+        <label class="field"><span>Mode video</span><select class="input" name="sub"><option value="ingredients" ${s0.sub !== 'frames' ? 'selected' : ''}>Bahan</option><option value="frames" ${s0.sub === 'frames' ? 'selected' : ''}>Frame (2 foto)</option></select></label>
+        <label class="field"><span>Model</span><select class="input" name="model"><option value="">Ikuti Studio</option>${allModels.map(([k, v]) => `<option value="${esc(v)}" data-kind="${k}" ${s0.model === v ? 'selected' : ''}>${esc(v)} (${k === 'video' ? 'video' : 'gambar'})</option>`).join('')}</select></label>
+        <label class="field"><span>Rasio</span><select class="input" name="ratio"><option value="">Ikuti Studio</option>${RATIOS.image.map((x) => `<option ${s0.ratio === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
+        <label class="field"><span>Jumlah</span><select class="input" name="count"><option value="">Ikuti Studio</option>${[1, 2, 3, 4].map((n) => `<option value="${n}" ${Number(s0.count) === n ? 'selected' : ''}>x${n}</option>`).join('')}</select></label>
+        <label class="field"><span>Foto referensi</span><select class="input" name="refs">${[['none', 'Tidak perlu'], ['opt', 'Opsional (maks. 3)'], ['one', 'Wajib 1 foto'], ['many', 'Wajib 1–3 foto'], ['two', 'Wajib 2 foto']].map(([v, l]) => `<option value="${v}" ${refKey === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label class="field"><span>Ikon</span><select class="input" name="icon">${SKILL_ICONS.map((x) => `<option ${init.icon === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label>
+      </div>
+      <label class="field"><span>Templat prompt</span><textarea class="input mono" name="template" rows="7" maxlength="4000" placeholder="Foto produk {Produk} di atas {Latar:meja kayu|marmer putih}, cahaya pagi[, {Detail}]">${esc(init.template || '')}</textarea></label>
+      <div class="faint small sk-help"><b>Isian:</b> <code>{Nama}</code> kotak teks · <code>{Gaya:Kartun|Anime}</code> pilihan · <code>{Gaya:Kartun=cartoon style|…}</code> label=teks prompt · <code>{@1}</code> tag foto ke-1 · <code>[ … ]</code> bagian opsional (dibuang bila isiannya kosong).</div>
+    </div>`,
+    buttons: [{ label: 'Simpan', value: 'ok', primary: true }, { label: 'Batal', value: 'cancel' }],
+    validate: (d) => !!d.querySelector('[name=name]').value.trim() && !!d.querySelector('[name=template]').value.trim()
+  });
+  if (!r) return null;
+  const q = (n) => r.el.querySelector(`[name=${n}]`).value;
+  const kind = q('kind');
+  const model = q('model');
+  const settings = { kind };
+  if (kind === 'video') settings.sub = q('sub');
+  if (model && KIND_RE[kind].test(model)) settings.model = model;
+  if (q('ratio')) settings.ratio = q('ratio');
+  if (q('count')) settings.count = Number(q('count'));
+  const refs = { none: { min: 0, max: 0 }, opt: { min: 0, max: 3 }, one: { min: 1, max: 1 }, many: { min: 1, max: 3 }, two: { min: 2, max: 2 } }[q('refs')];
+  const skill = { id: init.id && /^my-/.test(init.id) ? init.id : undefined, name: q('name'), description: q('description'), category: kind, icon: q('icon'), template: q('template'), settings, refs };
+  const list = await call('skills:save', skill);
+  S.sk.mine = list;
+  const saved = skill.id ? list.find((x) => x.id === skill.id) : list[0];
+  if (saved) { S.sk.group = S.sk.group === 'all' || S.sk.group === 'mine' ? S.sk.group : 'mine'; skSelect(saved.id); }
+  toast('Skill disimpan di Skill saya.', 'ok');
+  render();
+  return saved;
+}
+
+Object.assign(ACTIONS, {
+  studioTab: (el) => studioTab(el.dataset.tab),
+  swapFrames: () => { const i = S.studio.images; if (i.length >= 2) { [i[0], i[1]] = [i[1], i[0]]; render(); } },
+
+  // Alat
+  toolOpen: (el) => {
+    if (S.tool.open === el.dataset.id) { toolReset(false); render(); return; }
+    toolReset(false);
+    S.tool.open = el.dataset.id;
+    render();
+    const p = $('#tool-panel'); if (p) p.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  },
+  toolClose: () => { toolReset(false); render(); },
+  toolOpt: (el) => { const k = el.dataset.k; S.tool.opts[k] = typeof TOOL_DEFAULTS[k] === 'number' ? Number(el.dataset.v) : el.dataset.v; S.tool.plan = null; render(); },
+  toolPick: async () => {
+    const kind = TOOL_KIND[S.tool.open] === undefined ? 'image' : TOOL_KIND[S.tool.open];
+    const list = await call('tools:pick', kind);
+    if (list.length) await toolAddPaths(list);
+  },
+  toolClear: () => { S.tool.files = []; render(); },
+  toolFileRemove: (el) => { S.tool.files.splice(Number(el.dataset.i), 1); render(); },
+  toolRun: () => toolRun(),
+  toolUse: (el) => { const r = S.tool.results[Number(el.dataset.i)]; if (r) return placeInStudio(r.path, el.dataset.slot == null ? null : Number(el.dataset.slot)); },
+  openToolsFolder: () => { const r = S.tool.results[0]; if (r) return call('files:show', r.path); },
+  toolRenamePlan: () => busy('toolRenamePlan', async () => {
+    const o = S.tool.opts;
+    S.tool.plan = await call('tools:renamePlan', { pattern: o.pattern, cat: o.cat, start: o.start });
+    if (!S.tool.plan.length) toast('Tidak ada berkas yang cocok di daftar Unduhan.', 'info');
+  }),
+  toolRename: async () => {
+    const T = S.tool, o = T.opts;
+    const n = (T.plan || []).filter((p) => p.from !== p.to).length;
+    if (!n) return;
+    const ok = await dialog({ title: `Ganti nama ${n} berkas?`, body: '<p>Berkas di folder Unduhan akan diganti namanya. Daftar Unduhan di aplikasi ikut diperbarui.</p>', buttons: [{ label: 'Ganti nama', value: 'ok', primary: true }, { label: 'Batal', value: 'cancel' }] });
+    if (!ok) return;
+    await busy('toolRename', async () => {
+      const r = await call('tools:rename', { pattern: o.pattern, cat: o.cat, start: o.start });
+      T.plan = null;
+      toast(`${r.renamed} berkas diganti namanya${r.skipped ? `, ${r.skipped} dilewati` : ''}.`, r.renamed ? 'ok' : 'info');
+    });
+  },
+  flowTool: (el) => {
+    const a = acc();
+    const t = FLOW_TOOLS.find((x) => x.id === el.dataset.id);
+    if (!a || !t) { toast(ERR.UNKNOWN_ACCOUNT, 'err'); return; }
+    return busy('flowTool' + `data-id="${t.id}"`, async () => {
+      await call('flow:openTool', a.id, t.url);
+      toast(`${t.name} dibuka di jendela Google Flow (${a.label}).`, 'ok');
+    });
+  },
+
+  // Skill
+  skGroup: (el) => { S.sk.group = el.dataset.g; const v = skVisible(); if (v.length && !v.some((x) => x.id === S.sk.sel)) skSelect(v[0].id); render(); },
+  skSel: (el) => { skSelect(el.dataset.id); render(); },
+  skOpt: (el) => { S.sk.over[el.dataset.k] = el.dataset.k === 'count' ? Number(el.dataset.v) : el.dataset.v; render(); },
+  skPick: async () => { const list = await call('files:pickImages'); if (list.length) await skAddImages(list); },
+  skImgRemove: (el) => { S.sk.images.splice(Number(el.dataset.i), 1); S.sk.edited = null; render(); },
+  skReset: () => { S.sk.edited = null; render(); },
+  skReload: () => busy('skReload', async () => { await skillsLoad(true); toast(`Skill dimuat ulang · ${(S.sk.admin || []).length} dari admin.`, 'ok'); }),
+  skToStudio: () => {
+    const sk = curSkill();
+    skillCheck(sk);
+    skApply(sk, skPrompt(sk));
+    go('studio');
+    toast('Skill dipasang di Studio. Periksa lalu tekan ' + (isAuto() ? 'Generate.' : 'Kirim ke Flow.'), 'ok');
+  },
+  skGenerate: async () => {
+    const sk = curSkill();
+    skillCheck(sk);
+    skApply(sk, skPrompt(sk));
+    go('studio');
+    await (isAuto() ? ACTIONS.sendGenerate : ACTIONS.send)();
+  },
+  skQueue: async () => {
+    const sk = curSkill();
+    skillCheck(sk);
+    const p = skPrompt(sk).trim();
+    if (!p) throw new Error('INVALID_PROMPT');
+    await skQueueAdd([p], skillOpts(sk), [...S.sk.images]);
+  },
+  skRefine: async () => {
+    const sk = curSkill();
+    const p = skPrompt(sk).trim();
+    if (!p || S.sk.busy) return;
+    S.sk.busy = 'refine'; render();
+    try {
+      const kind = skillOpts(sk).kind;
+      const r = await skChat(`Sempurnakan prompt Google Flow (${kind === 'image' ? 'gambar' : 'video'}) berikut agar lebih detail, jelas, dan sinematik. Pertahankan maksudnya, gaya, dan SEMUA tag @ apa adanya. Balas hanya dengan satu blok \`\`\`prompt\`\`\`.\n\n${p}`, kind);
+      S.sk.edited = (r.prompts && r.prompts[0]) || r.reply;
+      toast('Prompt disempurnakan oleh Asisten Prompt.', 'ok');
+    } catch (e) { toast(msg(e), 'err'); }
+    S.sk.busy = ''; render();
+  },
+  skRun: async () => {
+    const sk = curSkill();
+    if (S.sk.busy) return;
+    skillCheck(sk);
+    const text = skMessage(sk);
+    if (sk.ai === 'director') {
+      S.chat.mode = aiMode(sk, skValues(sk));
+      chatSave();
+      go('assistant');
+      chatSend(text);
+      return;
+    }
+    S.sk.busy = 'run'; S.sk.result = null; render();
+    try {
+      const mode = sk.category === 'ai' ? aiMode(sk, skValues(sk)) : skillOpts(sk).kind;
+      const r = await skChat(text, mode, sk.ai === 'reverse' ? { imagePath: S.sk.images[0], model: S.sk.model || undefined } : {});
+      S.sk.result = { id: sk.id, reply: r.reply, prompts: r.prompts || [], model: r.model && r.model.label };
+      if (sk.ai === 'scenes' && !S.sk.result.prompts.length) toast('AI tidak mengembalikan adegan dalam blok prompt — lihat jawabannya di bawah.', 'info');
+    } catch (e) { toast(msg(e), 'err'); }
+    S.sk.busy = ''; render();
+  },
+  skResUse: (el) => {
+    const sk = curSkill();
+    const p = S.sk.result && S.sk.result.prompts[Number(el.dataset.i)];
+    if (!p) return;
+    skApply(sk, p);
+    go('studio');
+    toast('Prompt dipindahkan ke Studio.', 'ok');
+  },
+  skResQueue: async (el) => {
+    const sk = curSkill();
+    const res = S.sk.result;
+    if (!res) return;
+    const prompts = el.dataset.i == null ? res.prompts : [res.prompts[Number(el.dataset.i)]].filter(Boolean);
+    if (prompts.length) await skQueueAdd(prompts, skillOpts(sk), sk.category === 'ai' ? [] : [...S.sk.images]);
+  },
+  skResCopy: async (el) => { const p = S.sk.result && S.sk.result.prompts[Number(el.dataset.i)]; if (p) { await navigator.clipboard.writeText(p); toast('Prompt disalin.', 'ok'); } },
+  skNew: () => skillEditor({ settings: { ...opts() }, template: '' }),
+  skSaveStudio: () => {
+    const o = opts();
+    const imgs = S.studio.images;
+    let tpl = S.studio.prompt;
+    refTags(imgs).forEach((t, i) => { tpl = tpl.replace(new RegExp('@' + t + '(?![A-Za-z0-9_-])', 'g'), `{@${i + 1}}`); });
+    const refs = isFrames(o) ? { min: 2, max: 2 } : imgs.length ? { min: 0, max: Math.min(3, Math.max(1, imgs.length)) } : { min: 0, max: 0 };
+    return skillEditor({ template: tpl, settings: { kind: o.kind, sub: o.sub, model: o.model, ratio: o.ratio, count: o.count }, refs, icon: o.kind === 'video' ? 'clapperboard' : 'image' });
+  },
+  skEdit: () => skillEditor(curSkill()),
+  skCopy: () => { const sk = curSkill(); return skillEditor({ ...sk, id: undefined, name: (sk.name + ' (salinan)').slice(0, 60), description: sk.desc || sk.description }); },
+  skDelete: async () => {
+    const sk = curSkill();
+    if (!sk || sk.source !== 'mine') return;
+    const ok = await dialog({ title: 'Hapus skill?', body: `<p>Skill <b>${esc(sk.name)}</b> dihapus dari PC ini.</p>`, buttons: [{ label: 'Hapus', value: 'ok', primary: true }, { label: 'Batal', value: 'cancel' }] });
+    if (!ok) return;
+    S.sk.mine = await call('skills:remove', sk.id);
+    S.sk.sel = null;
+    render();
+  },
+  skExport: async () => { const p = await call('skills:export', null); if (p) toast('Skill diekspor ke ' + p, 'ok'); },
+  skExportOne: async () => { const p = await call('skills:export', [curSkill().id]); if (p) toast('Skill diekspor ke ' + p, 'ok'); },
+  skImport: async () => {
+    const r = await call('skills:import');
+    if (!r) return;
+    S.sk.mine = r.list;
+    S.sk.group = 'mine';
+    if (r.list[0]) skSelect(r.list[0].id);
+    toast(`${r.added} skill diimpor ke Skill saya.`, 'ok');
+    render();
+  }
+});
+function studioTab(tab) {
+  if (!STUDIO_TABS.some((x) => x[0] === tab)) return;
+  S.studioTab = tab;
+  if (S.page !== 'studio') { go('studio'); return; }
+  $('#page').scrollTop = 0;
+  render();
+  if (tab === 'skill') { skillsLoad(false); if (!S.chat.catalog) chatCatalog(false).then(() => render()); }
+  if (tab === 'buat') galleryAutoLoad();
+}
+
 // ---------- Event ----------
 // thumbnail gagal dimuat (file dipindah/terhapus) → sembunyikan, ikon di belakangnya terlihat
 document.addEventListener('error', (e) => { const t = e.target; if (t && t.tagName === 'IMG' && t.classList.contains('pic')) t.classList.add('gone'); }, true);
@@ -1504,6 +2187,13 @@ const CHANGES = {
   autoNum: async (el) => { S.settings = await call('settings:set', { auto: { [el.dataset.k]: Number(el.value) } }); render(); },
   autoBool: async (el) => { S.settings = await call('settings:set', { auto: { [el.dataset.k]: el.checked } }); render(); }
 };
+Object.assign(CHANGES, {
+  skField: (el) => { const sk = curSkill(); skValues(sk)[el.dataset.k] = el.value; S.sk.edited = null; render(); },
+  skModel: (el) => { S.sk.model = el.value; },
+  skModelFlow: (el) => { S.sk.over.model = el.value; render(); },
+  toolEdge: (el) => { S.tool.opts.edgeOnly = el.checked; },
+  toolRenameCat: (el) => { S.tool.opts.cat = el.value; S.tool.plan = null; render(); }
+});
 document.addEventListener('change', (e) => {
   const el = e.target.closest('[data-change]');
   if (!el || $('#dialog').contains(el)) return;
@@ -1513,6 +2203,8 @@ document.addEventListener('change', (e) => {
 document.addEventListener('input', (e) => {
   if (e.target.dataset && e.target.dataset.input === 'gateKey') { S.gateKey = e.target.value; return; }
   if (e.target.dataset && e.target.dataset.input === 'chatInput') { S.chat.input = e.target.value; return; }
+  const inp = e.target.dataset && e.target.dataset.input;
+  if (inp && INPUTS[inp]) { INPUTS[inp](e.target); return; }
   if (e.target.dataset && e.target.dataset.input === 'prompt') {
     S.studio.prompt = e.target.value;
     const c = $('#count');
@@ -1520,6 +2212,24 @@ document.addEventListener('input', (e) => {
     mentionUpdate(e.target);
   }
 });
+
+// input teks di Alat & Skill (tanpa render ulang setiap ketikan bila tidak perlu)
+const INPUTS = {
+  skField: (el) => {
+    const sk = curSkill();
+    skValues(sk)[el.dataset.k] = el.value;
+    if (S.sk.edited != null) return;
+    const ta = $('#sk-prompt');
+    if (ta) ta.value = skPrompt(sk);
+  },
+  skPrompt: (el) => { const was = S.sk.edited == null; S.sk.edited = el.value; if (was) render(); },
+  skQuery: (el) => { S.sk.q = el.value; render(); },
+  toolSec: (el) => { S.tool.opts.sec = Number(el.value) || 0; },
+  toolQuality: (el) => { S.tool.opts.quality = Number(el.value) || 85; const b = $('#tool-q'); if (b) b.textContent = el.value; },
+  toolTol: (el) => { S.tool.opts.tol = Number(el.value) || 30; const b = $('#tool-tol'); if (b) b.textContent = el.value; },
+  toolPattern: (el) => { S.tool.opts.pattern = el.value; if (S.tool.plan) { S.tool.plan = null; render(); } },
+  toolStart: (el) => { S.tool.opts.start = Number(el.value) || 0; if (S.tool.plan) { S.tool.plan = null; render(); } }
+};
 
 // ---------- Autocomplete "@" di kolom prompt Studio ----------
 const MP = { open: false, list: [], i: 0, start: -1 };
@@ -1579,26 +2289,39 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('selectionchange', () => { const ta = $('#prompt'); if (MP.open && ta && document.activeElement === ta) mentionUpdate(ta); });
 
 // seret & lepas gambar (di halaman Studio)
+const DROPS = ['#drop', '#tool-drop', '#sk-drop'];
 document.addEventListener('dragover', (e) => {
   e.preventDefault();
-  const d = $('#drop');
-  if (d) d.classList.toggle('over', d.contains(e.target));
+  for (const id of DROPS) { const d = $(id); if (d) d.classList.toggle('over', d.contains(e.target)); }
 });
-document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) { const d = $('#drop'); if (d) d.classList.remove('over'); } });
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) for (const id of DROPS) { const d = $(id); if (d) d.classList.remove('over'); } });
 document.addEventListener('drop', (e) => {
   e.preventDefault();
-  const d = $('#drop');
-  if (d) d.classList.remove('over');
+  for (const id of DROPS) { const d = $(id); if (d) d.classList.remove('over'); }
   if (S.page !== 'studio') return;
   const paths = [...(e.dataTransfer.files || [])].map((f) => fc.pathForFile(f)).filter(Boolean);
-  if (paths.length) addImages(paths);
+  if (!paths.length) return;
+  if (S.studioTab === 'alat') {
+    if (!S.tool.open || S.tool.open === 'rename') return;
+    call('tools:register', paths).then((r) => {
+      const list = TOOL_KIND[S.tool.open] === 'video' ? r.videos : r.images;
+      if (!list.length) { toast(TOOL_KIND[S.tool.open] === 'video' ? 'Seret berkas video (MP4/WebM/MOV).' : ERR.INVALID_IMAGE, 'err'); return; }
+      return toolAddPaths(list);
+    }).catch((err) => toast(msg(err), 'err'));
+  } else if (S.studioTab === 'skill') skAddImages(paths).catch((err) => toast(msg(err), 'err'));
+  else addImages(paths);
 });
 
 // pintasan papan ketik
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.target && e.target.id === 'license-key') { e.preventDefault(); ACTIONS.licenseActivate(); return; }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.target && e.target.id === 'chat-input') { e.preventDefault(); chatSend(); return; }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && S.page === 'studio') {
+  if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && /^[1-3]$/.test(e.key) && S.page === 'studio' && licensed() && !$('#dialog').open) {
+    e.preventDefault();
+    studioTab(STUDIO_TABS[Number(e.key) - 1][0]);
+    return;
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && S.page === 'studio' && S.studioTab === 'buat') {
     e.preventDefault();
     (isAuto() ? ACTIONS.sendGenerate : ACTIONS.send)();
     return;
@@ -1609,7 +2332,7 @@ document.addEventListener('keydown', (e) => {
   if (e.ctrlKey && !e.shiftKey && /^[1-7]$/.test(e.key)) { e.preventDefault(); go(pages[Number(e.key) - 1]); }
   else if (e.ctrlKey && e.key === ',') { e.preventDefault(); go('settings'); }
   else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'n') { e.preventDefault(); go('accounts'); ACTIONS.addAccount(); }
-  else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'o') { e.preventDefault(); go('studio'); ACTIONS.pickImages(); }
+  else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'o') { e.preventDefault(); S.studioTab = 'buat'; go('studio'); ACTIONS.pickImages(); }
   else if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'd') { e.preventDefault(); call('files:openDownloads'); }
   else if (e.key === 'F1') { e.preventDefault(); helpDialog(); }
 });
@@ -1620,11 +2343,13 @@ function helpDialog() {
     body: `<ol class="steps">
       <li><div><b>Akun Google → Tambah akun → Masuk ke Google.</b><div class="muted small">Kartu login kecil terbuka; masuk seperti biasa. Kartu menutup sendiri setelah berhasil.</div></div></li>
       <li><div><b>Otomatis: Flow dibuka di latar belakang &amp; project baru dibuat.</b><div class="muted small">Browser tidak tampil. Klik "Lihat Flow" bila ingin melihat jendelanya.</div></div></li>
-      <li><div><b>Studio.</b><div class="muted small">Pilih Video / Gambar, mode (Teks / Frame / Bahan), model, rasio &amp; jumlah. Tulis prompt → Generate (Ctrl+Enter).</div></div></li>
+      <li><div><b>Studio → Buat.</b><div class="muted small">Pilih Video (mode Frame / Bahan) atau Gambar, model, rasio &amp; jumlah. Tulis prompt → Generate (Ctrl+Enter).</div></div></li>
+      <li><div><b>Studio → Alat.</b><div class="muted small">12 alat Google Flow (dibuka di jendela Flow) + alat lokal gratis: frame dari video, potong rasio, pecah grid, konversi, hapus latar polos, ganti nama massal.</div></div></li>
+      <li><div><b>Studio → Skill.</b><div class="muted small">Isi formulir singkat → prompt detail + setelan otomatis. Simpan skill sendiri, ekspor/impor .json, dan skill dari admin muncul tanpa update.</div></div></li>
       <li><div><b>Mode Aman vs Otomatis.</b><div class="muted small">Aman: jendela Flow muncul, Anda menekan Generate. Otomatis: aplikasi menekan Generate, menunggu, mengunduh — sepenuhnya tersembunyi.</div></div></li>
       <li><div><b>Galeri / Unduhan.</b><div class="muted small">Lihat semua hasil project dan simpan ke PC.</div></div></li>
     </ol>
-    <p class="small mt16">Pintasan: Ctrl+1…7 pindah halaman · Ctrl+, Pengaturan · Ctrl+N tambah akun · Ctrl+O pilih gambar · F1 panduan.</p>`,
+    <p class="small mt16">Pintasan: Ctrl+1…7 pindah halaman · Alt+1/2/3 Studio → Buat/Alat/Skill · Ctrl+, Pengaturan · Ctrl+N tambah akun · Ctrl+O pilih gambar · F1 panduan.</p>`,
     buttons: [{ label: 'Tutup', value: 'ok', primary: true }]
   });
 }
@@ -1695,7 +2420,9 @@ async function init() {
   fc.on('navigate', (p) => {
     if (!licensed()) return;
     if (p === 'accounts:add') { go('accounts'); ACTIONS.addAccount(); }
-    else if (p === 'studio:pick') { go('studio'); ACTIONS.pickImages(); }
+    else if (p === 'studio:pick') { S.studioTab = 'buat'; go('studio'); ACTIONS.pickImages(); }
+    else if (p === 'studio:alat') studioTab('alat');
+    else if (p === 'studio:skill') studioTab('skill');
     else if (p === 'help') helpDialog();
     else go(p);
   });

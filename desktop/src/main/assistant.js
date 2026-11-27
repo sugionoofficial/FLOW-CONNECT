@@ -10,7 +10,7 @@ const MAX_MESSAGES = 24;
 const MAX_CHARS = 6000;
 
 // galat server → kode yang dikenali tampilan
-const KNOWN = new Set(['INVALID_KEY', 'REVOKED', 'EXPIRED', 'INVALID_DEVICE', 'LICENSE_REQUIRED', 'DAILY_LIMIT', 'NO_MODEL', 'NO_API_KEY',
+const KNOWN = new Set(['INVALID_IMAGE', 'INVALID_KEY', 'REVOKED', 'EXPIRED', 'INVALID_DEVICE', 'LICENSE_REQUIRED', 'DAILY_LIMIT', 'NO_MODEL', 'NO_API_KEY',
   'PROVIDER_ERROR', 'UNSUPPORTED_PROVIDER', 'EMPTY_MESSAGE']);
 
 class Assistant {
@@ -27,6 +27,31 @@ class Assistant {
     this.url = url;
     this.apiKey = key;
     this._catalog = null;
+    this._skills = null;
+  }
+
+  /** Skill dari admin (situs → Admin → Skill): [{id, name, description, category, icon, template, settings, refs}] */
+  async skills(force = false) {
+    if (!force && this._skills && this.now() - this._skills.at < CATALOG_TTL) return this._skills.list;
+    let res;
+    try {
+      res = await this.fetch(`${this.url}/rest/v1/rpc/ai_skills_catalog`, {
+        method: 'POST',
+        headers: { apikey: this.apiKey, 'content-type': 'application/json', accept: 'application/json' },
+        body: '{}',
+        signal: AbortSignal.timeout(15000)
+      });
+    } catch {
+      if (this._skills) return this._skills.list;
+      throw new Error('NETWORK');
+    }
+    if (!res.ok) {
+      if (this._skills) return this._skills.list;
+      throw new Error('NETWORK');
+    }
+    const list = await res.json().catch(() => []);
+    this._skills = { at: this.now(), list: Array.isArray(list) ? list : [] };
+    return this._skills.list;
   }
 
   /** Daftar model aktif dari admin: [{id, provider, model, label, category, is_default, ready}] */
@@ -58,9 +83,10 @@ class Assistant {
    * @param {{role:'user'|'assistant', content:string}[]} o.messages
    * @param {string} [o.model]  id model (uuid dari katalog) — kosong = bawaan admin
    * @param {'image'|'video'} [o.mode]
+   * @param {string} [o.image]  data URL gambar (JPEG/PNG/WebP) untuk model yang mendukung gambar
    * @returns {Promise<{reply:string, model:{id:string,label:string}, prompts:string[]}>}
    */
-  async chat({ messages, model, mode } = {}) {
+  async chat({ messages, model, mode, image } = {}) {
     const key = this.license._key();
     if (!key) throw new Error('LICENSE_REQUIRED');
     const msgs = (Array.isArray(messages) ? messages : [])
@@ -76,7 +102,8 @@ class Assistant {
         body: JSON.stringify({
           license_key: key, device_id: this.license.deviceId, messages: msgs,
           model: typeof model === 'string' && model ? model : undefined,
-          mode: mode === 'image' || mode === 'video' ? mode : undefined
+          mode: mode === 'image' || mode === 'video' ? mode : undefined,
+          image: typeof image === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(image) ? image : undefined
         }),
         signal: AbortSignal.timeout(100000)
       });

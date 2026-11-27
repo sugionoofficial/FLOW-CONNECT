@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import {
   AlertTriangle, AudioLines, BarChart3, Bot, CloudDownload, Image as ImageIcon, KeyRound, Loader2, MessageSquareText, Pencil, Plus,
-  Save, Search, Send, Server, ShieldCheck, ShieldOff, Star, Trash2, Video,
+  Save, Search, Send, Server, ShieldCheck, ShieldOff, Sparkles, Star, Trash2, Video,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { AppHeader } from '../components/AppHeader'
@@ -68,10 +68,13 @@ const errMsg = (e: unknown) => {
   if (m.includes('duplicate key')) return 'Data dengan ID itu sudah ada.'
   if (m.includes('ai_providers_id_check')) return 'ID provider: huruf kecil, angka, - atau _ (2–40 karakter).'
   if (m.includes('ai_providers_base_url_check')) return 'Base URL harus diawali https://'
+  if (m.includes('ai_skills_name_check')) return 'Nama skill 1–60 karakter.'
+  if (m.includes('ai_skills_template_check')) return 'Templat prompt wajib diisi (maks. 4000 karakter).'
+  if (m.includes('ai_skills_description_check')) return 'Deskripsi maks. 200 karakter.'
   return m
 }
 
-type Tab = 'providers' | 'chat' | 'licenses' | 'usage'
+type Tab = 'providers' | 'chat' | 'skills' | 'licenses' | 'usage'
 
 export default function Admin() {
   const { isAdmin, loading } = useAuth()
@@ -98,6 +101,7 @@ export default function Admin() {
           {([
             ['providers', 'Provider & Model', Server],
             ['chat', 'Chat Prompt', Bot],
+            ['skills', 'Skill', Sparkles],
             ['licenses', 'Lisensi', KeyRound],
             ['usage', 'Pemakaian', BarChart3],
           ] as const).map(([id, label, Icon]) => (
@@ -110,6 +114,7 @@ export default function Admin() {
         <div className="mt-6">
           {tab === 'providers' && <ProvidersTab />}
           {tab === 'chat' && <ChatTab />}
+          {tab === 'skills' && <SkillsTab />}
           {tab === 'licenses' && <LicensesTab />}
           {tab === 'usage' && <UsageTab />}
         </div>
@@ -634,6 +639,190 @@ function LicensesTab() {
           </tbody>
         </table>
       </div>
+    </section>
+  )
+}
+
+/* ───────────────────────── Skill (Studio → Skill → "Dari admin") ───────────────────────── */
+type Skill = {
+  id: string; name: string; description: string; category: 'image' | 'video'; icon: string; template: string
+  settings: { kind?: string; sub?: string; model?: string; ratio?: string; count?: number }; refs: { min: number; max: number }
+  enabled: boolean; sort: number; updated_at?: string
+}
+type SkillDraft = Omit<Skill, 'id'> & { id?: string }
+const SKILL_MODELS = {
+  video: ['Omni 1.2 Flash', 'Omni 1.1 Flash', 'Veo 3.1 - Lite', 'Veo 3.1 - Fast', 'Veo 3.1 - Quality'],
+  image: ['Nano Banana 2.1', 'Nano Banana Pro', 'Nano Banana 2 Lite'],
+}
+const SKILL_RATIOS = { video: ['16:9', '9:16'], image: ['16:9', '9:16', '1:1', '4:3', '3:4'] }
+const SKILL_REFS: [string, string, { min: number; max: number }][] = [
+  ['none', 'Tidak perlu foto', { min: 0, max: 0 }], ['opt', 'Opsional (maks. 3)', { min: 0, max: 3 }], ['one', 'Wajib 1 foto', { min: 1, max: 1 }],
+  ['many', 'Wajib 1–3 foto', { min: 1, max: 3 }], ['two', 'Wajib 2 foto (Frame awal & akhir)', { min: 2, max: 2 }],
+]
+const SKILL_ICON_LIST = ['sparkles', 'wand-sparkles', 'package', 'user-round', 'megaphone', 'shapes', 'square-play', 'smartphone', 'chart-pie',
+  'layout-template', 'mountain-snow', 'palette', 'image-up', 'id-card', 'shopping-bag', 'clapperboard', 'camera', 'drama', 'arrow-right-left',
+  'list-video', 'music', 'lightbulb', 'film', 'image', 'video', 'star', 'paintbrush', 'book-open', 'gem', 'zap', 'layers']
+const refKey = (r: { min: number; max: number }) => (SKILL_REFS.find(([, , v]) => v.min === r?.min && v.max === r?.max) || SKILL_REFS[0])[0]
+const EMPTY_SKILL: SkillDraft = { name: '', description: '', category: 'image', icon: 'sparkles', template: '', settings: { kind: 'image' }, refs: { min: 0, max: 0 }, enabled: true, sort: 100 }
+/** Kolom isian dari templat — sama dengan parser di aplikasi desktop (pratinjau saja). */
+const skillFields = (t: string) => {
+  const out: string[] = []
+  for (const m of t.matchAll(/\{([^{}@][^{}:]{0,40})(?::[^{}]*)?\}/g)) { const k = m[1].trim(); if (k && !out.includes(k)) out.push(k) }
+  return out
+}
+
+function SkillsTab() {
+  const toast = useToast()
+  const [list, setList] = useState<Skill[] | null>(null)
+  const [edit, setEdit] = useState<SkillDraft | null>(null)
+  const [saving, setSaving] = useState(false)
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.from('ai_skills').select('*').order('sort').order('name')
+    if (error) return toast(errMsg(error), 'error')
+    setList(data as Skill[])
+  }, [toast])
+  useEffect(() => { load() }, [load])
+
+  const save = async () => {
+    if (!edit) return
+    const kind = edit.category
+    const settings: Skill['settings'] = { kind }
+    if (kind === 'video') settings.sub = edit.settings.sub === 'frames' ? 'frames' : 'ingredients'
+    if (edit.settings.model && SKILL_MODELS[kind].includes(edit.settings.model)) settings.model = edit.settings.model
+    if (edit.settings.ratio && SKILL_RATIOS[kind].includes(edit.settings.ratio)) settings.ratio = edit.settings.ratio
+    if (edit.settings.count) settings.count = edit.settings.count
+    const row = {
+      name: edit.name.trim(), description: edit.description.trim(), category: kind, icon: edit.icon, template: edit.template.trim(),
+      settings, refs: edit.refs, enabled: edit.enabled, sort: Math.round(Number(edit.sort) || 0),
+    }
+    if (!row.name || !row.template) return toast('Nama dan templat prompt wajib diisi.', 'error')
+    setSaving(true)
+    const { error } = edit.id ? await supabase.from('ai_skills').update(row).eq('id', edit.id) : await supabase.from('ai_skills').insert(row)
+    setSaving(false)
+    if (error) return toast(errMsg(error), 'error')
+    toast(edit.id ? 'Skill diperbarui — muncul di aplikasi dalam ±1 menit.' : 'Skill ditambahkan — muncul di semua aplikasi tanpa update.', 'success')
+    setEdit(null)
+    load()
+  }
+  const toggle = async (s: Skill) => {
+    const { error } = await supabase.from('ai_skills').update({ enabled: !s.enabled }).eq('id', s.id)
+    if (error) return toast(errMsg(error), 'error')
+    load()
+  }
+  const remove = async (s: Skill) => {
+    if (!confirm(`Hapus skill "${s.name}"? Skill hilang dari semua aplikasi.`)) return
+    const { error } = await supabase.from('ai_skills').delete().eq('id', s.id)
+    if (error) return toast(errMsg(error), 'error')
+    load()
+  }
+  const set = (patch: Partial<SkillDraft>) => setEdit((e) => (e ? { ...e, ...patch } : e))
+  const setS = (patch: Partial<Skill['settings']>) => setEdit((e) => (e ? { ...e, settings: { ...e.settings, ...patch } } : e))
+
+  if (!list) return <div className="flex justify-center py-12"><Loader2 className="size-6 animate-spin text-white/50" /></div>
+  return (
+    <section>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="font-display text-xl font-semibold">Skill dari admin <span className="text-white/40">({list.length})</span></h2>
+          <p className="mt-1 max-w-2xl text-sm text-white/55">Tampil di aplikasi desktop → Studio → Skill → “Dari admin” untuk semua pengguna, tanpa update aplikasi.</p>
+        </div>
+        <button className={buttonClass('primary', 'md')} onClick={() => setEdit({ ...EMPTY_SKILL })}><Plus className="size-4" /> Skill baru</button>
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        {list.length === 0 && <div className="glass rounded-2xl px-4 py-10 text-center text-white/45 md:col-span-2">Belum ada skill. Klik “Skill baru”.</div>}
+        {list.map((s) => (
+          <div key={s.id} className={clsx('glass flex flex-col gap-2 rounded-2xl p-4', !s.enabled && 'opacity-55')}>
+            <div className="flex items-start gap-3">
+              <span className={clsx('grid size-10 shrink-0 place-items-center rounded-xl', s.category === 'video' ? 'bg-fuchsia-500/15 text-fuchsia-300' : 'bg-aurora-cyan/15 text-aurora-cyan')}>
+                {s.category === 'video' ? <Video className="size-5" /> : <ImageIcon className="size-5" />}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-semibold">{s.name}</p>
+                <p className="truncate text-xs text-white/50">{s.description || '—'}</p>
+              </div>
+              <Toggle on={s.enabled} onClick={() => toggle(s)} label={`Aktifkan ${s.name}`} />
+            </div>
+            <p className="line-clamp-2 font-mono text-xs text-white/55">{s.template}</p>
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-white/50">
+              <span className="rounded-full bg-white/5 px-2 py-0.5">{s.category === 'video' ? `Video · ${s.settings?.sub === 'frames' ? 'Frame' : 'Bahan'}` : 'Gambar'}</span>
+              {s.settings?.model && <span className="rounded-full bg-white/5 px-2 py-0.5">{s.settings.model}</span>}
+              {s.settings?.ratio && <span className="rounded-full bg-white/5 px-2 py-0.5">{s.settings.ratio}</span>}
+              <span className="rounded-full bg-white/5 px-2 py-0.5">{SKILL_REFS.find(([k]) => k === refKey(s.refs))?.[1]}</span>
+              <span className="rounded-full bg-white/5 px-2 py-0.5">Urutan {s.sort}</span>
+              <span className="ml-auto flex gap-1">
+                <button className={buttonClass('ghost', 'sm')} onClick={() => setEdit({ ...s, settings: { ...s.settings }, refs: { ...s.refs } })}><Pencil className="size-3.5" /> Ubah</button>
+                <button className={buttonClass('danger', 'sm')} onClick={() => remove(s)} aria-label={`Hapus ${s.name}`}><Trash2 className="size-3.5" /></button>
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <Modal open={!!edit} onClose={() => setEdit(null)} title={edit?.id ? 'Ubah skill' : 'Skill baru'} className="max-w-2xl max-h-[92vh] overflow-y-auto">
+        {edit && (
+          <div className="flex flex-col gap-3 text-sm">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Nama"><input className={input} maxLength={60} value={edit.name} onChange={(e) => set({ name: e.target.value })} placeholder="mis. Promo Ramadan" /></Field>
+              <Field label="Deskripsi singkat"><input className={input} maxLength={200} value={edit.description} onChange={(e) => set({ description: e.target.value })} /></Field>
+              <Field label="Jenis">
+                <select className={input} value={edit.category} onChange={(e) => { const c = e.target.value as Skill['category']; set({ category: c, settings: { kind: c, sub: c === 'video' ? 'ingredients' : undefined } }) }}>
+                  <option value="image" className="bg-ink-900">Gambar</option><option value="video" className="bg-ink-900">Video</option>
+                </select>
+              </Field>
+              {edit.category === 'video'
+                ? <Field label="Mode video">
+                    <select className={input} value={edit.settings.sub === 'frames' ? 'frames' : 'ingredients'} onChange={(e) => { setS({ sub: e.target.value }); if (e.target.value === 'frames') set({ refs: { min: 2, max: 2 } }) }}>
+                      <option value="ingredients" className="bg-ink-900">Bahan</option><option value="frames" className="bg-ink-900">Frame (foto awal &amp; akhir)</option>
+                    </select>
+                  </Field>
+                : <div className="hidden sm:block" />}
+              <Field label="Model (opsional)">
+                <select className={input} value={edit.settings.model || ''} onChange={(e) => setS({ model: e.target.value || undefined })}>
+                  <option value="" className="bg-ink-900">Ikuti Studio pengguna</option>
+                  {SKILL_MODELS[edit.category].map((m) => <option key={m} value={m} className="bg-ink-900">{m}</option>)}
+                </select>
+              </Field>
+              <Field label="Rasio (opsional)">
+                <select className={input} value={edit.settings.ratio || ''} onChange={(e) => setS({ ratio: e.target.value || undefined })}>
+                  <option value="" className="bg-ink-900">Ikuti Studio pengguna</option>
+                  {SKILL_RATIOS[edit.category].map((r) => <option key={r} value={r} className="bg-ink-900">{r}</option>)}
+                </select>
+              </Field>
+              <Field label="Jumlah (opsional)">
+                <select className={input} value={edit.settings.count || ''} onChange={(e) => setS({ count: Number(e.target.value) || undefined })}>
+                  <option value="" className="bg-ink-900">Ikuti Studio pengguna</option>
+                  {[1, 2, 3, 4].map((n) => <option key={n} value={n} className="bg-ink-900">x{n}</option>)}
+                </select>
+              </Field>
+              <Field label="Foto referensi">
+                <select className={input} value={refKey(edit.refs)} onChange={(e) => set({ refs: { ...(SKILL_REFS.find(([k]) => k === e.target.value)?.[2] || { min: 0, max: 0 }) } })}>
+                  {SKILL_REFS.map(([k, l]) => <option key={k} value={k} className="bg-ink-900">{l}</option>)}
+                </select>
+              </Field>
+              <Field label="Ikon">
+                <select className={input} value={edit.icon} onChange={(e) => set({ icon: e.target.value })}>
+                  {SKILL_ICON_LIST.map((i) => <option key={i} value={i} className="bg-ink-900">{i}</option>)}
+                </select>
+              </Field>
+              <Field label="Urutan (kecil tampil dulu)"><input className={input} type="number" value={edit.sort} onChange={(e) => set({ sort: Number(e.target.value) })} /></Field>
+            </div>
+            <Field label="Templat prompt">
+              <textarea className={clsx(input, 'min-h-[140px] font-mono text-xs')} maxLength={4000} value={edit.template} onChange={(e) => set({ template: e.target.value })}
+                placeholder="Poster promo {Produk} bertema {Tema:Ramadan|Lebaran|Natal}[, dengan teks {Teks}], warna cerah, rapi" />
+            </Field>
+            <p className="text-xs leading-relaxed text-white/50">
+              <b className="text-white/70">Isian:</b> <code>{'{Nama}'}</code> kotak teks · <code>{'{Gaya:Kartun|Anime}'}</code> pilihan · <code>{'{Gaya:Kartun=cartoon style|…}'}</code> label=teks prompt ·
+              {' '}<code>{'{@1}'}</code> tag foto ke-1 · <code>[ … ]</code> bagian opsional (dibuang bila isiannya kosong).
+            </p>
+            {skillFields(edit.template).length > 0 && <p className="text-xs text-white/55">Kolom di aplikasi: {skillFields(edit.template).map((f) => <span key={f} className="mr-1 rounded-full bg-white/10 px-2 py-0.5">{f}</span>)}</p>}
+            <label className="flex items-center gap-3"><Toggle on={edit.enabled} onClick={() => set({ enabled: !edit.enabled })} label="Aktif" /> <span className="text-white/70">Aktif (tampil di aplikasi)</span></label>
+            <div className="mt-2 flex justify-end gap-2">
+              <button className={buttonClass('ghost', 'md')} onClick={() => setEdit(null)}>Batal</button>
+              <button className={buttonClass('primary', 'md')} onClick={save} disabled={saving}>{saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Simpan</button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </section>
   )
 }

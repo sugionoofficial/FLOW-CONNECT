@@ -25,6 +25,7 @@ const DEFAULTS = {
   uploads: [],             // media id gambar referensi yang diunggah ke Flow (disembunyikan dari galeri)
   results: {},            // { projectId: [hasil generate dari balasan Flow] } → selalu tampil di galeri/pratinjau
   queue: [],               // tugas Mode Otomatis
+  mySkills: [],            // Studio → Skill → "Skill saya" (templat prompt + setelan)
   deviceId: null,          // ID acak PC ini (untuk slot perangkat lisensi)
   license: null            // { key (terenkripsi), hint, info, checkedAt, error }
 };
@@ -73,6 +74,7 @@ class Store {
     this.data.auto = { ...DEFAULTS.auto, ...(data.auto || {}) };
     this.data.browser = { ...DEFAULTS.browser, ...(data.browser || {}) };
     this.data.studio = sanitizeStudio(data.studio || {});
+    if (!Array.isArray(this.data.mySkills)) this.data.mySkills = [];
     // v1.2: browser disembunyikan & tampilan gelap premium sebagai bawaan
     if ((data.schema || 1) < SCHEMA) {
       if (data.browserWindow !== 'minimized') this.data.browserWindow = 'hidden';

@@ -586,7 +586,7 @@ test('Gambar x4 (format Flow terbaru): semua hasil tampil di galeri & pratinjau,
   assert.strictEqual((await s.listMedia('p-test-1')).length, 8, 'tanpa duplikat');
 });
 
-test('Skill Foto: unggah referensi ke Flow → @ chip → generate gambar → hasil; kegagalan terdeteksi cepat', { skip: !CHROME && 'Chrome tidak ditemukan (set CHROME_PATH)', timeout: 240000 }, async (t) => {
+test('Skill Foto: unggah referensi ke Flow → @ chip → generate gambar → hasil; kegagalan terdeteksi cepat', { skip: !CHROME && 'Chrome tidak ditemukan (set CHROME_PATH)', timeout: 360000 }, async (t) => {
   const mock = await mockFlow();
   mock.state.rpc = true;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fc-photo-'));
@@ -677,6 +677,25 @@ test('Skill Foto: unggah referensi ke Flow → @ chip → generate gambar → ha
   assert.strictEqual(gf.refs.length, 0, 'frame tidak ditandai sebagai bahan @');
   assert.strictEqual(gf.prompt.trim(), 'Kucing berlari ke arah kamera');
   assert.deepStrictEqual(fr.settings.missing, []);
+
+  // 4c) Bulk (reuseRefs): gambar yang sama cukup diunggah sekali per project; aset lama hilang → unggah ulang otomatis
+  const up0 = mock.state.uploads.length;
+  const bulkJob = (prompt) => ({ prompt, images: [kucing], tags: ['kucing-oren'], reuseRefs: true, options: { kind: 'image', model: 'Nano Banana Pro', ratio: '1:1', count: 1 } });
+  await s.generate(bulkJob('Foto @kucing-oren di taman'), { timeoutMs: 60000 });
+  assert.strictEqual(mock.state.uploads.length, up0 + 1, 'unggahan pertama');
+  const logs2 = [];
+  await s.generate(bulkJob('Foto @kucing-oren di pantai'), { onLog: (x) => logs2.push(x), timeoutMs: 60000 });
+  assert.strictEqual(mock.state.uploads.length, up0 + 1, 'tidak diunggah ulang');
+  assert.ok(logs2.some((l) => /Memakai gambar @kucing-oren/.test(l)), logs2.join(' | '));
+  const gb = mock.generated[mock.generated.length - 1];
+  assert.strictEqual(gb.refs.length, 1, 'referensi lama terpasang');
+  assert.match(gb.prompt, /di pantai$/);
+  for (const v of s._refCache.values()) v.stem = 'sudah-dihapus-000000';
+  const logs3 = [];
+  await s.generate(bulkJob('Foto @kucing-oren di gunung'), { onLog: (x) => logs3.push(x), timeoutMs: 90000 });
+  assert.strictEqual(mock.state.uploads.length, up0 + 2, 'diunggah ulang setelah aset lama tidak ditawarkan');
+  assert.ok(logs3.some((l) => /mengunggah ulang/.test(l)));
+  assert.strictEqual(mock.generated[mock.generated.length - 1].refs.length, 1);
 
   // 5) @ yang menunjuk gambar yang tidak bisa ditemukan di Flow → Generate dibatalkan
   const n0 = mock.generated.length;

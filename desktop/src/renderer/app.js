@@ -96,7 +96,7 @@ const ERR = {
   NO_ACCOUNTS: 'Pilih minimal satu akun Google untuk Bulk Generate.',
   UNKNOWN_COST: 'Biaya kredit model ini belum diketahui — isi "Kredit per video" secara manual.',
   NOT_ENOUGH_CREDITS: 'Kredit akun yang dipilih tidak cukup untuk 1 video pun dengan setelan ini.',
-  CREDITS_NOT_FOUND: 'Saldo kredit tidak terbaca dari Google Flow. Isi jumlah kredit secara manual.',
+  CREDITS_NOT_FOUND: 'Saldo kredit tidak terbaca dari Google Flow. Isi jumlah kredit secara manual, atau buka Flow akun ini lalu coba lagi.',
   NO_CREDITS_LEFT: 'Terlewat — kredit semua akun sudah habis.',
   NO_ACCOUNTS_LEFT: 'Terlewat — tidak ada akun yang masih bisa dipakai.',
   NO_BATCH: 'Belum ada batch Bulk.',
@@ -121,7 +121,7 @@ const ERR = {
   TOO_MANY_SKILLS: 'Skill saya sudah penuh (maks. 200).',
   NO_SKILLS: 'Belum ada skill untuk diekspor.'
 };
-const DETAIL = new Set(['FRAMES_REQUIRED', 'FLOW_ERROR', 'GENERATE_FAILED', 'FLOW_REFUSED', 'UPLOAD_FAILED', 'UPLOAD_REJECTED', 'REFERENCE_NOT_ATTACHED', 'FRAME_NOT_ATTACHED', 'GENERATE_TIMEOUT', 'GENERATE_NOT_STARTED', 'INSUFFICIENT_CREDITS', 'FLOW_CONTENT_POLICY']);
+const DETAIL = new Set(['FRAMES_REQUIRED', 'FLOW_ERROR', 'GENERATE_FAILED', 'FLOW_REFUSED', 'UPLOAD_FAILED', 'UPLOAD_REJECTED', 'REFERENCE_NOT_ATTACHED', 'FRAME_NOT_ATTACHED', 'GENERATE_TIMEOUT', 'GENERATE_NOT_STARTED', 'INSUFFICIENT_CREDITS', 'FLOW_CONTENT_POLICY', 'CREDITS_NOT_FOUND']);
 const msg = (e) => {
   const k = (e && e.message) || String(e);
   if (ERR[k] && DETAIL.has(k) && e.detail) return `${ERR[k]} (${e.detail})`;
@@ -389,15 +389,98 @@ const stem = (p) => baseName(p).replace(/\.[^.]+$/, '');
 
 // ----- Bulk Generate (Studio → Bulk) + timer runtime -----
 const BULK_MAX = 300;
-const BULK_FORM = { prompts: '', count: '', accounts: {}, cost: '', parallel: false, newProject: true, minDelay: '', maxDelay: '' };
+const BULK_FORM = { prompts: '', count: '', accounts: {}, cost: '', parallel: false, newProject: true, minDelay: '', maxDelay: '', images: [], refMode: 'shared' };
+const BULK_REF_MAX = { shared: 10, each: 300 };
+const BULK_THUMBS = 48; // thumbnail yang ditampilkan (sisanya diringkas)
 const BULK_DELAY = { image: [8, 20], video: [15, 40] };
 function bulkForm() {
   if (!S.bulk.form) {
     let saved = {};
     try { saved = JSON.parse(localStorage.getItem('fc.bulk') || '{}') || {}; } catch { /* rusak → bawaan */ }
     S.bulk.form = { ...BULK_FORM, ...saved, accounts: { ...(saved.accounts || {}) } };
+    const f = S.bulk.form;
+    f.refMode = f.refMode === 'each' ? 'each' : 'shared';
+    f.images = Array.isArray(f.images) ? f.images.filter((x) => typeof x === 'string').slice(0, BULK_REF_MAX.each) : [];
+    // gambar tersimpan dari sesi sebelumnya → daftarkan ulang (file yang hilang/dipindah dibuang)
+    if (f.images.length) {
+      const saved0 = f.images;
+      call('files:register', saved0, BULK_REF_MAX.each).then((ok) => {
+        const okSet = new Set(ok);
+        f.images = saved0.filter((x) => okSet.has(x));
+        bulkSave(); bulkPreviews(); bulkPlanSoon();
+        if (S.page === 'studio' && S.studioTab === 'bulk') render();
+      }).catch(() => { f.images = []; });
+    }
   }
   return S.bulk.form;
+}
+const bulkRefMax = () => BULK_REF_MAX[bulkForm().refMode] || 10;
+/** Tambah gambar referensi Bulk (mode "sama untuk semua": tanpa duplikat; "satu per prompt": boleh berulang). */
+async function bulkAddImages(paths) {
+  const f = bulkForm();
+  const max = isFrames(opts()) && f.refMode === 'shared' ? 2 : bulkRefMax();
+  const list = await call('files:register', paths, BULK_REF_MAX.each);
+  if (paths.length && !list.length) { toast(ERR.INVALID_IMAGE, 'err'); return; }
+  let cut = 0;
+  for (const p of list) {
+    if (f.refMode === 'shared' && f.images.includes(p)) continue;
+    if (f.images.length >= max) { cut++; continue; }
+    f.images.push(p);
+  }
+  if (cut) toast(max === 2 ? 'Mode Frame (sama untuk semua) hanya memakai 2 foto: awal & akhir.' : `Maksimal ${max} gambar — ${cut} gambar tidak ditambahkan.`, 'err');
+  bulkSave(); render(); bulkPlanSoon();
+  await bulkPreviews();
+}
+async function bulkPreviews() {
+  const want = bulkForm().images.slice(0, BULK_THUMBS).filter((p) => S.studio.previews[p] === undefined);
+  if (!want.length) return;
+  for (const p of want) S.studio.previews[p] = (await call('files:preview', p).catch(() => null)) || null;
+  if (S.page === 'studio' && S.studioTab === 'bulk' && $('#bulk-drop')) render();
+}
+/** Petunjuk / galat di bawah judul gambar referensi Bulk (diperbarui juga setelah rencana dihitung ulang). */
+function bulkRefHint(o = opts()) {
+  const f = bulkForm();
+  const each = f.refMode === 'each';
+  const frames = isFrames(o);
+  const max = each ? BULK_REF_MAX.each : frames ? 2 : BULK_REF_MAX.shared;
+  const p = S.bulk.plan;
+  const bad = p && p.refError ? msg({ message: p.refError.code, detail: p.refError.detail }) : '';
+  const over = f.images.length > max ? `${f.images.length} gambar — mode ini hanya memakai ${max} pertama.` : '';
+  const hint = each
+    ? frames ? 'Berpasangan: foto 1 + 2 = video 1, foto 3 + 4 = video 2, … (awal & akhir)' : 'Gambar 1 → prompt 1, gambar 2 → prompt 2, … · berulang bila jumlahnya beda'
+    : frames ? 'Foto awal & akhir yang sama untuk semua video' : 'Dipakai di semua tugas · klik @tag untuk menyisipkannya ke prompt';
+  return { text: bad || over || hint, warn: !!(bad || over) };
+}
+function bulkRefsHtml(o) {
+  const f = bulkForm();
+  const each = f.refMode === 'each';
+  const frames = isFrames(o);
+  const imgs = f.images;
+  const max = each ? BULK_REF_MAX.each : frames ? 2 : BULK_REF_MAX.shared;
+  const tags = refTags(imgs);
+  const h = bulkRefHint(o);
+  const label = (i) => each
+    ? (frames ? `${Math.floor(i / 2) + 1} ${i % 2 ? 'akhir' : 'awal'}` : `#${i + 1}`)
+    : frames ? (i === 0 ? 'Awal' : i === 1 ? 'Akhir' : 'Tidak dipakai') : null;
+  const thumb = (x, i) => `<div class="thumb ${i >= max ? 'extra' : ''}" title="${esc(x)}">${S.studio.previews[x] ? `<img src="${S.studio.previews[x]}" alt="">` : icon('file-image', 'lg')}${label(i) !== null
+    ? `<span class="tag">${esc(label(i))}</span>`
+    : `<button class="reftag" data-act="bulkInsertTag" data-tag="${esc(tags[i])}" title="Sisipkan @${esc(tags[i])} ke prompt">@${esc(tags[i])}</button>`}${btn('bulkRemoveImage', '', { ic: 'x', cls: 'x sm', title: 'Hapus', data: `data-i="${i}"` })}</div>`;
+  const more = imgs.length > BULK_THUMBS ? `<div class="thumb more"><b>+${imgs.length - BULK_THUMBS}</b><span class="small">lainnya</span></div>` : '';
+  const canAdd = imgs.length < max;
+  return `<div class="refs bulk-refs">
+    <div class="refs-head"><b>Gambar referensi</b>
+      <div class="seg mini" role="tablist" aria-label="Cara memakai gambar referensi">
+        <button class="seg-btn ${!each ? 'on' : ''}" data-act="bulkRefMode" data-v="shared" role="tab" aria-selected="${!each}" title="Gambar yang sama untuk semua tugas (maks. ${BULK_REF_MAX.shared})">${icon('copy')}<span>Sama untuk semua</span></button>
+        <button class="seg-btn ${each ? 'on' : ''}" data-act="bulkRefMode" data-v="each" role="tab" aria-selected="${each}" title="Satu gambar per prompt (maks. ${BULK_REF_MAX.each})">${icon('list-ordered')}<span>Satu per prompt</span></button>
+      </div>
+      <span class="right faint small" id="bulk-ref-count">${imgs.length}/${max}</span></div>
+    <div class="faint small ${h.warn ? 'warn-text' : ''}" id="bulk-ref-hint">${esc(h.text)}</div>
+    <div class="ref-row" id="bulk-drop">
+      ${imgs.slice(0, BULK_THUMBS).map(thumb).join('')}${more}
+      ${canAdd ? `<button class="thumb add" data-act="bulkPickImages" title="Tambah gambar (atau seret ke sini)">${icon('image-plus', 'lg')}<span class="small">${frames && !each ? (imgs.length ? 'Frame akhir' : 'Frame awal') : 'Tambah'}</span></button>` : ''}
+    </div>
+    <div class="hrow">${S.studio.images.length ? btn('bulkFromStudio', `Pakai ${S.studio.images.length} gambar dari Buat`, { ic: 'import', cls: 'sm subtle' }) : ''}${imgs.length ? btn('bulkClearImages', 'Hapus semua', { ic: 'trash-2', cls: 'sm subtle' }) : ''}${each ? `<span class="faint small">Urutan mengikuti urutan pilih/seret · nama file dipakai untuk nama hasil.</span>` : ''}</div>
+  </div>`;
 }
 let bulkSaveT = null;
 function bulkSave() {
@@ -438,7 +521,7 @@ function runtimePill() {
   return bits.length ? `<div class="runtime-row">${bits.join('')}</div>` : '';
 }
 
-const bulkAccOn = (a) => { const x = bulkForm().accounts[a.id]; return x && typeof x.on === 'boolean' ? x.on : !!a.signedInAt; };
+const bulkAccOn = (a) => { const x = bulkForm().accounts[a.id]; return x && typeof x.on === 'boolean' ? x.on : !!(a.signedInAt || st(a.id).signedIn || (a.credits && a.credits.at)); };
 function bulkCredits(a) {
   const x = bulkForm().accounts[a.id];
   if (x && x.credits !== '' && x.credits !== undefined && x.credits !== null && Number.isFinite(Number(x.credits))) return Math.max(0, Math.round(Number(x.credits)));
@@ -452,7 +535,7 @@ function bulkInput() {
     prompts: f.prompts.split(/\r?\n/).map((x) => x.trim()).filter(Boolean).slice(0, BULK_MAX), count: Number(f.count) || 0, accounts,
     cost: Number(f.cost) || null, parallel: !!f.parallel, newProject: f.newProject !== false,
     minDelay: Number(f.minDelay) || undefined, maxDelay: Number(f.maxDelay) || undefined,
-    images: S.studio.images, tags: refTags(S.studio.images), options: opts()
+    images: f.images, refMode: f.refMode, tags: f.refMode === 'each' ? null : refTags(f.images), options: opts()
   };
 }
 let bulkPlanT = null, bulkPlanSeq = 0;
@@ -467,6 +550,8 @@ function bulkPlanSoon() {
     } catch (e) { S.bulk.plan = { error: msg(e) }; }
     const box = $('#bulk-plan');
     if (box) { box.innerHTML = bulkPlanHtml(); const b = $('#bulk-start'); if (b) b.outerHTML = bulkStartBtn(); }
+    const hint = $('#bulk-ref-hint');
+    if (hint) { const h = bulkRefHint(); hint.textContent = h.text; hint.classList.toggle('warn-text', h.warn); }
   }, 150);
 }
 function bulkEstimate(p) {
@@ -504,7 +589,9 @@ function bulkPlanHtml() {
     ? `${p.cost ? `${p.cost} kredit/video · total ${p.credits} kredit` : ''}${p.capacity > p.target ? ` · kredit cukup untuk ${p.capacity} video` : ''}`
     : `0 kredit (Nano Banana) · dibagi ke ${used.length || 0} akun`;
   const rows = p.accounts.map((a) => `<span class="plan-acc ${a.planned ? '' : 'off'}" title="${video ? `${a.credits === null ? '?' : a.credits} kredit ÷ ${p.cost || '?'} = ${a.capacity} video` : ''}">${name(a.id)} <b>${a.planned}</b>${video ? `<span class="faint">/${a.capacity}</span>` : ''}</span>`).join('');
-  const warns = p.warnings.filter((w) => WARN_TEXT[w]).map((w) => `<div class="small warn-text">${icon('triangle-alert')} ${WARN_TEXT[w]}</div>`).join('');
+  const refErr = p.refError ? `<div class="small err-text">${icon('circle-x')} ${esc(msg({ message: p.refError.code, detail: p.refError.detail }))}</div>` : '';
+  const each = p.refMode === 'each' && p.groups ? `<div class="faint small">${icon('list-ordered')} ${p.groups} ${p.kind === 'video' && bulkForm().refMode === 'each' && isFrames(opts()) ? 'pasang foto' : 'gambar'} × ${bulkInput().prompts.length || 1} prompt → ${p.units} variasi, dipakai bergiliran</div>` : '';
+  const warns = refErr + each + p.warnings.filter((w) => WARN_TEXT[w]).map((w) => `<div class="small warn-text">${icon('triangle-alert')} ${WARN_TEXT[w]}</div>`).join('');
   return `<div class="plan-head">${icon(video ? 'clapperboard' : 'images')}<span>${head}</span></div>
     <div class="muted small">${sub}${p.jobs ? ` · perkiraan ±${fmtDurLong(bulkEstimate(p))}` : ''}</div>
     ${p.accounts.length ? `<div class="plan-accs">${rows}</div>` : ''}${warns}`;
@@ -512,9 +599,9 @@ function bulkPlanHtml() {
 function bulkStartBtn() {
   const p = S.bulk.plan;
   const o = opts();
-  const framesBad = isFrames(o) && S.studio.images.length !== 2;
+  const refBad = p && p.refError ? msg({ message: p.refError.code, detail: p.refError.detail }) : '';
   const n = p && !p.error ? p.target : 0;
-  return btn('bulkStart', n ? `Mulai Bulk · ${n} ${o.kind === 'video' ? 'video' : 'gambar'}` : 'Mulai Bulk', { ic: S.busy.has('bulkStart') ? 'loader-circle' : 'play', cls: 'cta', data: 'id="bulk-start"', disabled: !n || framesBad || S.bulk.st.running || !isAuto(), title: framesBad ? ERR.FRAMES_REQUIRED : '' });
+  return btn('bulkStart', n ? `Mulai Bulk · ${n} ${o.kind === 'video' ? 'video' : 'gambar'}` : 'Mulai Bulk', { ic: S.busy.has('bulkStart') ? 'loader-circle' : 'play', cls: 'cta', data: 'id="bulk-start"', disabled: !n || !!refBad || S.bulk.st.running || !isAuto(), title: refBad });
 }
 
 function bulkPage() {
@@ -532,8 +619,6 @@ function bulkFormView() {
   const accs = S.settings.accounts;
   const lines = f.prompts.split(/\r?\n/).filter((x) => x.trim()).length;
   const chip = (k, v, label, ic) => `<button class="chip ${String(o[k]) === String(v) ? 'on' : ''}" data-act="studioOpt" data-k="${k}" data-v="${v}">${ic ? icon(ic) : ''}<span>${label}</span></button>`;
-  const imgs = S.studio.images;
-  const framesBad = isFrames(o) && imgs.length !== 2;
   const dur = durationFor(o.kind, o.model);
   const [d0, d1] = BULK_DELAY[o.kind];
   const accRow = (a) => {
@@ -548,8 +633,8 @@ function bulkFormView() {
       ${video ? `<div class="bulk-cred">
         <input class="input num" type="number" min="0" max="1000000" placeholder="${read ? read.value : '?'}" value="${esc(x.credits ?? '')}" data-input="bulkCredit" data-id="${a.id}" aria-label="Kredit ${esc(a.label)}" title="Kosongkan untuk memakai saldo yang terbaca dari Flow">
         <span class="faint small">kredit</span>
-        ${btn('bulkReadCredits', '', { ic: S.busy.has(k) ? 'loader-circle' : 'refresh-cw', cls: 'subtle icon sm', title: 'Baca saldo kredit dari Google Flow', data: `data-id="${a.id}"`, disabled: S.busy.has(k) || !a.signedInAt })}
-        <span class="faint small cred-at ${stale ? 'warn-text' : ''}">${read ? `${stale ? 'kemarin/lebih lama' : 'dibaca ' + fmtTime(read.at)}` : s.signedIn ? 'belum dibaca' : 'belum masuk'}</span>
+        ${btn('bulkReadCredits', '', { ic: S.busy.has(k) ? 'loader-circle' : 'refresh-cw', cls: 'subtle icon sm', title: 'Baca saldo kredit dari Google Flow', data: `data-id="${a.id}"`, disabled: S.busy.has(k) || S.bulk.st.running })}
+        <span class="faint small cred-at ${stale ? 'warn-text' : ''}">${read ? `${stale ? 'kemarin/lebih lama' : 'dibaca ' + fmtTime(read.at)}` : s.signedIn || a.signedInAt ? 'belum dibaca' : 'klik ⟳ untuk membaca'}</span>
       </div>` : `<span class="faint small">${s.signedIn ? 'Siap' : a.signedInAt ? 'Disambungkan otomatis' : 'Belum masuk Google'}</span>`}
     </div>`;
   };
@@ -570,7 +655,7 @@ function bulkFormView() {
             : `<div class="opt"><span class="opt-l">${icon('hash')} Per Generate</span><div class="chips">${[1, 2, 3, 4].map((n) => chip('count', n, 'x' + n)).join('')}</div></div>`}
           ${video ? `<div class="opt"><span class="opt-l" title="Kredit per video">${icon('gem')} Biaya</span><div class="hrow"><input class="input num" type="number" min="1" max="10000" placeholder="${S.bulk.plan && S.bulk.plan.cost ? S.bulk.plan.cost : '?'}" value="${esc(f.cost)}" data-input="bulkCost" aria-label="Kredit per video"><span class="faint small">kredit/video · kosong = harga Flow 720p</span></div></div>` : ''}
         </div>
-        <div class="refs-mini ${framesBad ? 'bad' : ''}">${icon(imgs.length ? 'images' : 'image-plus')}<span class="small">${imgs.length ? `${imgs.length} gambar referensi dari tab Buat dipakai di semua tugas` : isFrames(o) ? 'Mode Frame wajib 2 foto (awal & akhir)' : 'Tanpa gambar referensi'}${framesBad ? ` — <b>${ERR.FRAMES_REQUIRED}</b>` : ''}</span>${btn('studioTab', 'Atur di Buat', { cls: 'sm subtle', data: 'data-tab="buat"' })}</div>
+        ${bulkRefsHtml(o)}
         <label class="field"><span class="hrow">Prompt <span class="faint small">satu per baris · maks. ${BULK_MAX} · dipakai bergiliran</span><span class="right faint small" id="bulk-lines">${lines} prompt</span></span>
           <textarea id="bulk-prompts" class="input prompt" rows="7" placeholder="${video ? 'Kamera drone di atas sawah terasering saat matahari terbit…\nTimelapse kota Jakarta malam hari, lampu kendaraan…' : 'Foto produk kopi susu gula aren di meja kayu…\nIlustrasi maskot kucing oranye, gaya 3D lucu…'}" data-input="bulkPrompts">${esc(f.prompts)}</textarea></label>
         <div class="hrow">${btn('bulkImport', 'Impor .txt', { ic: 'upload', cls: 'sm subtle' })}<input type="file" id="bulk-file" accept=".txt,.csv,text/plain" hidden data-change="bulkFile">
@@ -1841,8 +1926,28 @@ const ACTIONS = {
   bulkShowAll: () => { S.bulk.showAll = !S.bulk.showAll; render(); },
   bulkImport: () => { const f = $('#bulk-file'); if (f) f.click(); },
   bulkReadCredits: (el) => bulkRead(el.dataset.id),
+  bulkPickImages: async () => { const list = await call('files:pickImages', bulkRefMax()); if (list.length) await bulkAddImages(list); },
+  bulkRemoveImage: (el) => { bulkForm().images.splice(Number(el.dataset.i), 1); bulkSave(); render(); bulkPreviews(); bulkPlanSoon(); },
+  bulkClearImages: () => { bulkForm().images = []; bulkSave(); render(); bulkPlanSoon(); },
+  bulkFromStudio: () => bulkAddImages([...S.studio.images]),
+  bulkRefMode: (el) => {
+    const f = bulkForm();
+    f.refMode = el.dataset.v === 'each' ? 'each' : 'shared';
+    if (f.refMode === 'shared') f.images = [...new Set(f.images)];
+    bulkSave(); S.bulk.plan = null; render(); bulkPlanSoon();
+  },
+  bulkInsertTag: (el) => {
+    const ta = $('#bulk-prompts');
+    if (!ta) return;
+    const at = ta.selectionStart ?? ta.value.length;
+    const before = ta.value.slice(0, at), ins = (before && !/\s$/.test(before) ? ' ' : '') + '@' + el.dataset.tag + ' ';
+    ta.value = before + ins + ta.value.slice(ta.selectionEnd ?? at);
+    ta.focus();
+    ta.selectionStart = ta.selectionEnd = at + ins.length;
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  },
   bulkReadAll: () => busy('bulkReadAll', async () => {
-    const list = S.settings.accounts.filter((a) => bulkAccOn(a) && a.signedInAt);
+    const list = S.settings.accounts.filter(bulkAccOn);
     if (!list.length) throw new Error('NO_ACCOUNTS');
     let ok = 0;
     for (const a of list) { if (await bulkRead(a.id, true)) ok++; }
@@ -1857,7 +1962,7 @@ const ACTIONS = {
     const names = p.accounts.filter((a) => a.planned).map((a) => `${esc((accById(a.id) || {}).label || 'akun')}: ${a.planned}`).join(' · ');
     const r = await dialog({
       title: `Mulai Bulk ${p.target} ${video ? 'video' : 'gambar'}?`,
-      body: `<p>${p.jobs}× Generate di Google Flow${video ? ` · ${p.credits} kredit (${p.cost}/video)` : ''} · perkiraan ±${fmtDurLong(bulkEstimate(p))}.</p><p class="muted small">${names}</p><p class="muted small">Model ${esc(opts().model)} · ${esc(opts().ratio)}${S.studio.images.length ? ` · ${S.studio.images.length} gambar referensi` : ''}. Jendela Flow tetap tersembunyi; Anda bisa menghentikan kapan saja.</p>`,
+      body: `<p>${p.jobs}× Generate di Google Flow${video ? ` · ${p.credits} kredit (${p.cost}/video)` : ''} · perkiraan ±${fmtDurLong(bulkEstimate(p))}.</p><p class="muted small">${names}</p><p class="muted small">Model ${esc(opts().model)} · ${esc(opts().ratio)}${input.images.length ? ` · ${input.images.length} gambar referensi (${input.refMode === 'each' ? 'satu per prompt' : 'sama untuk semua'})` : ''}. Jendela Flow tetap tersembunyi; Anda bisa menghentikan kapan saja.</p>`,
       buttons: [{ label: 'Batal', value: 'cancel' }, { label: 'Mulai', value: 'go', primary: true }]
     });
     if (!r) return;
@@ -2676,7 +2781,7 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('selectionchange', () => { const ta = $('#prompt'); if (MP.open && ta && document.activeElement === ta) mentionUpdate(ta); });
 
 // seret & lepas gambar (di halaman Studio)
-const DROPS = ['#drop', '#tool-drop', '#sk-drop'];
+const DROPS = ['#drop', '#tool-drop', '#sk-drop', '#bulk-drop'];
 document.addEventListener('dragover', (e) => {
   e.preventDefault();
   for (const id of DROPS) { const d = $(id); if (d) d.classList.toggle('over', d.contains(e.target)); }
@@ -2696,6 +2801,7 @@ document.addEventListener('drop', (e) => {
       return toolAddPaths(list);
     }).catch((err) => toast(msg(err), 'err'));
   } else if (S.studioTab === 'skill') skAddImages(paths).catch((err) => toast(msg(err), 'err'));
+  else if (S.studioTab === 'bulk') { if ($('#bulk-drop')) bulkAddImages(paths).catch((err) => toast(msg(err), 'err')); }
   else addImages(paths);
 });
 

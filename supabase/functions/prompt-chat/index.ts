@@ -22,6 +22,23 @@ async function sha256hex(s: string) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
+/** Base URL API: buang "/" di akhir dan endpoint yang sering ikut tertempel (…/v1/responses → …/v1). */
+function apiBase(raw: unknown) {
+  return String(raw ?? '').trim().replace(/\/+$/, '').replace(/\/(chat\/completions|completions|responses|models|messages)$/i, '').replace(/\/+$/, '')
+}
+/** Header tambahan: OpenRouter menganjurkan HTTP-Referer & X-Title (nama aplikasi di dasbor mereka). */
+function extraHeaders(base: string): Record<string, string> {
+  let host = ''
+  try { host = new URL(base).hostname } catch { /* base_url tidak valid → tanpa header tambahan */ }
+  return /(^|\.)openrouter\.ai$/i.test(host)
+    ? { 'HTTP-Referer': 'https://flow-connect-2qu.pages.dev', 'X-Title': 'FLOW CONNECT' }
+    : {}
+}
+const perM = (v: unknown) => {
+  const n = Number(v)
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 1e6 * 10000) / 10000 : null
+}
+
 type Msg = { role: 'user' | 'assistant'; content: string }
 function cleanMessages(raw: unknown): Msg[] {
   if (!Array.isArray(raw)) return []
@@ -75,6 +92,40 @@ Deno.serve(async (req) => {
     const { data: a } = await admin.from('app_admins').select('user_id').eq('user_id', userId).maybeSingle()
     isAdmin = !!a
   }
+  // ── admin: ambil daftar model langsung dari provider (GET {base}/models, pakai kunci di Vault) ──
+  if (body.action === 'list_models') {
+    if (!isAdmin || licenseId) return json({ error: 'NOT_ADMIN' }, 403)
+    const { data: prov } = await admin.from('ai_providers').select('id, kind, base_url').eq('id', String(body.provider ?? '')).maybeSingle()
+    if (!prov) return json({ error: 'NOT_FOUND' }, 404)
+    const base = apiBase(prov.base_url)
+    const { data: secret } = await admin.rpc('ai_provider_secret', { p_provider: prov.id })
+    try {
+      const res = await fetch(`${base}/models`, {
+        headers: { ...(secret ? { Authorization: `Bearer ${secret}` } : {}), ...extraHeaders(base) },
+        signal: AbortSignal.timeout(30_000),
+      })
+      const out = await res.json().catch(() => null)
+      if (!res.ok) return json({ error: 'PROVIDER_ERROR', detail: `HTTP ${res.status}: ${String(out?.error?.message ?? out?.message ?? '').slice(0, 300)}` }, 502)
+      const list = Array.isArray(out?.data) ? out.data : Array.isArray(out) ? out : []
+      // deno-lint-ignore no-explicit-any
+      const models = list.filter((m: any) => m && typeof m.id === 'string').slice(0, 2000).map((m: any) => {
+        const outMods: string[] = Array.isArray(m.architecture?.output_modalities) ? m.architecture.output_modalities : []
+        return {
+          id: m.id,
+          name: typeof m.name === 'string' ? m.name : m.id,
+          context: Number(m.context_length) || null,
+          input_per_m: perM(m.pricing?.prompt),
+          output_per_m: perM(m.pricing?.completion),
+          free: /:free$/.test(m.id) || (m.pricing?.prompt === '0' && m.pricing?.completion === '0'),
+          outputs: outMods,
+        }
+      })
+      return json({ models, base })
+    } catch (e) {
+      return json({ error: 'PROVIDER_ERROR', detail: `NETWORK: ${(e as Error).message}`.slice(0, 300) }, 502)
+    }
+  }
+
   // pengguna web biasa hanya boleh lewat aplikasi desktop (berlisensi); admin boleh uji coba dari web
   if (!licenseId && !isAdmin) return json({ error: 'LICENSE_REQUIRED' }, 403)
 
@@ -132,9 +183,10 @@ Deno.serve(async (req) => {
   let usage: { prompt_tokens?: number; completion_tokens?: number } = {}
   let status = 502
   try {
-    const res = await fetch(`${String(provider.base_url).replace(/\/+$/, '')}/chat/completions`, {
+    const base = apiBase(provider.base_url)
+    const res = await fetch(`${base}/chat/completions`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json', ...extraHeaders(base) },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(90_000),
     })

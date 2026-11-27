@@ -111,7 +111,7 @@ jobs:
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
 
-            **Perbaikan di versi ini (v1.4.1):** foto (JPG/PNG) di Galeri tidak lagi masuk kategori **Video** — jenis hasil kini dibaca dari tipe file yang dilaporkan Google Flow. Foto yang Anda unggah sebagai Frame/Bahan tetap disembunyikan dari Galeri. Sebelumnya (v1.4.0): Galeri & Unduhan per kategori, menu **Asisten Prompt**, dan pengaturan model AI oleh admin di situs.
+            **Baru di versi ini (v1.4.2):** **Asisten Prompt** selalu memuat daftar model terbaru dari admin setiap kali dibuka, ada tombol muat ulang di samping pilihan model, dan nama provider (mis. OpenCode, OpenRouter) ikut tampil bila ada lebih dari satu provider. Sebelumnya (v1.4.1): foto tidak lagi masuk kategori Video di Galeri.
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

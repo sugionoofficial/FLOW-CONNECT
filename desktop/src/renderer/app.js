@@ -300,12 +300,15 @@ function chatBody(text, mi, nextIndex) {
   }).join('');
 }
 async function chatCatalog(force) {
+  S.chat.catalogLoading = true;
   try {
     S.chat.catalog = await call('assistant:catalog', !!force);
     S.chat.catalogError = null;
+    if (force) toast(`Daftar model dimuat ulang · ${chatModels().length} model`, 'ok');
   } catch (e) {
     S.chat.catalogError = e.message;
   }
+  S.chat.catalogLoading = false;
   if (S.page === 'assistant') render();
 }
 async function chatSend(text) {
@@ -515,6 +518,7 @@ const PAGES = {
   assistant() {
     const c = S.chat;
     const models = chatModels();
+    const multiProv = new Set(models.map((m) => m.provider)).size > 1;
     const cur = models.find((m) => m.id === c.model) || models.find((m) => m.is_default) || models[0];
     const mode = chatMode();
     const starters = mode === 'image'
@@ -523,12 +527,13 @@ const PAGES = {
     let pi = 0;
     return `
       <div class="page-head"><h1>Asisten Prompt</h1><div class="tools">
-        ${models.length > 1 ? `<select class="input chat-model" data-change="chatModel" aria-label="Model AI">${models.map((m) => `<option value="${esc(m.id)}" ${cur && cur.id === m.id ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select>` : ''}
+        ${models.length > 1 ? `<select class="input chat-model" data-change="chatModel" aria-label="Model AI">${models.map((m) => `<option value="${esc(m.id)}" ${cur && cur.id === m.id ? 'selected' : ''}>${esc(m.label)}${multiProv ? ` · ${esc(m.provider_name || m.provider)}` : ''}</option>`).join('')}</select>` : ''}
+        ${btn('chatCatalog', '', { ic: 'refresh-cw', cls: 'icon', title: 'Muat ulang daftar model', disabled: c.catalogLoading })}
         ${btn('chatNew', 'Percakapan baru', { ic: 'eraser', disabled: c.busy || !c.messages.length })}
       </div></div>
       <p class="subtitle">Ngobrol dengan AI untuk menyusun prompt Google Flow. Prompt yang sudah jadi bisa langsung dipakai di Studio.</p>
       ${c.catalogError ? infobar('warning', 'cloud-off', 'Daftar model tidak bisa dimuat.', ' ' + esc(msg({ message: c.catalogError })), btn('chatCatalog', 'Coba lagi', { ic: 'refresh-cw', cls: 'sm' })) : ''}
-      ${c.catalog && !models.length ? infobar('warning', 'triangle-alert', 'Asisten belum tersedia.', ' Admin belum mengaktifkan model chat.') : ''}
+      ${c.catalog && !models.length ? infobar('warning', 'triangle-alert', 'Asisten belum tersedia.', ' Admin belum mengaktifkan model chat.', btn('chatCatalog', 'Muat ulang', { ic: 'refresh-cw', cls: 'sm' })) : ''}
       ${cur && cur.ready === false ? infobar('warning', 'triangle-alert', 'Asisten belum siap.', ' Admin belum memasang kunci API untuk ' + esc(cur.provider_name || cur.provider) + '.') : ''}
       <div class="card chat">
         <div class="chat-top">
@@ -883,7 +888,8 @@ function go(page) {
   if (page === 'gallery' || page === 'studio') galleryAutoLoad();
   if (page === 'assistant') {
     S.chat.scroll = true;
-    if (!S.chat.catalog || S.chat.catalogError) chatCatalog(false); else render();
+    if (S.chat.catalog && !S.chat.catalogError) render();
+    chatCatalog(false); // selalu cek model terbaru dari admin (cache 1 menit di proses utama)
     const i = $('#chat-input'); if (i) i.focus();
   }
 }

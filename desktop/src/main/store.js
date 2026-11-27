@@ -25,6 +25,7 @@ const DEFAULTS = {
   uploads: [],             // media id gambar referensi yang diunggah ke Flow (disembunyikan dari galeri)
   results: {},            // { projectId: [hasil generate dari balasan Flow] } → selalu tampil di galeri/pratinjau
   queue: [],               // tugas Mode Otomatis
+  bulk: null,              // batch Bulk Generate terakhir (maks. 300 hasil) — lihat bulk.js
   mySkills: [],            // Studio → Skill → "Skill saya" (templat prompt + setelan)
   deviceId: null,          // ID acak PC ini (untuk slot perangkat lisensi)
   license: null            // { key (terenkripsi), hint, info, checkedAt, error }
@@ -63,7 +64,7 @@ function sanitizeStudio(p = {}, base = STUDIO) {
   return o;
 }
 
-const LIMITS = { minDelay: [20, 3600], maxDelay: [20, 7200], maxPerRun: [1, 50], timeoutMin: [1, 30] };
+const LIMITS = { minDelay: [20, 3600], maxDelay: [20, 7200], maxPerRun: [1, 300], timeoutMin: [1, 30] };
 
 class Store {
   constructor(dir, defaultDownloadDir) {

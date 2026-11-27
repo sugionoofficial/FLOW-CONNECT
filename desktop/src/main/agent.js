@@ -4,7 +4,7 @@
 // ambil file media, mencari kolom prompt / input file / tombol Generate.
 // Tidak pernah membuat token reCAPTCHA — Generate selalu lewat tombol UI Flow sendiri.
 
-const AGENT_VERSION = 9;
+const AGENT_VERSION = 10;
 
 /* eslint-disable */
 function fcAgent(V, cfg) {
@@ -685,7 +685,52 @@ function fcAgent(V, cfg) {
     return el ? box(el) : null;
   }
 
+  // ---------- Saldo kredit Flow (panel "Account details") ----------
+  // HANYA membaca: panel ini juga memuat "Sign out" — jangan pernah klik apa pun di dalamnya.
+  var ACCOUNT_BTN = /^(account details|detail akun|google account:?.*)$/i;
+  function accountDetailsButton() {
+    var els = document.querySelectorAll('button, [role="button"], a[aria-label]');
+    var best = null;
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      if (!visible(el)) continue;
+      var lab = (el.getAttribute('aria-label') || labelOf(el) || '').trim();
+      if (/sign ?out|log ?out|keluar/i.test(lab)) continue;
+      if (/^(account details|detail akun)$/i.test(lab)) return box(el);
+      if (!best && ACCOUNT_BTN.test(lab)) best = el;
+    }
+    return best ? box(best) : null;
+  }
+  var CREDITS_RE = /(\d[\d.,]*)\s*(?:google\s+)?flow\s+credits?|(?:google\s+)?flow\s+credits?\D{0,24}?(\d[\d.,]*)/i;
+  function creditsNumber(t) {
+    var m = CREDITS_RE.exec(String(t || '').replace(/\s+/g, ' '));
+    if (!m) return null;
+    var n = parseInt((m[1] || m[2] || '').replace(/[.,]/g, ''), 10);
+    return isFinite(n) && n >= 0 && n < 10000000 ? n : null;
+  }
+  function creditsBalance() {
+    // tautan "N Google Flow credits" di panel akun (utama), lalu elemen teks terkecil yang memuatnya
+    var links = document.querySelectorAll('a[href], [role="link"], button, [role="button"], [role="menuitem"]');
+    for (var i = 0; i < links.length; i++) {
+      if (!visible(links[i])) continue;
+      var n = creditsNumber(labelOf(links[i]) + ' ' + (links[i].textContent || ''));
+      if (n !== null) return { credits: n };
+    }
+    var ov = overlays();
+    for (var j = ov.length - 1; j >= 0; j--) {
+      var els = ov[j].querySelectorAll('*');
+      for (var k = els.length - 1; k >= 0; k--) {
+        var el = els[k];
+        if (el.children.length > 3 || !visible(el)) continue;
+        var v = creditsNumber(el.textContent);
+        if (v !== null) return { credits: v };
+      }
+    }
+    return null;
+  }
+
   var api = {
+    accountDetailsButton: accountDetailsButton, creditsBalance: creditsBalance,
     status: status, listMedia: listMedia, getMedia: getMedia, fetchB64: fetchB64, focusPrompt: focusPrompt,
     promptText: promptText, setPromptFallback: setPromptFallback, markFileInput: markFileInput, pasteFiles: pasteFiles,
     findGenerate: findGenerate, find: find, newProjectTarget: newProjectTarget, settingsTrigger: settingsTrigger,

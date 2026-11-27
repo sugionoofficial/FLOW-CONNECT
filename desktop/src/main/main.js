@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const { Store, sanitizeStudio } = require('./store');
 const { FlowSession, IMAGE_EXT } = require('./flow');
 const { AutomationQueue, safeName } = require('./automation');
+const { BulkRunner } = require('./bulk');
 const { sanitizeTags } = require('./refs');
 const { checkFrames } = require('./catalog');
 const browser = require('./browser');
@@ -35,6 +36,7 @@ app.setAppUserModelId('com.flowconnect.desktop');
 let win = null;
 let store = null;
 let queue = null;
+let bulk = null; // Bulk Generate (maks. 300 hasil, lintas akun)
 let license = null;
 let assistant = null;
 let updater = null;
@@ -197,7 +199,7 @@ async function connectAccount(id, { project = false } = {}) {
   const s = session(id);
   const want = desiredMode(id);
   if (!s.connected) await s.connect();
-  else if (s.mode && s.mode !== want && !(queue.running && want === 'minimized' && s.mode === 'hidden')) await s.relaunch(want);
+  else if (s.mode && s.mode !== want && !((queue.running || bulk.running) && want === 'minimized' && s.mode === 'hidden')) await s.relaunch(want);
   else await s.ensurePage();
   const a = account(id);
   let st = await s.status();
@@ -300,7 +302,7 @@ function handle(channel, fn) {
 function registerIpc() {
   handle('app:info', () => ({
     version: app.getVersion(), platform: process.platform, accent: accent(), browsers: browser.findBrowsers(),
-    settings: publicSettings(), statuses: Object.fromEntries(statuses), queue: queue.state(), webUrl: WEB_URL,
+    settings: publicSettings(), statuses: Object.fromEntries(statuses), queue: queue.state(), bulk: bulk.state(), webUrl: WEB_URL,
     license: license.state(), update: updater.state(), chrome: { customTitlebar: CUSTOM_TITLEBAR, mica: MICA },
     flowOptions: Object.fromEntries(flowOptions)
   }));
@@ -310,6 +312,7 @@ function registerIpc() {
   handle('license:verify', () => license.verify());
   handle('license:deactivate', async () => {
     queue.stop();
+    bulk.stop();
     return license.deactivate();
   });
 
@@ -416,7 +419,7 @@ function registerIpc() {
   handle('auto:ack', (agree) => {
     store.data.autoAck = agree ? new Date().toISOString() : null;
     store.data.mode = agree ? 'auto' : 'safe';
-    if (!agree) queue.stop();
+    if (!agree) { queue.stop(); bulk.stop(); }
     store.save();
     return publicSettings();
   });
@@ -456,6 +459,7 @@ function registerIpc() {
     const s = session(id);
     if (logins.has(id)) throw new Error('LOGIN_IN_PROGRESS');
     if (queue.running) throw new Error('QUEUE_RUNNING');
+    if (bulk.running) throw new Error('BULK_RUNNING');
     const ctl = { stop: false };
     logins.set(id, ctl);
     try {
@@ -601,6 +605,7 @@ function registerIpc() {
   // MODE OTOMATIS: setelan → gambar → prompt → Generate → (tunggu & unduh), dengan cadangan headless → jendela diperkecil
   handle('flow:run', async (id, { prompt, images, tags, options, waitResults }) => {
     if (store.data.mode !== 'auto' || !store.data.autoAck) throw new Error('AUTO_MODE_DISABLED');
+    if (bulk.running && bulk.batch && bulk.batch.accounts.some((a) => a.id === id)) throw new Error('BULK_RUNNING');
     const imgs = checkImages(images);
     if (!imgs.length && !(prompt || '').trim()) throw new Error('NOTHING_TO_SEND');
     checkFrames(options ? sanitizeStudio(options) : null, imgs);
@@ -633,7 +638,37 @@ function registerIpc() {
   handle('queue:remove', (id) => { queue.remove(id); return queue.state(); });
   handle('queue:retry', (id) => { queue.retry(id); return queue.state(); });
   handle('queue:clear', () => { queue.clearFinished(); return queue.state(); });
-  handle('queue:start', () => { queue.start().catch((e) => send('activity', e.message)); return queue.state(); });
+  handle('queue:start', () => {
+    if (bulk.running) throw new Error('BULK_RUNNING');
+    queue.start().catch((e) => send('activity', e.message));
+    return queue.state();
+  });
+
+  // Saldo kredit Google Flow per akun (dibaca dari panel "Account details" Flow; hanya membaca)
+  handle('flow:credits', async (id) => {
+    if (bulk.running) throw new Error('BULK_RUNNING');
+    const s = await connectAccount(id);
+    const st = await s.status();
+    if (!st.signedIn) throw new Error('NOT_SIGNED_IN');
+    const credits = await s.readCredits();
+    const a = account(id);
+    a.credits = { value: credits, at: Date.now() };
+    store.save();
+    send('settings', publicSettings());
+    return a.credits;
+  });
+
+  // Bulk Generate
+  const bulkInput = (input) => {
+    const o = input && typeof input === 'object' ? input : {};
+    return { ...o, images: checkImages(o.images), options: o.options ? sanitizeStudio(o.options) : store.data.studio };
+  };
+  handle('bulk:state', () => bulk.state());
+  handle('bulk:plan', (input) => bulk.plan(bulkInput(input)));
+  handle('bulk:start', (input) => bulk.start(bulkInput(input)));
+  handle('bulk:stop', () => { bulk.stop(); return bulk.state(); });
+  handle('bulk:resume', (input) => bulk.resume(input || {}));
+  handle('bulk:clear', () => { bulk.clear(); return bulk.state(); });
   handle('queue:stop', () => { queue.stop(); return queue.state(); });
 
   // Berkas
@@ -835,11 +870,21 @@ app.whenReady().then(async () => {
   queue.on('update', (st) => send('queue', st));
   queue.on('job-failed', (j) => notify('Tugas otomatis gagal', `${j.prompt.slice(0, 60)} — ${j.error}`));
   queue.on('finished', ({ done, failed }) => { if (done + failed) notify('Antrean otomatis selesai', `${done} berhasil, ${failed} gagal.`); });
+  bulk = new BulkRunner({ store, getSession: (id) => connectAccount(id), onDownloaded: addDownload, onFallback: (id, v) => markHeadlessFailed(id, v && v.error), isBusy: () => queue.running });
+  let bulkSent = 0, bulkTimer = null;
+  const bulkSend = () => { bulkSent = Date.now(); bulkTimer = null; send('bulk', bulk.state()); };
+  // banyak perubahan kecil berturut-turut → dikirim maks. ±3×/detik (batch bisa berisi 300 tugas)
+  bulk.on('update', () => { if (Date.now() - bulkSent > 300) bulkSend(); else if (!bulkTimer) bulkTimer = setTimeout(bulkSend, 300); });
+  bulk.on('activity', (t) => send('bulk-activity', t));
+  bulk.on('finished', ({ items, failed, skipped, stopped, ms }) => {
+    const t = Math.round(ms / 1000), dur = t >= 3600 ? `${Math.floor(t / 3600)} j ${Math.floor((t % 3600) / 60)} m` : `${Math.floor(t / 60)} m ${t % 60} d`;
+    notify(stopped ? 'Bulk Generate dihentikan' : 'Bulk Generate selesai', `${items} hasil${failed ? `, ${failed} gagal` : ''}${skipped ? `, ${skipped} terlewat` : ''} · ${dur}.`);
+  });
   license = new LicenseManager({ store, version: app.getVersion(), crypt });
   assistant = new Assistant({ license });
   license.on('change', (st) => {
     send('license', st);
-    if (!license.licensed) queue.stop();
+    if (!license.licensed) { queue.stop(); bulk.stop(); }
   });
   updater = new Updater({ app });
   updater.on('change', (st) => send('update', st));
@@ -864,6 +909,7 @@ app.whenReady().then(async () => {
 
 function beforeUpdateQuit() {
   queue.stop();
+  if (bulk) bulk.stop();
   if (store) store.flush();
   for (const s of sessions.values()) s.disconnect();
 }

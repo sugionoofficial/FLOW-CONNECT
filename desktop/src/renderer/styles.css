@@ -857,3 +857,68 @@ img.tool-media { background: transparent; }
 .sk-foot { flex-wrap: nowrap; }
 .sk-foot .btn.sm:not(.icon) { padding: 0 8px; }
 .sk-foot .btn.icon { margin-left: auto; }
+
+/* ---------- Timer runtime ---------- */
+.runtime { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; font-weight: 600; color: var(--text); letter-spacing: 0.02em; }
+.runtime.big { display: block; font-family: var(--font-display); font-size: 28px; line-height: 1.1; letter-spacing: 0.01em; }
+.runtime-row { display: flex; flex-wrap: wrap; gap: 8px; margin: -8px 0 14px; }
+.runtime-pill { gap: 8px; cursor: default; }
+button.runtime-pill { cursor: pointer; font: inherit; }
+button.runtime-pill:hover { background: var(--hover); }
+.runtime-pill.on { border-color: var(--accent-line); background: var(--accent-soft); color: var(--text); }
+.runtime-pill .runtime { padding-left: 8px; border-left: 1px solid var(--stroke-2); }
+.stage-clock { display: inline-flex; align-items: center; gap: 10px; margin-top: 4px; padding: 6px 14px; border-radius: 999px; background: var(--card); border: 1px solid var(--stroke); box-shadow: var(--shadow); }
+.stage-clock .ic { color: var(--accent); }
+.stage-clock .runtime.big { font-size: 22px; }
+
+/* ---------- Studio → Bulk ---------- */
+.bulk { display: grid; grid-template-columns: minmax(380px, 1.15fr) minmax(320px, 1fr); gap: 16px; align-items: start; }
+.bulk-form { display: flex; flex-direction: column; gap: 14px; padding: 18px; }
+.bulk-form .card-head { margin-bottom: 0; }
+.bulk-form .prompt { min-height: 150px; font-family: var(--font); }
+.bulk-side { display: flex; flex-direction: column; gap: 16px; }
+.bulk-side .card { padding: 16px 18px; }
+.bulk-accs { display: flex; flex-direction: column; gap: 6px; }
+.bulk-acc { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 8px 10px; border-radius: var(--radius); border: 1px solid var(--stroke); background: var(--card-2); }
+.bulk-acc.on { border-color: var(--accent-line); background: var(--accent-soft); }
+.bulk-acc label.check { min-width: 0; flex: 1 1 180px; }
+.bulk-acc .ellipsis { min-width: 0; }
+.bulk-cred { display: flex; align-items: center; gap: 6px; }
+.bulk-cred .input.num { width: 76px; height: 30px; }
+.bulk-cred .cred-at { min-width: 84px; }
+.refs-mini { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius); background: var(--card-2); border: 1px dashed var(--stroke-2); color: var(--text-2); }
+.refs-mini .btn { margin-left: auto; }
+.refs-mini.bad { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
+.grow-0 { flex: 0 0 auto; }
+.plan-head { display: flex; align-items: center; gap: 10px; font-size: 17px; font-family: var(--font-display); }
+.plan-head .ic { color: var(--accent); }
+.plan-accs { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
+.plan-acc { display: inline-flex; gap: 6px; align-items: baseline; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--stroke); background: var(--card-2); font-size: 12px; }
+.plan-acc b { color: var(--accent); }
+.plan-acc.off { opacity: 0.55; }
+#bulk-plan { display: flex; flex-direction: column; gap: 4px; min-height: 52px; }
+.bulk-adv { margin: 12px 0 4px; }
+.bulk-adv summary { cursor: pointer; color: var(--text-2); }
+.bulk-adv[open] { display: flex; flex-direction: column; gap: 8px; }
+.bulk-plan-card .cta-bar { margin-top: 12px; }
+.bulk-card { position: relative; }
+.bulk-card .badge { margin-left: auto; align-self: center; }
+
+.bulk-run { padding: 18px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 12px; }
+.bulk-run-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.bulk-title { display: flex; align-items: center; gap: 12px; flex: 1 1 320px; min-width: 0; }
+.bulk-title > .ic { color: var(--accent); }
+.bulk-title h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 2px; }
+.bulk-clock { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: var(--radius-lg); background: var(--grad); color: var(--on-accent); box-shadow: var(--shadow); }
+.bulk-clock .ic { width: 22px; height: 22px; }
+.bulk-clock .faint, .bulk-clock .runtime { color: inherit; }
+.bulk-clock .faint { opacity: 0.85; }
+.bulk-progress { height: 6px; border-radius: 3px; }
+.bulk-progress > i { background: var(--grad); transition: width 0.4s ease; }
+.bulk-stats { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+.bulk-stats b { font-size: 18px; font-variant-numeric: tabular-nums; font-family: var(--font-display); }
+.bulk-run .activity { margin: 0; }
+.bulk-run .actionbar { margin: 0; }
+.bulk-accs-t { margin-bottom: 14px; }
+.bulk-jobs .prompt { max-width: 460px; }
+@media (max-width: 1080px) { .bulk { grid-template-columns: 1fr; } }

@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
-import { Download, Images, KeyRound, LogOut } from 'lucide-react'
+import { Download, Images, KeyRound, LogOut, ShieldCheck } from 'lucide-react'
 import clsx from 'clsx'
 import { Logo } from './Logo'
 import { useAuth } from '../context/AuthContext'
 
 export function UserMenu() {
-  const { user, profile, signOut } = useAuth()
+  const { user, profile, signOut, isAdmin } = useAuth()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
@@ -34,6 +34,7 @@ export function UserMenu() {
             { to: '/app/lisensi', label: 'Lisensi aplikasi PC', Icon: KeyRound },
             { to: '/unduh', label: 'Unduh aplikasi PC', Icon: Download },
             { to: '/contoh', label: 'Contoh generate', Icon: Images },
+            ...(isAdmin ? [{ to: '/app/admin', label: 'Admin', Icon: ShieldCheck }] : []),
           ].map(({ to, label, Icon }) => (
             <Link key={to} to={to} onClick={() => setOpen(false)} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-white/75 hover:bg-white/5 hover:text-white">
               <Icon className="size-4" /> {label}
@@ -53,6 +54,7 @@ export function UserMenu() {
 }
 
 export function AppHeader({ children }: { children?: ReactNode }) {
+  const { isAdmin } = useAuth()
   const link = ({ isActive }: { isActive: boolean }) =>
     clsx('rounded-lg px-3 py-1.5 text-sm transition', isActive ? 'bg-white/10 text-white' : 'text-white/60 hover:text-white')
   return (
@@ -66,6 +68,7 @@ export function AppHeader({ children }: { children?: ReactNode }) {
           <NavLink to="/app/lisensi" className={link}>Lisensi</NavLink>
           <NavLink to="/contoh" className={link}>Contoh</NavLink>
           <NavLink to="/unduh" className={link}>Unduh</NavLink>
+          {isAdmin && <NavLink to="/app/admin" className={link}>Admin</NavLink>}
         </nav>
         <div className="flex-1">{children}</div>
         <UserMenu />

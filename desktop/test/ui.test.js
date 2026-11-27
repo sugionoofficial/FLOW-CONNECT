@@ -32,7 +32,8 @@ const MOCK = `(() => {
       { path: 'C:\\\\x\\\\Hujan di sawah - 9f8e7d6c.mp4', name: 'Hujan di sawah - 9f8e7d6c.mp4', mediaId: 'm2', accountId: 'a1', at: day0 - 3600000 },
       { path: 'C:\\\\x\\\\Kopi tubruk pagi - 5e6f7a8b.png', name: 'Kopi tubruk pagi - 5e6f7a8b.png', mediaId: 'm3', accountId: 'a1', at: day0 - 24 * 3600000 },
       { path: 'C:\\\\x\\\\Kebun kopi berkabut - 0a1b2c3d.png', name: 'Kebun kopi berkabut - 0a1b2c3d.png', mediaId: 'm4', accountId: 'a2', at: day0 - 25 * 3600000 },
-      { path: 'C:\\\\x\\\\Dipindahkan - 77777777.png', name: 'Dipindahkan - 77777777.png', mediaId: 'm5', accountId: 'a1', at: day0 - 9 * 86400000 }
+      { path: 'C:\\\\x\\\\Dipindahkan - 77777777.png', name: 'Dipindahkan - 77777777.png', mediaId: 'm5', accountId: 'a1', at: day0 - 9 * 86400000 },
+      { path: 'C:\\\\x\\\\Narasi iklan kopi - 31415926.mp3', name: 'Narasi iklan kopi - 31415926.mp3', mediaId: null, accountId: 'a1', at: day0 - 2 * 3600000 }
     ]
   };
   const statuses = { a1: { connected: true, signedIn: true, account: 'studio.kerja@gmail.com', projectId: 'p1', projectTitle: 'Iklan Kopi Nusantara' }, a2: { connected: false } };
@@ -74,6 +75,11 @@ const MOCK = `(() => {
     'flow:listMedia': () => items,
     'flow:thumb': (id, it) => it.image,
     'files:thumb': (p) => (/Dipindahkan/.test(p) ? { missing: true } : { url: svg(/[.]mp4$/.test(p) ? ['#1d3557', '#a8dadc'] : ['#7f5539', '#ddb892']) }),
+    'assistant:catalog': () => [
+      { id: '11111111-1111-1111-1111-111111111111', provider: 'opencode', provider_name: 'OpenCode Console', model: 'gpt-5-nano', label: 'GPT 5 Nano', category: 'chat', is_default: true, ready: true },
+      { id: '22222222-2222-2222-2222-222222222222', provider: 'opencode', provider_name: 'OpenCode Console', model: 'deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash', category: 'chat', is_default: false, ready: true }
+    ],
+    'assistant:chat': (req) => new Promise((res) => setTimeout(() => res({ reply: 'Siap! Ini prompt untuk **' + (req.mode === 'image' ? 'gambar' : 'video') + '** kamu:\\n\\n\\u0060\\u0060\\u0060prompt\\nAerial drone shot slowly gliding over Bali rice terraces at sunrise, soft mist, cinematic\\n\\u0060\\u0060\\u0060\\n\\nMau saya buat versi 9:16?', model: { id: req.model, label: 'GPT 5 Nano' } }), 300)),
     'files:pickImages': () => ['/foto/Kucing Oren.png', '/foto/latar.jpg'],
     'files:register': (p) => p,
     'files:preview': () => svg(['#888', '#ccc'])
@@ -125,11 +131,11 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
     await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: scheme }] });
     await page.send('Page.navigate', { url: base });
     await sleep(900);
-    for (const p of ['home', 'accounts', 'studio', 'gallery', 'auto', 'downloads', 'settings']) {
+    for (const p of ['home', 'accounts', 'studio', 'assistant', 'gallery', 'auto', 'downloads', 'settings']) {
       await ev(`document.querySelector('[data-page="${p}"]').click()`);
       await sleep(p === 'gallery' ? 700 : 250);
       const h1 = await ev('document.querySelector("#page h1") && document.querySelector("#page h1").textContent');
-      assert.ok(h1, `halaman ${p} punya judul`);
+      assert.ok(h1, `halaman ${p} punya judul ` + errors.join(" | "));
       if (SHOTS) {
         const { data } = await page.send('Page.captureScreenshot', { format: 'png' });
         fs.mkdirSync(SHOTS, { recursive: true });
@@ -154,18 +160,76 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   await ev(`document.querySelector('[data-act=gallerySelectDay]').click()`);
   await sleep(100);
   assert.strictEqual(await ev('document.querySelectorAll(".tile.sel").length'), 0);
+  // kategori galeri: Semua · Gambar · Video · Audio
+  assert.deepStrictEqual(await ev('[...document.querySelectorAll("#page .cat-tab")].map((b) => b.textContent)'), ['Semua6', 'Gambar5', 'Video1', 'Audio0']);
+  await ev(`document.querySelector('[data-act=galleryCat][data-cat=video]').click()`);
+  await sleep(100);
+  assert.strictEqual(await ev('document.querySelectorAll(".tile").length'), 1, 'hanya video');
+  assert.ok(await ev('document.querySelector(".tile .badge").textContent === "Video"'));
+  await ev(`document.querySelector('[data-act=gallerySelectAll]').click()`);
+  await sleep(100);
+  assert.strictEqual(await ev('document.querySelectorAll(".tile.sel").length'), 1, 'pilih semua hanya kategori aktif');
+  assert.ok(await ev('document.querySelector("[data-act=galleryDownloadSel]").textContent.includes("(1)")'));
+  await ev(`document.querySelector('[data-act=gallerySelectAll]').click()`);
+  await ev(`document.querySelector('[data-act=galleryCat][data-cat=image]').click()`);
+  await sleep(100);
+  assert.strictEqual(await ev('document.querySelectorAll(".tile").length'), 5, 'hanya gambar');
+  await ev(`document.querySelector('[data-act=galleryCat][data-cat=audio]').click()`);
+  await sleep(100);
+  assert.strictEqual(await ev('document.querySelectorAll(".tile").length'), 0);
+  assert.ok(await ev('document.querySelector("#page .card.empty").textContent.includes("Belum ada audio")'));
+  if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'galeri-audio.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  await ev(`document.querySelector('[data-act=galleryCat][data-cat=video]').click()`);
+  await sleep(300);
+  if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'galeri-video.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  await ev(`document.querySelector('[data-act=galleryCat][data-cat=all]').click()`);
+  await sleep(100);
   // unduhan per tanggal dengan thumbnail (gambar & video), file hilang ditandai
   await ev(`document.querySelector('[data-page="downloads"]').click()`);
   await sleep(500);
-  assert.strictEqual(await ev('document.querySelectorAll(".dl-tile").length'), 5);
+  assert.strictEqual(await ev('document.querySelectorAll(".dl-tile").length'), 6);
+  assert.deepStrictEqual(await ev('[...document.querySelectorAll("#page .cat-tab")].map((b) => b.textContent)'), ['Semua6', 'Gambar4', 'Video1', 'Audio1']);
   assert.deepStrictEqual((await ev('[...document.querySelectorAll("#page .day-head h3")].map((h) => h.textContent)')).slice(0, 2), ['Hari ini', 'Kemarin']);
   assert.strictEqual(await ev('document.querySelectorAll("#page .day").length'), 3);
-  assert.strictEqual(await ev('document.querySelectorAll(".dl-tile img.pic").length'), 4, 'thumbnail untuk 4 file yang ada');
+  assert.strictEqual(await ev('document.querySelectorAll(".dl-tile img.pic").length'), 5, 'thumbnail untuk 5 file yang ada');
   assert.ok(await ev('document.querySelector(".dl-tile.missing .badge.warn").textContent.includes("tidak ditemukan")'));
   assert.ok(await ev('!!document.querySelector(".dl-tile .badge") && [...document.querySelectorAll(".dl-tile .badge")].some((b) => b.textContent.includes("Video"))'));
   await ev(`document.querySelector('.dl-tile button.media').click()`);
   await sleep(100);
   assert.ok(await ev('window.__calls.includes("files:open")'), 'klik thumbnail membuka file');
+  await ev(`document.querySelector('[data-act=dlCat][data-cat=audio]').click()`);
+  await sleep(200);
+  assert.strictEqual(await ev('document.querySelectorAll(".dl-tile").length'), 1, 'unduhan: hanya audio');
+  assert.ok(await ev('document.querySelector(".dl-tile .badge").textContent.includes("Audio")'));
+  if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'unduhan-audio.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  await ev(`document.querySelector('[data-act=dlCat][data-cat=all]').click()`);
+  await sleep(100);
+  // Asisten Prompt: chat → blok prompt → "Pakai di Studio"
+  await ev(`document.querySelector('[data-page="assistant"]').click()`);
+  await sleep(300);
+  assert.deepStrictEqual(await ev('[...document.querySelectorAll("[data-change=chatModel] option")].map((o) => o.textContent)'), ['GPT 5 Nano', 'DeepSeek V4.1 Flash']);
+  assert.strictEqual(await ev('document.querySelectorAll(".starters .chip").length'), 3);
+  if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'asisten-kosong.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  await ev(`(() => { const t = document.querySelector('#chat-input'); t.focus(); t.value = 'Prompt video sawah Bali saat sunrise'; t.dispatchEvent(new Event('input', { bubbles: true })); t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); })()`);
+  await sleep(100);
+  assert.ok(await ev('!!document.querySelector(".typing")'), 'indikator mengetik');
+  await sleep(500);
+  assert.strictEqual(await ev('document.querySelectorAll(".msg.me").length'), 1);
+  assert.strictEqual(await ev('document.querySelectorAll(".msg.ai .pblock").length'), 1, 'blok prompt tampil');
+  assert.ok(await ev('document.querySelector(".msg.ai .txt b").textContent === "video"'), 'teks tebal');
+  assert.strictEqual(await ev('document.querySelector("#chat-input").value'), '');
+  assert.ok(await ev('JSON.parse(localStorage.getItem("fc.chat.v1")).messages.length === 2'), 'percakapan tersimpan');
+  if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'asisten-chat.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
+  await ev(`document.querySelector('[data-act=chatUse]').click()`);
+  await sleep(300);
+  assert.strictEqual(await ev('document.querySelector("#page h1").textContent'), 'Studio');
+  assert.strictEqual(await ev('document.querySelector("#prompt").value'), 'Aerial drone shot slowly gliding over Bali rice terraces at sunrise, soft mist, cinematic');
+  await ev(`(() => { const t = document.querySelector('#prompt'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  await ev(`document.querySelector('[data-page="assistant"]').click()`);
+  await sleep(200);
+  await ev(`document.querySelector('[data-act=chatNew]').click()`);
+  await sleep(100);
+  assert.strictEqual(await ev('document.querySelectorAll(".msg").length'), 0, 'percakapan baru');
   if (SHOTS) {
     for (const [pg, name] of [['downloads', 'unduhan-tanggal'], ['gallery', 'galeri-tanggal']]) {
       await ev(`document.querySelector('[data-page="${pg}"]').click()`);

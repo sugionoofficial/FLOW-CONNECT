@@ -11,6 +11,7 @@ const { sanitizeTags } = require('./refs');
 const { checkFrames } = require('./catalog');
 const browser = require('./browser');
 const { LicenseManager } = require('./license');
+const { Assistant } = require('./assistant');
 const { Updater } = require('./updater');
 
 const WEB_URL = 'https://flow-connect-2qu.pages.dev';
@@ -33,6 +34,7 @@ let win = null;
 let store = null;
 let queue = null;
 let license = null;
+let assistant = null;
 let updater = null;
 const sessions = new Map();     // accountId → FlowSession
 const statuses = new Map();     // accountId → status terakhir
@@ -283,6 +285,10 @@ function registerIpc() {
     queue.stop();
     return license.deactivate();
   });
+
+  // Asisten Prompt (chat AI lewat server FLOW CONNECT)
+  handle('assistant:catalog', (force) => assistant.catalog(!!force));
+  handle('assistant:chat', (req) => assistant.chat(req || {}));
 
   // Pembaruan aplikasi
   handle('update:check', () => updater.check());
@@ -611,9 +617,10 @@ function buildMenu() {
         { label: 'Beranda', accelerator: 'CmdOrCtrl+1', click: go('home') },
         { label: 'Akun', accelerator: 'CmdOrCtrl+2', click: go('accounts') },
         { label: 'Studio', accelerator: 'CmdOrCtrl+3', click: go('studio') },
-        { label: 'Galeri', accelerator: 'CmdOrCtrl+4', click: go('gallery') },
-        { label: 'Otomatis', accelerator: 'CmdOrCtrl+5', click: go('auto') },
-        { label: 'Unduhan', accelerator: 'CmdOrCtrl+6', click: go('downloads') },
+        { label: 'Asisten Prompt', accelerator: 'CmdOrCtrl+4', click: go('assistant') },
+        { label: 'Galeri', accelerator: 'CmdOrCtrl+5', click: go('gallery') },
+        { label: 'Otomatis', accelerator: 'CmdOrCtrl+6', click: go('auto') },
+        { label: 'Unduhan', accelerator: 'CmdOrCtrl+7', click: go('downloads') },
         { type: 'separator' },
         { role: 'resetZoom', label: 'Ukuran asli' }, { role: 'zoomIn', label: 'Perbesar' }, { role: 'zoomOut', label: 'Perkecil' },
         { type: 'separator' },
@@ -718,6 +725,7 @@ app.whenReady().then(async () => {
   queue.on('job-failed', (j) => notify('Tugas otomatis gagal', `${j.prompt.slice(0, 60)} — ${j.error}`));
   queue.on('finished', ({ done, failed }) => { if (done + failed) notify('Antrean otomatis selesai', `${done} berhasil, ${failed} gagal.`); });
   license = new LicenseManager({ store, version: app.getVersion(), crypt });
+  assistant = new Assistant({ license });
   license.on('change', (st) => {
     send('license', st);
     if (!license.licensed) queue.stop();

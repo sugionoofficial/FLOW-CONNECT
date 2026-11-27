@@ -12,7 +12,8 @@ const CHANNELS = [
   'flow:newProject', 'flow:scan',
   'queue:add', 'queue:remove', 'queue:retry', 'queue:clear', 'queue:start', 'queue:stop',
   'files:pickImages', 'files:register', 'files:preview', 'files:pickFolder', 'files:pickBrowser', 'files:open', 'files:show',
-  'files:openDownloads', 'files:forget', 'shell:external'
+  'files:openDownloads', 'files:forget', 'files:thumb', 'shell:external',
+  'assistant:catalog', 'assistant:chat'
 ];
 const EVENTS = ['statuses', 'settings', 'queue', 'activity', 'navigate', 'theme', 'accent', 'license', 'update', 'update-show', 'login'];
 

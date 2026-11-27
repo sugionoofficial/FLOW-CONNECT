@@ -34,6 +34,21 @@ function extraHeaders(base: string): Record<string, string> {
     ? { 'HTTP-Referer': 'https://flow-connect-2qu.pages.dev', 'X-Title': 'FLOW CONNECT' }
     : {}
 }
+/** Cloudflare Workers AI: https://api.cloudflare.com/client/v4/accounts/<akun>/ai/v1 → alamat katalog model (…/ai/models/search). */
+function cloudflareSearch(base: string) {
+  const m = base.match(/^(https:\/\/api\.cloudflare\.com\/client\/v4\/accounts\/[A-Za-z0-9]+\/ai)\/v1$/)
+  return m ? `${m[1]}/models/search` : null
+}
+// deno-lint-ignore no-explicit-any
+const cfProps = (m: any) => Object.fromEntries((Array.isArray(m?.properties) ? m.properties : []).map((p: any) => [String(p?.property_id ?? ''), p?.value]))
+// deno-lint-ignore no-explicit-any
+function cfPrice(v: any, kind: 'input' | 'output') {
+  if (!Array.isArray(v)) return null
+  const row = v.find((x) => x && new RegExp(kind, 'i').test(String(x.unit ?? '')) && /M/.test(String(x.unit ?? '')))
+  const n = Number(row?.price)
+  return Number.isFinite(n) && n >= 0 ? n : null
+}
+const truthy = (v: unknown) => v === true || v === 'true' || v === 1 || v === '1'
 const perM = (v: unknown) => {
   const n = Number(v)
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 1e6 * 10000) / 10000 : null
@@ -103,17 +118,55 @@ Deno.serve(async (req) => {
     if (!prov) return json({ error: 'NOT_FOUND' }, 404)
     const base = apiBase(prov.base_url)
     const { data: secret } = await admin.rpc('ai_provider_secret', { p_provider: prov.id })
+    const cf = cloudflareSearch(base)
+    if (cf) {
+      // Workers AI menjawab /v1/models dengan 405 — katalognya di …/ai/models/search (format Cloudflare)
+      if (!secret) return json({ error: 'NO_API_KEY' }, 503)
+      try {
+        // deno-lint-ignore no-explicit-any
+        const rows: any[] = []
+        for (let page = 1; page <= 5; page++) {
+          const res = await fetch(`${cf}?task=${encodeURIComponent('Text Generation')}&per_page=100&page=${page}`, {
+            headers: { Authorization: `Bearer ${secret}` }, signal: AbortSignal.timeout(30_000),
+          })
+          const out = await res.json().catch(() => null)
+          if (!res.ok || !out?.success) return json({ error: 'PROVIDER_ERROR', detail: `HTTP ${res.status}: ${String(out?.errors?.[0]?.message ?? '').slice(0, 300)}` }, 502)
+          const list = Array.isArray(out.result) ? out.result : []
+          rows.push(...list)
+          if (list.length < 100) break
+        }
+        const models = rows
+          .filter((m) => m && typeof m.name === 'string' && (!m.task?.name || m.task.name === 'Text Generation'))
+          .map((m) => {
+            const pr = cfProps(m)
+            return {
+              id: m.name,
+              name: `${m.name.replace(/^@[a-z]+\//, '')}${truthy(pr.beta) ? ' (beta)' : ''}`,
+              context: Number(pr.context_window ?? pr.max_input_tokens) || null,
+              input_per_m: cfPrice(pr.price, 'input'),
+              output_per_m: cfPrice(pr.price, 'output'),
+              free: false,
+              outputs: ['text'],
+              vision: truthy(pr.vision),
+            }
+          })
+        return json({ models, base, note: 'cloudflare' })
+      } catch (e) {
+        return json({ error: 'PROVIDER_ERROR', detail: `NETWORK: ${(e as Error).message}`.slice(0, 300) }, 502)
+      }
+    }
     try {
       const res = await fetch(`${base}/models`, {
         headers: { ...(secret ? { Authorization: `Bearer ${secret}` } : {}), ...extraHeaders(base) },
         signal: AbortSignal.timeout(30_000),
       })
       const out = await res.json().catch(() => null)
-      if (!res.ok) return json({ error: 'PROVIDER_ERROR', detail: `HTTP ${res.status}: ${String(out?.error?.message ?? out?.message ?? '').slice(0, 300)}` }, 502)
+      if (!res.ok) return json({ error: 'PROVIDER_ERROR', detail: `HTTP ${res.status}: ${String(out?.error?.message ?? out?.message ?? out?.errors?.[0]?.message ?? '').slice(0, 300)}` }, 502)
       const list = Array.isArray(out?.data) ? out.data : Array.isArray(out) ? out : []
       // deno-lint-ignore no-explicit-any
       const models = list.filter((m: any) => m && typeof m.id === 'string').slice(0, 2000).map((m: any) => {
-        const outMods: string[] = Array.isArray(m.architecture?.output_modalities) ? m.architecture.output_modalities : []
+        const outMods: string[] = Array.isArray(m.architecture?.output_modalities) ? m.architecture.output_modalities : Array.isArray(m.output_modalities) ? m.output_modalities : []
+        const inMods: string[] = Array.isArray(m.architecture?.input_modalities) ? m.architecture.input_modalities : Array.isArray(m.input_modalities) ? m.input_modalities : []
         return {
           id: m.id,
           name: typeof m.name === 'string' ? m.name : m.id,
@@ -122,6 +175,7 @@ Deno.serve(async (req) => {
           output_per_m: perM(m.pricing?.completion),
           free: /:free$/.test(m.id) || (m.pricing?.prompt === '0' && m.pricing?.completion === '0'),
           outputs: outMods,
+          vision: inMods.includes('image'),
         }
       })
       return json({ models, base })
@@ -208,7 +262,7 @@ Deno.serve(async (req) => {
       if (!ok) errText = 'EMPTY_REPLY'
     } else {
       status = res.status === 401 || res.status === 403 ? 502 : res.status === 429 ? 429 : 502
-      errText = `HTTP ${res.status}: ${String(out?.error?.message ?? out?.message ?? '').slice(0, 300)}`
+      errText = `HTTP ${res.status}: ${String(out?.error?.message ?? out?.message ?? out?.errors?.[0]?.message ?? '').slice(0, 300)}`
     }
   } catch (e) {
     errText = `NETWORK: ${(e as Error).message}`.slice(0, 300)

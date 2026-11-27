@@ -5,7 +5,7 @@
 
 const SUPABASE_URL = 'https://zpuubgziohvqavmihgls.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_NivmzCFYl2Rcy8qdJD_7zA_t2ZQnBTI';
-const CATALOG_TTL = 10 * 60 * 1000;
+const CATALOG_TTL = 60 * 1000; // model baru dari admin muncul paling lambat 1 menit (atau langsung lewat tombol muat ulang)
 const MAX_MESSAGES = 24;
 const MAX_CHARS = 6000;
 

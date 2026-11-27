@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import {
-  AlertTriangle, AudioLines, BarChart3, Bot, Image as ImageIcon, KeyRound, Loader2, MessageSquareText, Pencil, Plus,
-  Save, Send, Server, ShieldCheck, ShieldOff, Star, Trash2, Video,
+  AlertTriangle, AudioLines, BarChart3, Bot, CloudDownload, Image as ImageIcon, KeyRound, Loader2, MessageSquareText, Pencil, Plus,
+  Save, Search, Send, Server, ShieldCheck, ShieldOff, Star, Trash2, Video,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { AppHeader } from '../components/AppHeader'
@@ -44,6 +44,21 @@ const KINDS = [
   ['replicate', 'Replicate'],
   ['elevenlabs', 'ElevenLabs'],
 ]
+/** Base URL API: buang "/" di akhir dan endpoint yang sering ikut tertempel (…/v1/responses → …/v1). */
+const apiBase = (raw: string) =>
+  raw.trim().replace(/\/+$/, '').replace(/\/(chat\/completions|completions|responses|models|messages)$/i, '').replace(/\/+$/, '')
+type RemoteModel = { id: string; name: string; context: number | null; input_per_m: number | null; output_per_m: number | null; free: boolean; outputs: string[] }
+const priceNote = (m: RemoteModel) =>
+  m.free ? 'Gratis' : m.input_per_m != null && m.output_per_m != null ? `$${m.input_per_m} / $${m.output_per_m} per 1 jt token` : ''
+/** Pesan galat dari supabase.functions.invoke (isi JSON { error, detail } bila ada). */
+async function fnError(error: { message: string; context?: unknown }) {
+  const ctx = error.context as Response | undefined
+  if (ctx && typeof ctx.json === 'function') {
+    const b = await ctx.json().catch(() => null)
+    if (b?.error) return b.error + (b.detail ? ` — ${b.detail}` : '')
+  }
+  return error.message
+}
 const fmt = (t: string | null) => (t ? new Date(t).toLocaleString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—')
 const usd = (n: number | null | undefined) => (n == null ? '—' : `$${Number(n).toFixed(Number(n) < 1 ? 4 : 2)}`)
 const input = 'w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm focus:border-aurora-cyan/60 focus:outline-none'
@@ -114,6 +129,7 @@ function ProvidersTab() {
   const [keyVal, setKeyVal] = useState('')
   const [editModel, setEditModel] = useState<Partial<Model> & { _new?: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [pickFor, setPickFor] = useState<Provider | null>(null)
 
   const load = useCallback(async () => {
     const [p, m] = await Promise.all([
@@ -128,15 +144,17 @@ function ProvidersTab() {
 
   const saveProvider = async () => {
     if (!editProv) return
-    const row = { name: editProv.name?.trim(), kind: editProv.kind, base_url: editProv.base_url?.trim().replace(/\/+$/, ''), notes: editProv.notes?.trim() || null, enabled: editProv.enabled ?? true }
+    const row = { name: editProv.name?.trim(), kind: editProv.kind, base_url: apiBase(editProv.base_url ?? ''), notes: editProv.notes?.trim() || null, enabled: editProv.enabled ?? true }
     setBusy(true)
     const { error } = editProv._new
       ? await supabase.from('ai_providers').insert({ id: editProv.id?.trim().toLowerCase(), ...row })
       : await supabase.from('ai_providers').update(row).eq('id', editProv.id!)
     setBusy(false)
     if (error) return toast(errMsg(error), 'error')
+    const isNew = editProv._new
     setEditProv(null)
-    load()
+    await load()
+    if (isNew) toast('Provider disimpan. Langkah berikutnya: atur Kunci API, lalu klik “Ambil model” agar modelnya muncul di aplikasi.', 'success')
   }
   const toggleProvider = async (p: Provider) => {
     const { error } = await supabase.from('ai_providers').update({ enabled: !p.enabled }).eq('id', p.id)
@@ -196,6 +214,7 @@ function ProvidersTab() {
   }
 
   const provName = useMemo(() => Object.fromEntries((providers ?? []).map((p) => [p.id, p.name])), [providers])
+  const countFor = (id: string) => models.filter((m) => m.provider_id === id && m.enabled).length
   const shown = models.filter((m) => m.category === cat)
   if (!providers) return <div className="flex justify-center py-12"><Loader2 className="size-6 animate-spin text-white/50" /></div>
 
@@ -217,11 +236,20 @@ function ProvidersTab() {
                 <Toggle on={p.enabled} onClick={() => toggleProvider(p)} label="Aktif" />
               </div>
               {p.notes && <p className="mt-3 text-xs text-white/50">{p.notes}</p>}
+              {p.enabled && !countFor(p.id) && (
+                <p className="mt-3 flex items-start gap-2 rounded-xl border border-amber-400/20 bg-amber-400/5 p-2.5 text-xs text-amber-100/80">
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" /> Provider ini belum punya model aktif, jadi belum muncul di aplikasi. Klik “Ambil model” lalu pilih modelnya.
+                </p>
+              )}
               <div className="mt-4 flex flex-wrap items-center gap-2">
                 <span className={clsx('rounded-full px-2.5 py-1 text-[11px] font-semibold', p.key_hint ? 'bg-emerald-400/15 text-emerald-300' : 'bg-amber-400/15 text-amber-200')}>
                   {p.key_hint ? `Kunci API ${p.key_hint}` : 'Kunci API belum diatur'}
                 </span>
+                <span data-models={countFor(p.id)} className={clsx('rounded-full px-2.5 py-1 text-[11px] font-semibold', countFor(p.id) ? 'bg-white/10 text-white/70' : 'bg-amber-400/15 text-amber-200')}>
+                  {countFor(p.id) ? `${countFor(p.id)} model aktif` : 'Belum ada model'}
+                </span>
                 <div className="flex-1" />
+                <button className={buttonClass('glass', 'sm')} onClick={() => setPickFor(p)} disabled={p.kind !== 'openai_compat'} title="Ambil daftar model dari provider"><CloudDownload className="size-3.5" /> Ambil model</button>
                 <button className={buttonClass('glass', 'sm')} onClick={() => { setKeyVal(''); setKeyFor(p) }}><KeyRound className="size-3.5" /> Kunci API</button>
                 <button className={buttonClass('ghost', 'sm')} onClick={() => setEditProv({ ...p })}><Pencil className="size-3.5" /> Ubah</button>
                 <button className={buttonClass('danger', 'sm')} onClick={() => deleteProvider(p)} aria-label="Hapus provider"><Trash2 className="size-3.5" /></button>
@@ -289,7 +317,10 @@ function ProvidersTab() {
                 {KINDS.map(([v, l]) => <option key={v} value={v} className="bg-ink-900">{l}</option>)}
               </select>
             </Field>
-            <Field label="Base URL"><input className={input} value={editProv.base_url ?? ''} onChange={(e) => setEditProv({ ...editProv, base_url: e.target.value })} placeholder="https://…/v1" /></Field>
+            <Field label="Base URL"><input className={input} value={editProv.base_url ?? ''} onChange={(e) => setEditProv({ ...editProv, base_url: e.target.value })} placeholder="https://…/v1 — mis. https://openrouter.ai/api/v1" /></Field>
+            {editProv.base_url && apiBase(editProv.base_url) !== editProv.base_url.trim().replace(/\/+$/, '') && (
+              <p className="text-xs text-amber-200/80">Akan disimpan sebagai <span className="font-mono">{apiBase(editProv.base_url)}</span> (cukup alamat dasar API, tanpa /chat/completions atau /responses).</p>
+            )}
             <Field label="Catatan"><textarea className={input} rows={2} value={editProv.notes ?? ''} onChange={(e) => setEditProv({ ...editProv, notes: e.target.value })} /></Field>
             <p className="text-xs text-white/45">Chat prompt saat ini mendukung jenis <b>OpenAI-compatible</b> (endpoint <code>/chat/completions</code>).</p>
             <div className="mt-2 flex justify-end gap-2">
@@ -312,6 +343,8 @@ function ProvidersTab() {
           </div>
         </div>
       </Modal>
+
+      {pickFor && <ModelPicker key={pickFor.id} provider={pickFor} existing={models} onClose={() => setPickFor(null)} onAdded={() => { setPickFor(null); load() }} />}
 
       <Modal open={!!editModel} onClose={() => setEditModel(null)} title={editModel?._new ? 'Tambah model' : 'Ubah model'}>
         {editModel && (
@@ -348,6 +381,106 @@ function ProvidersTab() {
         )}
       </Modal>
     </div>
+  )
+}
+
+/* ───────────── Ambil model dari provider (GET /models lewat Edge Function) ───────────── */
+function ModelPicker({ provider, existing, onClose, onAdded }: { provider: Provider; existing: Model[]; onClose: () => void; onAdded: () => void }) {
+  const toast = useToast()
+  const [list, setList] = useState<RemoteModel[] | null>(null)
+  const [err, setErr] = useState('')
+  const [q, setQ] = useState('')
+  const [freeOnly, setFreeOnly] = useState(false)
+  const [cat, setCat] = useState<Category>('chat')
+  const [sel, setSel] = useState<Set<string>>(new Set())
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    supabase.functions.invoke('prompt-chat', { body: { action: 'list_models', provider: provider.id } }).then(async ({ data, error }) => {
+      if (error) return setErr(await fnError(error))
+      setList((data?.models ?? []) as RemoteModel[])
+    })
+  }, [provider])
+
+  const have = useMemo(() => new Set(existing.filter((m) => m.provider_id === provider.id).map((m) => m.model_id)), [existing, provider])
+  const shown = useMemo(() => {
+    const t = q.trim().toLowerCase()
+    return (list ?? []).filter((m) => (!freeOnly || m.free) &&
+      (cat !== 'chat' || !m.outputs.length || m.outputs.includes('text')) &&
+      (!t || m.id.toLowerCase().includes(t) || m.name.toLowerCase().includes(t)))
+  }, [list, q, freeOnly, cat])
+
+  const add = async () => {
+    if (!list) return
+    const rows = list.filter((m) => sel.has(m.id)).map((m, i) => {
+      const config: Record<string, number> = {}
+      if (m.input_per_m != null) config.input_per_m = m.input_per_m
+      if (m.output_per_m != null) config.output_per_m = m.output_per_m
+      return { provider_id: provider.id, model_id: m.id, label: m.name.slice(0, 80), category: cat, enabled: true, is_default: false, sort: 100 + i, price_note: priceNote(m) || null, config }
+    })
+    setBusy(true)
+    const { error } = await supabase.from('ai_models').insert(rows)
+    setBusy(false)
+    if (error) return toast(errMsg(error), 'error')
+    toast(`${rows.length} model ditambahkan — langsung muncul di aplikasi (menu Asisten Prompt).`, 'success')
+    onAdded()
+  }
+
+  return (
+    <Modal open onClose={onClose} title={`Ambil model — ${provider.name}`} className="max-w-3xl!">
+      {err ? (
+        <div className="flex flex-col gap-3 text-sm">
+          <p className="rounded-xl border border-red-400/20 bg-red-400/5 p-3 text-red-200/90">Gagal mengambil daftar model: {err}</p>
+          <p className="text-xs text-white/50">Periksa Base URL (contoh OpenRouter: <span className="font-mono">https://openrouter.ai/api/v1</span>) dan Kunci API provider.</p>
+        </div>
+      ) : !list ? (
+        <div className="flex justify-center py-12"><Loader2 className="size-6 animate-spin text-white/50" /></div>
+      ) : (
+        <div className="flex flex-col gap-3 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex min-w-56 flex-1 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+              <Search className="size-4 text-white/40" />
+              <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Cari di ${list.length} model…`} className="min-w-0 flex-1 bg-transparent focus:outline-none" aria-label="Cari model" />
+            </label>
+            <select className={clsx(input, 'w-auto!')} value={cat} onChange={(e) => setCat(e.target.value as Category)} aria-label="Kategori">
+              {CATS.map((c) => <option key={c.id} value={c.id} className="bg-ink-900">{c.label}</option>)}
+            </select>
+            <label className="flex items-center gap-2 text-xs text-white/70"><input type="checkbox" checked={freeOnly} onChange={(e) => setFreeOnly(e.target.checked)} /> Gratis saja</label>
+          </div>
+          <div className="max-h-[52vh] overflow-y-auto rounded-2xl border border-white/10">
+            {shown.length === 0 && <p className="px-4 py-8 text-center text-white/45">Tidak ada model yang cocok.</p>}
+            {shown.slice(0, 300).map((m) => {
+              const added = have.has(m.id)
+              return (
+                <label key={m.id} data-remote={m.id} className={clsx('flex cursor-pointer items-center gap-3 border-b border-white/5 px-4 py-2.5 last:border-0 hover:bg-white/[0.04]', added && 'cursor-default opacity-50')}>
+                  <input type="checkbox" disabled={added} checked={added || sel.has(m.id)} onChange={(e) => {
+                    const next = new Set(sel)
+                    if (e.target.checked) next.add(m.id); else next.delete(m.id)
+                    setSel(next)
+                  }} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{m.name}</span>
+                    <span className="block truncate font-mono text-xs text-white/40">{m.id}</span>
+                  </span>
+                  <span className="shrink-0 text-right text-xs text-white/55">
+                    {added ? 'Sudah ditambahkan' : priceNote(m) || '—'}
+                    {m.context ? <span className="block text-white/35">{Math.round(m.context / 1000)}K konteks</span> : null}
+                  </span>
+                </label>
+              )
+            })}
+          </div>
+          {shown.length > 300 && <p className="text-xs text-white/45">Menampilkan 300 dari {shown.length} — persempit dengan pencarian.</p>}
+          <div className="mt-1 flex items-center justify-between gap-2">
+            <span className="text-xs text-white/50">{sel.size} dipilih</span>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={onClose}>Batal</Button>
+              <Button onClick={add} disabled={busy || !sel.size}><Plus className="size-4" /> Tambah {sel.size || ''} model</Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </Modal>
   )
 }
 
@@ -391,12 +524,7 @@ function ChatTab() {
     const { data, error } = await supabase.functions.invoke('prompt-chat', { body: { messages: next, model: model || undefined } })
     setSending(false)
     if (error) {
-      let msg = error.message
-      const ctx = (error as { context?: Response }).context
-      if (ctx && typeof ctx.json === 'function') {
-        const b = await ctx.json().catch(() => null)
-        if (b?.error) msg = b.error + (b.detail ? ` — ${b.detail}` : '')
-      }
+      let msg = await fnError(error)
       if (msg.includes('NO_API_KEY')) msg = 'Kunci API provider belum diatur (tab Provider & Model → Kunci API).'
       setMsgs([...next, { role: 'assistant', content: `⚠️ ${msg}` }])
       return

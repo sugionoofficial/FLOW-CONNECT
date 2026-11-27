@@ -75,10 +75,10 @@ const MOCK = `(() => {
     'flow:listMedia': () => items,
     'flow:thumb': (id, it) => it.image,
     'files:thumb': (p) => (/Dipindahkan/.test(p) ? { missing: true } : { url: svg(/[.]mp4$/.test(p) ? ['#1d3557', '#a8dadc'] : ['#7f5539', '#ddb892']) }),
-    'assistant:catalog': () => [
+    'assistant:catalog': (force) => { window.__catForce = !!force; return [
       { id: '11111111-1111-1111-1111-111111111111', provider: 'opencode', provider_name: 'OpenCode Console', model: 'gpt-5-nano', label: 'GPT 5 Nano', category: 'chat', is_default: true, ready: true },
       { id: '22222222-2222-2222-2222-222222222222', provider: 'opencode', provider_name: 'OpenCode Console', model: 'deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash', category: 'chat', is_default: false, ready: true }
-    ],
+    ].concat(window.__catExtra || []); },
     'assistant:chat': (req) => new Promise((res) => setTimeout(() => res({ reply: 'Siap! Ini prompt untuk **' + (req.mode === 'image' ? 'gambar' : 'video') + '** kamu:\\n\\n\\u0060\\u0060\\u0060prompt\\nAerial drone shot slowly gliding over Bali rice terraces at sunrise, soft mist, cinematic\\n\\u0060\\u0060\\u0060\\n\\nMau saya buat versi 9:16?', model: { id: req.model, label: 'GPT 5 Nano' } }), 300)),
     'files:pickImages': () => ['/foto/Kucing Oren.png', '/foto/latar.jpg'],
     'files:register': (p) => p,
@@ -209,6 +209,16 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   await sleep(300);
   assert.deepStrictEqual(await ev('[...document.querySelectorAll("[data-change=chatModel] option")].map((o) => o.textContent)'), ['GPT 5 Nano', 'DeepSeek V4.1 Flash']);
   assert.strictEqual(await ev('document.querySelectorAll(".starters .chip").length'), 3);
+  // admin menambah model OpenRouter → tombol muat ulang langsung menampilkannya (beserta nama provider)
+  await ev(`window.__catExtra = [{ id: '33333333-3333-3333-3333-333333333333', provider: 'openrouter', provider_name: 'OpenRouter', model: 'qwen/qwen3-coder:free', label: 'Qwen3 Coder (free)', category: 'chat', is_default: false, ready: true }]`);
+  await ev(`document.querySelector('.page-head [data-act=chatCatalog]').click()`);
+  await sleep(300);
+  assert.strictEqual(await ev('window.__catForce'), true, 'muat ulang memaksa ambil katalog baru');
+  assert.deepStrictEqual(await ev('[...document.querySelectorAll("[data-change=chatModel] option")].map((o) => o.textContent)'),
+    ['GPT 5 Nano · OpenCode Console', 'DeepSeek V4.1 Flash · OpenCode Console', 'Qwen3 Coder (free) · OpenRouter']);
+  await ev(`window.__catExtra = []`);
+  await ev(`document.querySelector('.page-head [data-act=chatCatalog]').click()`);
+  await sleep(300);
   if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'asisten-kosong.png'), Buffer.from((await page.send('Page.captureScreenshot', { format: 'png' })).data, 'base64'));
   await ev(`(() => { const t = document.querySelector('#chat-input'); t.focus(); t.value = 'Prompt video sawah Bali saat sunrise'; t.dispatchEvent(new Event('input', { bubbles: true })); t.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); })()`);
   await sleep(100);

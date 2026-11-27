@@ -89,7 +89,13 @@ const ERR = {
   FLOW_CONTENT_POLICY: 'Ditolak filter keamanan Google Flow (prompt atau gambar dianggap melanggar kebijakan). Ubah prompt / gambar lalu coba lagi.',
   FLOW_REFUSED: 'Google Flow menolak permintaan ini.',
   INSUFFICIENT_CREDITS: 'Kredit Google Flow tidak cukup untuk setelan ini. Kurangi jumlah / pilih model lebih murah, atau isi ulang kredit.',
-  NO_RESULTS: 'Flow tidak mengembalikan hasil.'
+  NO_RESULTS: 'Flow tidak mengembalikan hasil.',
+  DAILY_LIMIT: 'Batas chat Asisten Prompt hari ini untuk lisensi Anda sudah tercapai. Coba lagi besok.',
+  NO_API_KEY: 'Asisten Prompt belum siap: admin belum memasang kunci API layanan AI.',
+  NO_MODEL: 'Belum ada model chat yang diaktifkan admin.',
+  PROVIDER_ERROR: 'Layanan AI sedang bermasalah. Coba lagi sebentar lagi.',
+  UNSUPPORTED_PROVIDER: 'Model chat yang dipilih admin belum didukung.',
+  EMPTY_MESSAGE: 'Tulis pesan terlebih dahulu.'
 };
 const DETAIL = new Set(['FLOW_ERROR', 'GENERATE_FAILED', 'FLOW_REFUSED', 'UPLOAD_FAILED', 'UPLOAD_REJECTED', 'REFERENCE_NOT_ATTACHED', 'FRAME_NOT_ATTACHED', 'GENERATE_TIMEOUT', 'GENERATE_NOT_STARTED', 'INSUFFICIENT_CREDITS', 'FLOW_CONTENT_POLICY']);
 const msg = (e) => {
@@ -111,6 +117,9 @@ const S = {
   flowOptions: {},
   login: null,     // { id, state, error } kartu login yang sedang berjalan
   gallery: { key: '', items: [], loading: false, error: null, thumbs: {}, selected: new Set(), busy: new Set() },
+  galleryCat: 'all', // Semua · Gambar · Video · Audio
+  dlCat: 'all',
+  chat: { messages: [], input: '', busy: false, error: null, model: '', mode: '', catalog: null, catalogError: null, scroll: false },
   dlThumbs: {}, // path file unduhan → undefined (belum) · false (memuat) · null (tidak ada) · {url} · {missing}
   busy: new Set(),
   activity: '',
@@ -148,8 +157,24 @@ function byDay(list, at) {
   });
   return groups;
 }
+const galleryVisible = () => S.gallery.items.filter((i) => S.galleryCat === 'all' || itemCat(i) === S.galleryCat);
 const dayHead = (g, unit, extra = '') => `<div class="day-head"><h3>${esc(g.label)}</h3><span class="muted small">${g.sub ? esc(g.sub) + ' · ' : ''}${g.items.length} ${unit}</span><span class="grow"></span>${extra}</div>`;
 const VIDEO_FILE = /\.(mp4|webm|mov|m4v)$/i;
+const AUDIO_FILE = /\.(mp3|wav|m4a|aac|ogg|oga|opus|flac|weba)$/i;
+// kategori hasil: gambar · video · audio (audio disiapkan untuk provider audio yang ditambahkan admin)
+const CATS = [['all', 'Semua', 'layout-grid'], ['image', 'Gambar', 'image'], ['video', 'Video', 'video'], ['audio', 'Audio', 'audio-lines']];
+const CAT_WORD = { all: 'hasil', image: 'gambar', video: 'video', audio: 'audio' };
+const itemCat = (it) => (it.isAudio ? 'audio' : it.isVideo ? 'video' : 'image');
+const fileCat = (name) => (AUDIO_FILE.test(name) ? 'audio' : VIDEO_FILE.test(name) ? 'video' : 'image');
+function catTabs(act, cur, list, catOf) {
+  const n = { all: list.length, image: 0, video: 0, audio: 0 };
+  list.forEach((x) => { n[catOf(x)]++; });
+  return `<div class="cat-tabs" role="tablist" aria-label="Kategori">${CATS.map(([id, label, ic]) =>
+    `<button class="cat-tab ${cur === id ? 'on' : ''}" role="tab" aria-selected="${cur === id}" data-act="${act}" data-cat="${id}">${icon(ic)}<span>${label}</span><span class="count">${n[id]}</span></button>`).join('')}</div>`;
+}
+const catEmpty = (cat, where) => cat === 'audio'
+  ? `<div class="card empty">${icon('audio-lines', 'xl')}<div>Belum ada audio${where}.</div><div class="muted small">Google Flow hanya membuat gambar &amp; video. Hasil audio akan muncul di sini setelah provider audio diaktifkan.</div></div>`
+  : `<div class="card empty">${icon(cat === 'video' ? 'video' : cat === 'image' ? 'image' : 'images', 'xl')}<div>Belum ada ${CAT_WORD[cat]}${where}.</div></div>`;
 const fileUrl = (p) => {
   const u = String(p).replace(/\\/g, '/').split('/').map((x, i) => (i === 0 && /^[A-Za-z]:$/.test(x) ? x : encodeURIComponent(x))).join('/');
   return u.startsWith('/') ? 'file://' + u : 'file:///' + u;
@@ -223,10 +248,92 @@ const NAV = [
   ['home', 'Beranda', 'house'],
   ['accounts', 'Akun Google', 'users'],
   ['studio', 'Studio', 'wand-sparkles'],
+  ['assistant', 'Asisten Prompt', 'message-square-text'],
   ['gallery', 'Galeri', 'images'],
   ['auto', 'Otomatis', 'bot'],
   ['downloads', 'Unduhan', 'download']
 ];
+
+// ---------- Asisten Prompt ----------
+const CHAT_KEY = 'fc.chat.v1';
+const chatModels = () => (S.chat.catalog || []).filter((m) => m.category === 'chat');
+const chatMode = () => S.chat.mode || (S.settings && S.settings.studio && S.settings.studio.kind === 'image' ? 'image' : 'video');
+function chatSave() {
+  try { localStorage.setItem(CHAT_KEY, JSON.stringify({ messages: S.chat.messages.slice(-40), model: S.chat.model, mode: S.chat.mode })); } catch { /* penyimpanan penuh */ }
+}
+function chatRestore() {
+  try {
+    const d = JSON.parse(localStorage.getItem(CHAT_KEY) || 'null');
+    if (d && Array.isArray(d.messages)) {
+      S.chat.messages = d.messages.filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string');
+      S.chat.model = typeof d.model === 'string' ? d.model : '';
+      S.chat.mode = d.mode === 'image' || d.mode === 'video' ? d.mode : '';
+    }
+  } catch { /* abaikan */ }
+}
+/** Blok ```prompt …``` (atau blok kode tanpa bahasa) dalam jawaban asisten. */
+function chatBlocks(text) {
+  const parts = [];
+  const re = /```([a-z]*)[ \t]*\n?([\s\S]*?)```/gi;
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) parts.push({ t: 'text', v: text.slice(last, m.index) });
+    const lang = m[1].toLowerCase();
+    parts.push({ t: lang === '' || lang === 'prompt' || lang === 'text' ? 'prompt' : 'code', v: m[2].trim() });
+    last = re.lastIndex;
+  }
+  if (last < text.length) parts.push({ t: 'text', v: text.slice(last) });
+  return parts;
+}
+const chatPrompts = (text) => chatBlocks(String(text || '')).filter((p) => p.t === 'prompt' && p.v).map((p) => p.v);
+// teks biasa: aman (esc) + **tebal** + `kode`
+const chatInline = (t) => esc(t.replace(/^\n+|\n+$/g, '')).replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>').replace(/`([^`\n]+)`/g, '<code>$1</code>');
+function chatBody(text, mi, nextIndex) {
+  let bi = 0;
+  return chatBlocks(String(text || '')).map((p) => {
+    if (p.t === 'text') return p.v.trim() ? `<div class="txt">${chatInline(p.v)}</div>` : '';
+    if (p.t === 'code') return `<pre class="code">${esc(p.v)}</pre>`;
+    if (!p.v) return '';
+    nextIndex();
+    const d = `data-m="${mi}" data-b="${bi++}"`;
+    return `<div class="pblock"><div class="pblock-h">${icon('wand-sparkles')}<b>Prompt</b><span class="grow"></span>${btn('chatCopy', 'Salin', { ic: 'copy', cls: 'sm subtle', data: d })}${btn('chatUse', 'Pakai di Studio', { ic: 'arrow-right', cls: 'sm primary', data: d })}</div><pre>${esc(p.v)}</pre></div>`;
+  }).join('');
+}
+async function chatCatalog(force) {
+  try {
+    S.chat.catalog = await call('assistant:catalog', !!force);
+    S.chat.catalogError = null;
+  } catch (e) {
+    S.chat.catalogError = e.message;
+  }
+  if (S.page === 'assistant') render();
+}
+async function chatSend(text) {
+  const c = S.chat;
+  if (c.busy) return;
+  const t = String(text ?? c.input).trim();
+  if (t) { c.messages.push({ role: 'user', content: t.slice(0, 4000) }); c.input = ''; }
+  if (!c.messages.length || c.messages[c.messages.length - 1].role !== 'user') return;
+  const models = chatModels();
+  const model = (models.find((m) => m.id === c.model) || models.find((m) => m.is_default) || models[0] || {}).id;
+  c.busy = true; c.error = null; c.scroll = true;
+  chatSave();
+  render();
+  try {
+    const r = await call('assistant:chat', { messages: c.messages, model, mode: chatMode() });
+    c.messages.push({ role: 'assistant', content: r.reply });
+  } catch (e) {
+    c.error = e.message === 'NETWORK' ? 'Tidak bisa terhubung ke server FLOW CONNECT. Periksa koneksi internet.' : msg(e);
+  } finally {
+    c.busy = false; c.scroll = true;
+    chatSave();
+    if (S.page === 'assistant') { render(); const i = $('#chat-input'); if (i) i.focus(); }
+  }
+}
+function chatPromptAt(el) {
+  const m = S.chat.messages[Number(el.dataset.m)];
+  return m ? chatPrompts(m.content)[Number(el.dataset.b)] || '' : '';
+}
 
 const PAGES = {
   home() {
@@ -405,34 +512,81 @@ const PAGES = {
       </details>`;
   },
 
+  assistant() {
+    const c = S.chat;
+    const models = chatModels();
+    const cur = models.find((m) => m.id === c.model) || models.find((m) => m.is_default) || models[0];
+    const mode = chatMode();
+    const starters = mode === 'image'
+      ? ['Buatkan prompt foto produk kopi susu gula aren untuk iklan Instagram', 'Prompt potret wanita berkebaya di sawah saat golden hour, gaya editorial', 'Ubah ide ini jadi prompt gambar yang detail: kota Jakarta tahun 2080']
+      : ['Buatkan prompt video drone sawah terasering Bali saat matahari terbit', 'Prompt video iklan 8 detik untuk sepatu lari, gerakan kamera dinamis', 'Pecah cerita ini jadi 3 adegan video: kucing oranye mencari ikan di pasar'];
+    let pi = 0;
+    return `
+      <div class="page-head"><h1>Asisten Prompt</h1><div class="tools">
+        ${models.length > 1 ? `<select class="input chat-model" data-change="chatModel" aria-label="Model AI">${models.map((m) => `<option value="${esc(m.id)}" ${cur && cur.id === m.id ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select>` : ''}
+        ${btn('chatNew', 'Percakapan baru', { ic: 'eraser', disabled: c.busy || !c.messages.length })}
+      </div></div>
+      <p class="subtitle">Ngobrol dengan AI untuk menyusun prompt Google Flow. Prompt yang sudah jadi bisa langsung dipakai di Studio.</p>
+      ${c.catalogError ? infobar('warning', 'cloud-off', 'Daftar model tidak bisa dimuat.', ' ' + esc(msg({ message: c.catalogError })), btn('chatCatalog', 'Coba lagi', { ic: 'refresh-cw', cls: 'sm' })) : ''}
+      ${c.catalog && !models.length ? infobar('warning', 'triangle-alert', 'Asisten belum tersedia.', ' Admin belum mengaktifkan model chat.') : ''}
+      ${cur && cur.ready === false ? infobar('warning', 'triangle-alert', 'Asisten belum siap.', ' Admin belum memasang kunci API untuk ' + esc(cur.provider_name || cur.provider) + '.') : ''}
+      <div class="card chat">
+        <div class="chat-top">
+          <div class="seg chat-mode" role="tablist" aria-label="Jenis prompt">
+            <button class="seg-btn ${mode === 'video' ? 'on' : ''}" data-act="chatMode" data-v="video" role="tab" aria-selected="${mode === 'video'}">${icon('clapperboard')}<span>Video</span></button>
+            <button class="seg-btn ${mode === 'image' ? 'on' : ''}" data-act="chatMode" data-v="image" role="tab" aria-selected="${mode === 'image'}">${icon('image')}<span>Gambar</span></button>
+          </div>
+          <span class="faint small grow">${cur ? `Model: ${esc(cur.label)}` : ''}</span>
+        </div>
+        <div class="chat-list" id="chat-list">
+          ${c.messages.length ? c.messages.map((m, mi) => m.role === 'user'
+            ? `<div class="msg me"><div class="bubble">${esc(m.content)}</div></div>`
+            : `<div class="msg ai"><span class="ai-av">${icon('sparkles')}</span><div class="bubble">${chatBody(m.content, mi, () => pi++)}</div></div>`).join('')
+            : `<div class="chat-empty">${icon('message-square-text', 'xl')}<div class="stage-title">Mau bikin ${mode === 'image' ? 'gambar' : 'video'} apa hari ini?</div><div class="muted small">Ceritakan idenya dengan bahasa sehari-hari — asisten akan menyusun prompt yang detail.</div>
+              <div class="starters">${starters.map((t) => `<button class="chip" data-act="chatStarter" data-text="${esc(t)}">${esc(t)}</button>`).join('')}</div></div>`}
+          ${c.busy ? `<div class="msg ai"><span class="ai-av">${icon('sparkles')}</span><div class="bubble typing"><i></i><i></i><i></i></div></div>` : ''}
+          ${c.error ? `<div class="chat-err">${infobar('error', 'circle-x', '', esc(c.error), btn('chatRetry', 'Kirim ulang', { ic: 'rotate-ccw', cls: 'sm' }))}</div>` : ''}
+        </div>
+        <div class="chat-compose">
+          <textarea id="chat-input" class="input" rows="2" maxlength="4000" placeholder="Tulis ide atau pertanyaan… (Enter kirim · Shift+Enter baris baru)" data-input="chatInput" ${c.busy ? 'disabled' : ''}>${esc(c.input)}</textarea>
+          ${btn('chatSend', '', { ic: c.busy ? 'loader-circle' : 'send', cls: 'primary icon chat-send', title: 'Kirim', disabled: c.busy || !models.length })}
+        </div>
+      </div>`;
+  },
+
   gallery() {
     const a = acc();
     const s = a ? st(a.id) : {};
     const warn = readiness(true);
     const g = S.gallery;
     const n = g.selected.size;
+    const cat = S.galleryCat;
+    const vis = galleryVisible();
+    const selectable = vis.filter((i) => i.done);
+    const allSel = selectable.length && selectable.every((i) => g.selected.has(i.mediaId));
     return `
       <div class="page-head"><h1>Galeri</h1><div class="tools">${accountPicker()}
         ${btn('galleryRefresh', 'Muat ulang', { ic: 'refresh-cw', disabled: !!warn || g.loading })}
-        ${g.items.length ? btn('gallerySelectAll', n === g.items.length ? 'Batal pilih' : 'Pilih semua', { ic: 'check' }) : ''}
+        ${selectable.length ? btn('gallerySelectAll', allSel ? 'Batal pilih' : 'Pilih semua', { ic: 'check' }) : ''}
         ${btn('galleryDownloadSel', n ? `Unduh (${n})` : 'Unduh', { ic: 'download', cls: 'primary', disabled: !n })}
       </div></div>
       ${warn || `<p class="subtitle">Project: <b>${esc(s.projectTitle || s.projectId)}</b> · ${g.items.length} hasil</p>`}
+      ${!warn ? catTabs('galleryCat', cat, g.items, itemCat) : ''}
       ${g.error ? infobar('error', 'circle-x', 'Gagal memuat galeri.', ' ' + esc(msg({ message: g.error })), btn('galleryRefresh', 'Coba lagi', { ic: 'rotate-ccw' })) : ''}
       ${g.loading && !g.items.length ? '<div class="activity"><div class="progress indet grow"><i></i></div></div>' : ''}
-      ${!warn && !g.loading && !g.items.length && !g.error ? `<div class="card empty">${icon('images', 'xl')}<div>Belum ada hasil di project ini.</div></div>` : ''}
-      ${!warn ? byDay(g.items, (i) => i.createdAt).map((grp) => {
+      ${!warn && !g.loading && !vis.length && !g.error ? catEmpty(cat, ' di project ini') : ''}
+      ${!warn ? byDay(vis, (i) => i.createdAt).map((grp) => {
         const sel = grp.items.filter((i) => i.done);
         const all = sel.length && sel.every((i) => g.selected.has(i.mediaId));
-        return `<section class="day">${dayHead(grp, 'hasil', sel.length ? btn('gallerySelectDay', all ? 'Batal pilih' : 'Pilih', { ic: 'check', cls: 'sm subtle', data: `data-day="${grp.key}"` }) : '')}
+        return `<section class="day">${dayHead(grp, CAT_WORD[cat], sel.length ? btn('gallerySelectDay', all ? 'Batal pilih' : 'Pilih', { ic: 'check', cls: 'sm subtle', data: `data-day="${grp.key}"` }) : '')}
         <div class="gallery">${grp.items.map((it) => `
         <div class="tile ${g.selected.has(it.mediaId) ? 'sel' : ''}">
           <div class="media">
-            ${icon(it.isVideo ? 'video' : 'file-image', 'xl')}${thumbSrc(it) ? `<img class="pic" src="${esc(thumbSrc(it))}" alt="" loading="lazy">` : ''}
+            ${icon(it.isAudio ? 'audio-lines' : it.isVideo ? 'video' : 'file-image', 'xl')}${thumbSrc(it) ? `<img class="pic" src="${esc(thumbSrc(it))}" alt="" loading="lazy">` : ''}
             <input type="checkbox" data-change="gallerySel" data-id="${it.mediaId}" ${g.selected.has(it.mediaId) ? 'checked' : ''} aria-label="Pilih">
-            ${it.isVideo ? '<span class="badge">Video</span>' : ''}${!it.done ? '<span class="badge">Memproses…</span>' : ''}
+            ${it.isVideo ? '<span class="badge">Video</span>' : it.isAudio ? '<span class="badge">Audio</span>' : ''}${!it.done ? '<span class="badge">Memproses…</span>' : ''}
           </div>
-          <div class="meta"><div class="grow"><div class="t" title="${esc(it.title)}">${esc(it.title || (it.isVideo ? 'Video' : 'Gambar'))}</div><div class="d">${it.createdAt ? fmtTime(it.createdAt) : ''}${S.settings.downloads.some((d) => d.mediaId === it.mediaId) ? ' · Sudah diunduh' : ''}</div></div>
+          <div class="meta"><div class="grow"><div class="t" title="${esc(it.title)}">${esc(it.title || (it.isAudio ? 'Audio' : it.isVideo ? 'Video' : 'Gambar'))}</div><div class="d">${it.createdAt ? fmtTime(it.createdAt) : ''}${S.settings.downloads.some((d) => d.mediaId === it.mediaId) ? ' · Sudah diunduh' : ''}</div></div>
             ${btn('galleryDownload', '', { ic: g.busy.has(it.mediaId) ? 'loader-circle' : 'download', cls: 'subtle sm icon' + (g.busy.has(it.mediaId) ? ' busy' : ''), title: 'Unduh', data: `data-id="${it.mediaId}"`, disabled: !it.done || g.busy.has(it.mediaId) })}
           </div>
         </div>`).join('')}</div></section>`;
@@ -481,15 +635,19 @@ const PAGES = {
   },
 
   downloads() {
-    const d = S.settings.downloads;
+    const all = S.settings.downloads;
+    const cat = S.dlCat;
+    const d = all.filter((x) => cat === 'all' || fileCat(x.name) === cat);
     const tile = (x) => {
-      const isV = VIDEO_FILE.test(x.name);
+      const kind = fileCat(x.name);
+      const isV = kind === 'video';
+      const isA = kind === 'audio';
       const th = S.dlThumbs[x.path];
-      const src = th && th.url ? th.url : (th === null && !isV ? fileUrl(x.path) : '');
+      const src = th && th.url ? th.url : (th === null && kind === 'image' ? fileUrl(x.path) : '');
       return `<div class="tile dl-tile${th && th.missing ? ' missing' : ''}">
         <button class="media" data-act="openFile" data-path="${esc(x.path)}" title="Buka ${esc(x.name)}">
-          ${icon(isV ? 'video' : 'file-image', 'xl')}${src ? `<img class="pic" src="${esc(src)}" alt="" loading="lazy">` : ''}
-          ${isV ? `<span class="badge">${icon('play')}Video</span>` : ''}${th && th.missing ? '<span class="badge warn">File tidak ditemukan</span>' : ''}
+          ${icon(isA ? 'audio-lines' : isV ? 'video' : 'file-image', 'xl')}${src ? `<img class="pic" src="${esc(src)}" alt="" loading="lazy">` : ''}
+          ${isV ? `<span class="badge">${icon('play')}Video</span>` : isA ? `<span class="badge">${icon('music')}Audio</span>` : ''}${th && th.missing ? '<span class="badge warn">File tidak ditemukan</span>' : ''}
         </button>
         <div class="meta"><div class="grow"><div class="t" title="${esc(x.path)}">${esc(x.name)}</div><div class="d">${fmtTime(x.at)} · ${esc((accById(x.accountId) || {}).label || '—')}</div></div>
           ${btn('showFile', '', { ic: 'folder-open', cls: 'sm subtle icon', title: 'Tampilkan di folder', data: `data-path="${esc(x.path)}"` })}${btn('forgetFile', '', { ic: 'x', cls: 'sm subtle icon', title: 'Hapus dari daftar', data: `data-path="${esc(x.path)}"` })}
@@ -498,9 +656,10 @@ const PAGES = {
     };
     return `
       <div class="page-head"><h1>Unduhan</h1><div class="tools">${btn('openDownloads', 'Buka folder unduhan', { ic: 'folder-open' })}</div></div>
-      <p class="subtitle"><span class="mono">${esc(S.settings.downloadDir)}</span>${d.length ? ` · ${d.length} file` : ''}</p>
+      <p class="subtitle"><span class="mono">${esc(S.settings.downloadDir)}</span>${all.length ? ` · ${all.length} file` : ''}</p>
+      ${all.length ? catTabs('dlCat', cat, all, (x) => fileCat(x.name)) : ''}
       ${d.length ? byDay(d, (x) => x.at).map((grp) => `<section class="day">${dayHead(grp, 'file')}<div class="gallery">${grp.items.map(tile).join('')}</div></section>`).join('')
-        : `<div class="card empty">${icon('download', 'xl')}<div>Belum ada unduhan.</div><div class="muted small">Unduh hasil dari Galeri, atau aktifkan unduh otomatis di Mode Otomatis.</div></div>`}`;
+        : all.length ? catEmpty(cat, ' di unduhan') : `<div class="card empty">${icon('download', 'xl')}<div>Belum ada unduhan.</div><div class="muted small">Unduh hasil dari Galeri, atau aktifkan unduh otomatis di Mode Otomatis.</div></div>`}`;
   },
 
   settings() {
@@ -710,6 +869,7 @@ function afterRender() {
     const d = S.queue.jobs.filter((j) => j.status !== 'pending' && j.status !== 'running').length;
     bar.style.width = (t ? (d / t) * 100 : 0) + '%';
   }
+  if (S.page === 'assistant' && S.chat.scroll) { const l = $('#chat-list'); if (l) l.scrollTop = l.scrollHeight; S.chat.scroll = false; }
   if (S.page === 'gallery' || S.page === 'studio') loadThumbs();
   if (['downloads', 'gallery', 'studio'].includes(S.page)) loadDlThumbs();
 }
@@ -721,6 +881,11 @@ function go(page) {
   render();
   $('#page').focus();
   if (page === 'gallery' || page === 'studio') galleryAutoLoad();
+  if (page === 'assistant') {
+    S.chat.scroll = true;
+    if (!S.chat.catalog || S.chat.catalogError) chatCatalog(false); else render();
+    const i = $('#chat-input'); if (i) i.focus();
+  }
 }
 
 // ---------- Toast & dialog ----------
@@ -1034,17 +1199,41 @@ const ACTIONS = {
   // Galeri
   galleryRefresh: () => { S.gallery.thumbs = Object.fromEntries(Object.entries(S.gallery.thumbs).filter(([, v]) => v)); return galleryLoad(true); },
   thumbRetry: (el) => { delete S.gallery.thumbs[el.dataset.id]; render(); },
+  chatSend: () => chatSend(),
+  chatRetry: () => chatSend(''),
+  chatStarter: (el) => chatSend(el.dataset.text),
+  chatNew: () => { S.chat.messages = []; S.chat.error = null; chatSave(); render(); const i = $('#chat-input'); if (i) i.focus(); },
+  chatMode: (el) => { S.chat.mode = el.dataset.v; chatSave(); render(); },
+  chatCatalog: () => chatCatalog(true),
+  chatCopy: async (el) => {
+    const t = chatPromptAt(el);
+    if (!t) return;
+    await navigator.clipboard.writeText(t);
+    toast('Prompt disalin.', 'ok');
+  },
+  chatUse: (el) => {
+    const t = chatPromptAt(el);
+    if (!t) return;
+    S.studio.prompt = t.slice(0, 8000);
+    const kind = chatMode();
+    if (S.settings && S.settings.studio && S.settings.studio.kind !== kind) setStudio({ kind });
+    go('studio');
+    toast('Prompt dipindahkan ke Studio. Periksa lalu tekan ' + (isAuto() ? 'Generate.' : 'Kirim ke Flow.'), 'ok');
+  },
+  galleryCat: (el) => { S.galleryCat = el.dataset.cat; render(); },
+  dlCat: (el) => { S.dlCat = el.dataset.cat; render(); },
   gallerySelectDay: (el) => {
     const g = S.gallery;
-    const day = g.items.filter((i) => i.done && dayKey(i.createdAt) === el.dataset.day);
+    const day = galleryVisible().filter((i) => i.done && dayKey(i.createdAt) === el.dataset.day);
     if (day.every((i) => g.selected.has(i.mediaId))) day.forEach((i) => g.selected.delete(i.mediaId));
     else day.forEach((i) => g.selected.add(i.mediaId));
     render();
   },
   gallerySelectAll: () => {
     const g = S.gallery;
-    if (g.selected.size === g.items.length) g.selected.clear();
-    else g.items.filter((i) => i.done).forEach((i) => g.selected.add(i.mediaId));
+    const vis = galleryVisible().filter((i) => i.done);
+    if (vis.length && vis.every((i) => g.selected.has(i.mediaId))) vis.forEach((i) => g.selected.delete(i.mediaId));
+    else vis.forEach((i) => g.selected.add(i.mediaId));
     render();
   },
   galleryDownload: (el) => downloadItems([el.dataset.id]),
@@ -1295,6 +1484,7 @@ const CHANGES = {
   browserWindow: async (el) => { S.settings = await call('settings:set', { browserWindow: el.value }); render(); toast('Berlaku saat akun dihubungkan / bekerja berikutnya.', 'info'); },
   autoProject: async (el) => { S.settings = await call('settings:set', { autoProject: el.checked }); render(); },
   studioModel: (el) => setStudio({ model: el.value }),
+  chatModel: (el) => { S.chat.model = el.value; chatSave(); render(); },
   studioApply: (el) => setStudio({ apply: el.checked }),
   browser: async (el) => {
     if (el.value === 'custom') S.settings = await call('files:pickBrowser');
@@ -1316,6 +1506,7 @@ document.addEventListener('change', (e) => {
 });
 document.addEventListener('input', (e) => {
   if (e.target.dataset && e.target.dataset.input === 'gateKey') { S.gateKey = e.target.value; return; }
+  if (e.target.dataset && e.target.dataset.input === 'chatInput') { S.chat.input = e.target.value; return; }
   if (e.target.dataset && e.target.dataset.input === 'prompt') {
     S.studio.prompt = e.target.value;
     const c = $('#count');
@@ -1400,6 +1591,7 @@ document.addEventListener('drop', (e) => {
 // pintasan papan ketik
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.target && e.target.id === 'license-key') { e.preventDefault(); ACTIONS.licenseActivate(); return; }
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.target && e.target.id === 'chat-input') { e.preventDefault(); chatSend(); return; }
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && S.page === 'studio') {
     e.preventDefault();
     (isAuto() ? ACTIONS.sendGenerate : ACTIONS.send)();
@@ -1407,8 +1599,8 @@ document.addEventListener('keydown', (e) => {
   }
   // Windows (bilah judul khusus, tanpa menu): pintasan ditangani di sini
   if (!S.info || !(S.info.chrome || {}).customTitlebar || !licensed() || $('#dialog').open) return;
-  const pages = ['home', 'accounts', 'studio', 'gallery', 'auto', 'downloads'];
-  if (e.ctrlKey && !e.shiftKey && /^[1-6]$/.test(e.key)) { e.preventDefault(); go(pages[Number(e.key) - 1]); }
+  const pages = NAV.map((n) => n[0]);
+  if (e.ctrlKey && !e.shiftKey && /^[1-7]$/.test(e.key)) { e.preventDefault(); go(pages[Number(e.key) - 1]); }
   else if (e.ctrlKey && e.key === ',') { e.preventDefault(); go('settings'); }
   else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'n') { e.preventDefault(); go('accounts'); ACTIONS.addAccount(); }
   else if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'o') { e.preventDefault(); go('studio'); ACTIONS.pickImages(); }
@@ -1426,7 +1618,7 @@ function helpDialog() {
       <li><div><b>Mode Aman vs Otomatis.</b><div class="muted small">Aman: jendela Flow muncul, Anda menekan Generate. Otomatis: aplikasi menekan Generate, menunggu, mengunduh — sepenuhnya tersembunyi.</div></div></li>
       <li><div><b>Galeri / Unduhan.</b><div class="muted small">Lihat semua hasil project dan simpan ke PC.</div></div></li>
     </ol>
-    <p class="small mt16">Pintasan: Ctrl+1…6 pindah halaman · Ctrl+, Pengaturan · Ctrl+N tambah akun · Ctrl+O pilih gambar · F1 panduan.</p>`,
+    <p class="small mt16">Pintasan: Ctrl+1…7 pindah halaman · Ctrl+, Pengaturan · Ctrl+N tambah akun · Ctrl+O pilih gambar · F1 panduan.</p>`,
     buttons: [{ label: 'Tutup', value: 'ok', primary: true }]
   });
 }
@@ -1440,6 +1632,7 @@ async function init() {
   S.license = S.info.license;
   S.update = S.info.update;
   S.flowOptions = S.info.flowOptions || {};
+  chatRestore();
   document.documentElement.style.setProperty('--accent', S.info.accent);
   document.body.classList.add('platform-' + S.info.platform);
   const chrome = S.info.chrome || {};

@@ -9,6 +9,7 @@ interface AuthState {
   user: User | null
   profile: Profile | null
   loading: boolean
+  isAdmin: boolean
   refreshProfile: () => Promise<void>
   signOut: () => Promise<void>
 }
@@ -19,9 +20,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
+  const [isAdmin, setIsAdmin] = useState(false)
 
   const loadProfile = useCallback(async (uid: string | undefined) => {
-    if (!uid) return setProfile(null)
+    if (!uid) { setIsAdmin(false); return setProfile(null) }
+    supabase.rpc('is_admin').then(({ data }) => setIsAdmin(data === true), () => setIsAdmin(false))
     try {
       setProfile(await getProfile(uid))
     } catch (e) {
@@ -47,6 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     user: session?.user ?? null,
     profile,
     loading,
+    isAdmin,
     refreshProfile: () => loadProfile(session?.user.id),
     signOut: async () => {
       await supabase.auth.signOut()

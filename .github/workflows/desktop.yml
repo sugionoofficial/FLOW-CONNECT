@@ -111,7 +111,7 @@ jobs:
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
 
-            **Baru di versi ini:** **Galeri** dan **Unduhan** kini dibagi per kategori — Semua, Gambar, Video, Audio. Menu baru **Asisten Prompt**: ngobrol dengan AI untuk menyusun prompt video/gambar, lalu klik "Pakai di Studio". Model AI dan batas pemakaian diatur admin di situs (menu Admin); kunci API layanan AI tidak pernah disimpan di PC. Perbaikan: thumbnail di Unduhan kini benar-benar dimuat. Sebelumnya (v1.3.6): Unduhan & Galeri per tanggal dengan thumbnail.
+            **Perbaikan di versi ini (v1.4.1):** foto (JPG/PNG) di Galeri tidak lagi masuk kategori **Video** — jenis hasil kini dibaca dari tipe file yang dilaporkan Google Flow. Foto yang Anda unggah sebagai Frame/Bahan tetap disembunyikan dari Galeri. Sebelumnya (v1.4.0): Galeri & Unduhan per kategori, menu **Asisten Prompt**, dan pengaturan model AI oleh admin di situs.
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

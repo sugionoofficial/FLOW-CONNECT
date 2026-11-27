@@ -367,12 +367,14 @@ class FlowSession extends EventEmitter {
         if (cur) { // lengkapi data daftar Flow dengan URL dari balasan generate
           if (!cur.image && k.image) cur.image = k.image;
           if (!cur.video && k.video) cur.video = k.video;
+          cur.isVideo = !!k.isVideo; // hasil generate aplikasi: jenisnya pasti
+          delete cur.upload;
           if (!cur.done && (k.image || k.video) && !cur.isVideo) cur.done = true;
         } else items.push({ ...k });
       }
       items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     }
-    return uploads ? items : items.filter((i) => !this.uploads.has(i.mediaId) && !UPLOAD_TITLE.test((i.title || '').trim()));
+    return uploads ? items : items.filter((i) => !i.upload && !this.uploads.has(i.mediaId) && !UPLOAD_TITLE.test((i.title || '').trim()));
   }
 
   /** Catat hasil generate yang dikembalikan Flow (maks. 200 per project). */

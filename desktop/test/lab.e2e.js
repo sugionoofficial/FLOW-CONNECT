@@ -1,5 +1,5 @@
 'use strict';
-// Uji Alat Kreatif (src/lab): 12 alat offline dimuat di Chromium headless dengan window.lab tiruan,
+// Uji Alat Kreatif (src/lab) — sengaja bukan *.test.js: dijalankan tersendiri (CI: langkah terpisah) karena berat (WebGL perangkat lunak + perekaman video): 12 alat offline dimuat di Chromium headless dengan window.lab tiruan,
 // tanpa error JS / pelanggaran CSP; alur utama tiap alat (muat berkas, AI, ekspor) dijalankan.
 // UI_SHOTS=folder → simpan tangkapan layar.
 const test = require('node:test');
@@ -141,7 +141,7 @@ test('Alat Kreatif: 12 alat offline tanpa error + alur utama', { skip: !CHROME &
   await page.send('Emulation.setDeviceMetricsOverride', { width: 1360, height: 860, deviceScaleFactor: 1, mobile: false });
   const base = `http://127.0.0.1:${server.address().port}/lab/lab.html`;
   const ev = async (expression) => {
-    const r = await page.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+    const r = await page.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, 90000);
     if (r.exceptionDetails) throw new Error('evaluate: ' + (r.exceptionDetails.exception ? r.exceptionDetails.exception.description : r.exceptionDetails.text));
     return r.result.value;
   };

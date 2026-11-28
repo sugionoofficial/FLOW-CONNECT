@@ -99,6 +99,7 @@ export async function mount(ctx) {
   function setPano(src, name, path) {
     pano = toEquirect(src); panoName = name; panoPath = path;
     upload(gl, tex, pano);
+    panoVer++;
     build();
   }
   function size() { const [W, H] = sizeFor(S.ratio, S.short); if (c.width !== W || c.height !== H) { c.width = W; c.height = H; } }
@@ -123,12 +124,17 @@ export async function mount(ctx) {
     const a = K[i], b = K[i + 1];
     return { yaw: lerpAngle(a.yaw, b.yaw, f), pitch: a.pitch + (b.pitch - a.pitch) * f, fov: a.fov + (b.fov - a.fov) * f, mode: f < 0.5 ? a.mode : b.mode };
   }
-  let last = performance.now();
+  let last = performance.now(), lastKey = '', panoVer = 0;
   const loop = (now) => {
     const dt = Math.min(0.1, (now - last) / 1000); last = now;
     if (!recording) {
-      if (preview) { const t = (now - preview.t0) / 1000; render(camAt(t, S.tour)); info.textContent = `Pratinjau tur ${fmtTime(t)} / ${fmtTime(S.tour)}`; if (t > S.tour) preview = null; }
-      else { if (S.auto && !drag) S.yaw = (S.yaw + dt * 6) % 360; render(); info.textContent = `yaw ${Math.round(((S.yaw % 360) + 360) % 360)}° · pitch ${Math.round(S.pitch)}° · fov ${Math.round(S.fov)}°`; }
+      if (preview) { const t = (now - preview.t0) / 1000; render(camAt(t, S.tour)); info.textContent = `Pratinjau tur ${fmtTime(t)} / ${fmtTime(S.tour)}`; if (t > S.tour) { preview = null; lastKey = ''; } }
+      else {
+        if (S.auto && !drag) S.yaw = (S.yaw + dt * 6) % 360;
+        // gambar ulang hanya bila kamera/ukuran/panorama berubah (hemat GPU)
+        const key = [S.yaw, S.pitch, S.fov, S.mode, S.ratio, S.short, panoVer].join();
+        if (key !== lastKey) { lastKey = key; render(); }
+        info.textContent = `yaw ${Math.round(((S.yaw % 360) + 360) % 360)}° · pitch ${Math.round(S.pitch)}° · fov ${Math.round(S.fov)}°`; }
     }
     requestAnimationFrame(loop);
   };
@@ -161,7 +167,7 @@ export async function mount(ctx) {
     try {
       const r = await record(c, { duration: S.tour, fps: 30, format: S.format, draw: (t) => render(camAt(t, S.tour)), onProgress: (f) => prog2.set(f) });
       await io.save(`Tur 360 ${panoName.replace(/\.[^.]+$/, '')} ${stamp()}`, r.blob, r.format);
-    } finally { recording = false; prog2.classList.add('hidden'); }
+    } finally { recording = false; lastKey = ''; prog2.classList.add('hidden'); }
   }
   async function stillsTo(where) {
     const files = [];

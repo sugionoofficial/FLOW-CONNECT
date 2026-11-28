@@ -1,5 +1,5 @@
 'use strict';
-// Alur utama tiap Alat Kreatif (dipanggil dari lab.test.js — bukan berkas uji tersendiri).
+// Alur utama tiap Alat Kreatif (dipanggil dari lab.e2e.js — bukan berkas uji tersendiri).
 
 exports.textanim = async ({ ev, open, click, waitFor, sleep, saved, noErrors, shot, assert }) => {
   await open('textanim');

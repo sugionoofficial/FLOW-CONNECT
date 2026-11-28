@@ -98,13 +98,19 @@ export async function mount(ctx) {
     wg.globalAlpha = 1;
     if (tAbs != null) { wg.fillStyle = '#e11d48'; wg.fillRect(tAbs / D * W - 1, 0, 2, H); }
   }
+  let lastKey = '';
   const loop = () => {
     if (!recording) {
       const t = playing ? ac.currentTime - playStart : 0;
       const abs = S.rangeStart + t;
       if (playing && (t > Math.min(S.rangeLen, music.buffer.duration - S.rangeStart))) stop();
-      if (clips.length) frame(t, abs);
-      if (music) drawWave(playing ? abs : S.rangeStart);
+      // saat diam: gambar ulang hanya bila pengaturan berubah (hemat CPU)
+      const key = playing ? abs : [S.rangeStart, S.rangeLen, S.every, S.ratio, S.short, S.fx.join(), S.fxAmt, S.kenburns, S.order, S.seed, clips.length, music ? music.beats.length + ':' + music.beats[0] : '-', wave.clientWidth].join();
+      if (key !== lastKey) {
+        lastKey = key;
+        if (clips.length) { if (!playing) curSeg = -1; frame(t, abs); }
+        if (music) drawWave(playing ? abs : S.rangeStart);
+      }
       info.textContent = music ? `${fmtTime(playing ? t : 0)} · ${music.bpm.toFixed(1)} BPM` : '';
     }
     requestAnimationFrame(loop);

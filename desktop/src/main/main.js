@@ -16,6 +16,7 @@ const { Assistant } = require('./assistant');
 const { Updater } = require('./updater');
 const tools = require('./tools');
 const skillstore = require('./skillstore');
+const { createToolWindows } = require('./toolwin');
 
 const WEB_URL = 'https://flow-connect-2qu.pages.dev';
 const FLOW_URL = 'https://flow.google.com/?hl=en'; // label UI Flow berbahasa Inggris → otomasi setelan lebih andal
@@ -40,6 +41,7 @@ let bulk = null; // Bulk Generate (maks. 300 hasil, lintas akun)
 let license = null;
 let assistant = null;
 let updater = null;
+let toolWins = null; // Alat Google Flow di jendela aplikasi (browser tetap tersembunyi)
 const sessions = new Map();     // accountId → FlowSession
 const statuses = new Map();     // accountId → status terakhir
 const allowedFiles = new Set(); // gambar yang dipilih pengguna (dialog / seret)
@@ -361,9 +363,15 @@ function registerIpc() {
   });
 
   // Studio → Alat
-  handle('flow:openTool', async (id, url) => {
-    const s = await connected(id);
-    return s.openTool(url);
+  // Alat Google Flow: bawaan dibuka di jendela aplikasi (browser akun tetap tersembunyi);
+  // { browser: true } = cara lama, tab baru di browser akun yang ditampilkan.
+  handle('flow:openTool', async (id, url, opts) => {
+    account(id);
+    const o = opts && typeof opts === 'object' ? opts : {};
+    if (o.browser) { const s = await connected(id); return { how: 'browser', ...(await s.openTool(url)) }; }
+    const s = session(id);
+    const name = typeof o.name === 'string' ? o.name.slice(0, 60) : '';
+    return toolWins.openTool(id, url, name, s.flowHost);
   });
   handle('tools:pick', async (kind) => {
     const video = kind === 'video';
@@ -442,6 +450,7 @@ function registerIpc() {
     account(id);
     const s = sessions.get(id);
     if (s) { await s.closeBrowser(); sessions.delete(id); }
+    if (toolWins) await toolWins.forget(id).catch(() => {}); // sesi salinan di jendela alat ikut dihapus
     statuses.delete(id);
     store.data.accounts = store.data.accounts.filter((a) => a.id !== id);
     store.data.queue = store.data.queue.filter((j) => j.accountId !== id || j.status === 'running');
@@ -838,7 +847,17 @@ function createWindow() {
     if (EXTERNAL_OK.some((ok) => url === ok || url.startsWith(ok + '/'))) shell.openExternal(url);
     return { action: 'deny' };
   });
-  win.on('closed', () => { win = null; });
+  win.on('closed', () => { win = null; if (toolWins) toolWins.closeAll(); });
+  toolWins = createToolWindows({
+    electron: require('electron'),
+    getSession: (id) => connectAccount(id),
+    account: (id) => store.data.accounts.find((a) => a.id === id),
+    downloadDir: () => store.data.downloadDir,
+    send,
+    icon: path.join(__dirname, '..', 'renderer', 'icon.png'),
+    dark: () => nativeTheme.shouldUseDarkColors,
+    onSaved: (p) => allowedFiles.add(p)
+  });
   // kembali ke aplikasi → periksa pembaruan bila sudah lama (tanpa harus klik "Periksa pembaruan")
   win.on('focus', () => { try { win.flashFrame(false); } catch { /* tidak didukung */ } if (updater) updater.nudge(); });
 }

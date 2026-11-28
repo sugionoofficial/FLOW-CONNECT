@@ -111,7 +111,7 @@ const MOCK = `(() => {
     'skills:mine': () => window.__mine || [],
     'skills:save': (sk) => { window.__mine = [Object.assign({}, sk, { id: sk.id || 'my-1' })].concat((window.__mine || []).filter((x) => x.id !== sk.id)); return window.__mine; },
     'queue:add': (o) => { window.__queued = o; return queue; },
-    'flow:openTool': (id, url) => { window.__tool = url; return true; },
+    'flow:openTool': (id, url, o) => { (window.__tools = window.__tools || []).push([url, o]); window.__tool = url; return { how: o && o.browser ? 'browser' : 'app' }; },
     'tools:pick': () => ['/foto/produk.png'],
     'tools:read': async (p) => {
       const c = new OffscreenCanvas(400, 300); const x = c.getContext('2d');
@@ -437,6 +437,19 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   await ev(`document.querySelector('[data-act=flowTool]').click()`);
   await sleep(200);
   assert.ok(await ev('/flow[.]google[.]com[/]shared[/]tool[/]/.test(window.__tool)'), 'alat Flow dibuka di Flow');
+  assert.deepStrictEqual(await ev('window.__tools[0][1]'), { name: 'Teks Animasi' }, 'bawaan: jendela aplikasi (browser tetap tersembunyi)');
+  assert.ok(await ev('[...document.querySelectorAll(".toast")].some((t) => t.textContent.includes("dibuka di jendela aplikasi"))'));
+  assert.ok(await ev('[...document.querySelectorAll(".sec-head")].some((h) => h.textContent.includes("browser Google Flow tetap tersembunyi"))'));
+  // jendela alat meminta masuk Google → tawarkan browser (cara lama) atas persetujuan pengguna
+  await ev(`void window.__ev.tool({ state: 'signin', id: 'a1', url: window.__tool, name: 'Teks Animasi' })`);
+  await sleep(200);
+  assert.ok(await ev('document.querySelector("#dialog").open && document.querySelector("#dialog").textContent.includes("Sesi Google tidak terbawa")'));
+  await ev(`document.querySelector('#dialog [data-primary]').click()`);
+  await sleep(200);
+  assert.deepStrictEqual(await ev('window.__tools[1][1]'), { browser: true });
+  await ev(`void window.__ev.tool({ state: 'saved', name: 'hasil.png', path: 'C:/x/Alat/hasil.png' })`);
+  await sleep(100);
+  assert.ok(await ev('[...document.querySelectorAll(".toast")].some((t) => t.textContent.includes("hasil.png"))'), 'hasil ekspor alat diberitahukan');
   await ev(`document.querySelector('[data-act=toolOpen][data-id=crop]').click()`);
   await sleep(150);
   await ev(`document.querySelector('[data-act=toolPick]').click()`);

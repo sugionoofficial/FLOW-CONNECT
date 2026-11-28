@@ -76,6 +76,12 @@ function checkImageFile(p) {
   if (!st.isFile() || st.size > 30 * 1024 * 1024) throw new Error('INVALID_IMAGE');
 }
 
+/** Domain cookie milik Google (google.com, *.google, googleusercontent.com, …). */
+function isGoogleCookieDomain(domain) {
+  const d = String(domain || '').toLowerCase().replace(/^\./, '');
+  return /(^|\.)(google\.com|google|googleusercontent\.com|withgoogle\.com|usercontent\.goog)$/.test(d);
+}
+
 class FlowSession extends EventEmitter {
   /**
    * @param {object} o
@@ -270,6 +276,25 @@ class FlowSession extends EventEmitter {
     const { targetId } = await b.send('Target.createTarget', { url: u.toString() });
     await b.send('Target.activateTarget', { targetId }).catch(() => {});
     return { targetId };
+  }
+
+  /**
+   * Cookie akun Google profil ini (untuk jendela alat di dalam aplikasi — browser tetap tersembunyi).
+   * Hanya domain Google; cookie terpartisi (CHIPS) dilewati.
+   */
+  async exportCookies() {
+    const b = await this._browser();
+    const r = await b.send('Storage.getCookies', {});
+    return (r.cookies || []).filter((c) => isGoogleCookieDomain(c.domain) && !c.partitionKey);
+  }
+
+  /** User-Agent & Client Hints bersih (tanpa "HeadlessChrome") dari browser profil ini. */
+  async userAgentInfo() {
+    if (!this.ua) {
+      const v = await (await this._browser()).send('Browser.getVersion');
+      this.ua = browser.cleanUserAgent(v.product, (this.getBrowser() || {}).path || '');
+    }
+    return this.ua;
   }
 
   /** Cari (atau buat) tab Google Flow lalu sambungkan CDP ke tab itu. */
@@ -1375,4 +1400,4 @@ class FlowSession extends EventEmitter {
   }
 }
 
-module.exports = { FlowSession, DEFAULT_FLOW_URL, IMAGE_EXT, sleep, rand, fail };
+module.exports = { FlowSession, DEFAULT_FLOW_URL, IMAGE_EXT, sleep, rand, fail, isGoogleCookieDomain };

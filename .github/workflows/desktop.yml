@@ -111,7 +111,7 @@ jobs:
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
 
-            **Baru di versi ini (v1.6.1):** **Bulk Generate kini memakai gambar referensi** — pilih **"Sama untuk semua"** (maks. 10 gambar untuk setiap tugas, klik @tag untuk menyisipkannya ke prompt) atau **"Satu per prompt"** (maks. 300 gambar: gambar 1 → prompt 1, gambar 2 → prompt 2, …; mode Frame memakai pasangan foto awal + akhir). Unggah, seret ke kotak, atau ambil dari tab Buat; gambar yang sama cukup diunggah sekali per project Flow. **Saldo kredit Google Flow lebih andal untuk semua akun**: akun disambungkan otomatis saat tombol baca ditekan, panel akun Flow dibuka & ditutup dengan benar, mendukung "Google Flow credits" maupun "AI credits", dan bila gagal pesan galatnya menampilkan isi panel untuk diagnosa.
+            **Baru di versi ini (v1.6.2):** **Alat Google Flow dibuka di jendela aplikasi** (Studio → Alat) — browser Google Flow tetap tersembunyi. Sesi akun aktif dipakai otomatis tanpa login ulang, hasil ekspor alat langsung tersimpan di Unduhan → Alat, dan tautan di luar Google dibuka di browser bawaan. Bila Google tetap meminta masuk di jendela itu, aplikasi menawarkan membuka alat di browser seperti sebelumnya. Juga dari v1.6.1: gambar referensi di Bulk Generate ("Sama untuk semua" / "Satu per prompt") dan pembacaan saldo kredit Flow yang lebih andal.
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

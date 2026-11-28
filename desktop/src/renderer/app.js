@@ -1,6 +1,6 @@
 // Tampilan FLOW CONNECT Desktop — JavaScript biasa, tanpa framework, tanpa akses Node (lihat preload).
 import { icon } from './icons.js';
-import { FLOW_TOOLS, LOCAL_TOOLS, BUILTIN_SKILLS, SKILL_ICONS, parseFields, compose, missingFields, aiMode } from './skills.js';
+import { FLOW_TOOLS, LOCAL_TOOLS, LAB_TOOLS, BUILTIN_SKILLS, SKILL_ICONS, parseFields, compose, missingFields, aiMode } from './skills.js';
 import { RATIO_LIST, loadBitmap, toBlob, cropRatio, gridSplit, resizeMax, removeBackground, loadVideo, videoFrame } from './imagetools.js';
 
 const fc = window.fc;
@@ -138,7 +138,7 @@ const msg = (e) => {
 const S = {
   page: 'home',
   studioTab: 'buat', // Studio → Buat · Alat · Skill
-  tool: { open: null, src: null, files: [], opts: {}, results: [], urls: [], busy: false, plan: null },
+  tool: { open: null, src: null, files: [], opts: {}, results: [], urls: [], busy: false, plan: null, flowOpen: false },
   sk: { group: 'all', q: '', sel: 'b-product', values: {}, edited: null, images: [], over: {}, busy: '', result: null, admin: null, adminError: null, mine: null, model: '' },
   info: null,
   settings: null,
@@ -767,17 +767,21 @@ function alatPage() {
     <div class="tool-grid"><button class="tool-card bulk-card" data-act="studioTab" data-tab="bulk">
       <span class="tool-ic">${icon('layers', 'lg')}</span><span class="tool-t"><b>Bulk Generate</b><span class="muted small">Sampai ${BULK_MAX} gambar per batch. Video mengikuti kredit Flow tiap akun — dipakai bergiliran dari semua akun (mis. 5 akun × 3 = 15 video Omni 1.1 Flash).</span></span>
       ${S.bulk.st.running ? `<span class="badge accent">${icon('loader-circle', 'spin')} Berjalan</span>` : icon('chevron-right', 'faint')}</button></div>
+    <div class="sec-head"><h2>${icon('wand-sparkles')} Alat Kreatif</h2><span class="badge ok">Offline + AI</span><span class="muted small grow">Pengganti alat Google Flow — dibuka di jendela sendiri, langsung siap tanpa memuat Flow. AI memakai model yang terdaftar.</span></div>
+    <div class="tool-grid">${LAB_TOOLS.map((t) => `<button class="tool-card lab" data-act="labOpen" data-id="${t.id}" title="Buka ${esc(t.name)}">
+      <span class="tool-ic">${icon(t.icon, 'lg')}</span><span class="tool-t"><b>${esc(t.name)}</b><span class="muted small">${esc(t.desc)}</span><span class="small accent-text">${icon('wand-sparkles')} ${esc(t.ai)}</span></span>
+      ${S.busy.has('labOpen' + t.id) ? icon('loader-circle', 'spin') : icon('external-link', 'faint')}</button>`).join('')}</div>
     <div class="sec-head"><h2>${icon('zap')} Alat lokal</h2><span class="badge ok">Gratis · offline</span><span class="muted small grow">Diproses di PC ini — hasil disimpan ke folder Unduhan → Alat.</span></div>
     <div class="tool-grid">${LOCAL_TOOLS.map((t) => `<button class="tool-card ${T.open === t.id ? 'on' : ''}" data-act="toolOpen" data-id="${t.id}" aria-pressed="${T.open === t.id}">
       <span class="tool-ic">${icon(t.icon, 'lg')}</span><span class="tool-t"><b>${t.name}</b><span class="muted small">${t.desc}</span></span></button>`).join('')}</div>
     ${T.open ? toolPanel() : ''}
-    <div class="sec-head"><h2>${icon('app-window')} Alat Google Flow</h2><span class="muted small grow">Dibuka di jendela aplikasi memakai akun aktif — browser Google Flow tetap tersembunyi. Hasil ekspor tersimpan di Unduhan → Alat.</span></div>
+    <details class="flow-fallback"${S.tool.flowOpen ? ' open' : ''}><summary data-act="flowFallback">${icon('app-window')} <b>Versi asli di Google Flow</b> <span class="muted small">— cadangan; bisa lama memuat. Pakai Alat Kreatif di atas bila macet.</span></summary>
     ${flowReady ? '' : readiness(false) || ''}
     <div class="tool-grid">${FLOW_TOOLS.map((t) => `<div class="tool-card flow">
       <span class="tool-ic">${icon(t.icon, 'lg')}</span>
       <span class="tool-t"><b>${esc(t.name)}</b><span class="muted small">${esc(t.desc)}</span><span class="faint small">oleh ${esc(t.author)}</span></span>
       ${btn('flowTool', 'Buka', { ic: S.busy.has('flowTool' + `data-id="${t.id}"`) ? 'loader-circle' : 'app-window', cls: 'sm', data: `data-id="${t.id}"`, disabled: !a, title: `Buka ${t.name} di jendela aplikasi` })}
-    </div>`).join('')}</div>`;
+    </div>`).join('')}</div></details>`;
 }
 
 const TOOL_KIND = { frame: 'video', convert: 'images', rename: null };
@@ -1636,6 +1640,35 @@ async function addImages(paths) {
     }
   }
   render();
+}
+
+/** Kiriman dari jendela Alat Kreatif: prompt/gambar → Studio, daftar prompt → Bulk. */
+async function labEvent(x) {
+  if (!x || !licensed()) return;
+  if (x.type === 'studio') {
+    const images = Array.isArray(x.images) ? x.images : [];
+    if (x.kind === 'video' && images.length === 2) setStudio(opts().kind === 'video' ? { sub: 'frames' } : { kind: 'video', sub: 'frames' });
+    else if (x.kind && x.kind !== opts().kind) setStudio(x.kind === 'video' ? { kind: 'video', sub: 'ingredients' } : { kind: 'image' });
+    else if (isFrames(opts()) && images.length && images.length !== 2) setStudio({ sub: 'ingredients' });
+    if (x.prompt) S.studio.prompt = String(x.prompt).slice(0, 8000);
+    if (images.length) { S.studio.images = []; S.studio.endFirst = null; }
+    S.studioTab = 'buat';
+    go('studio');
+    if (images.length) await addImages(images);
+    toast(`Dari Alat Kreatif: ${x.prompt ? 'prompt' : ''}${x.prompt && images.length ? ' + ' : ''}${images.length ? images.length + ' gambar' : ''} dipasang di Studio.`, 'ok');
+  } else if (x.type === 'bulk') {
+    const prompts = (Array.isArray(x.prompts) ? x.prompts : []).filter(Boolean);
+    if (!prompts.length) return;
+    if (x.kind && x.kind !== opts().kind) setStudio(x.kind === 'video' ? { kind: 'video', sub: 'ingredients' } : { kind: 'image' });
+    const f = bulkForm();
+    const old = f.prompts.trim();
+    f.prompts = (old ? old + '\n' : '') + prompts.join('\n');
+    bulkSave();
+    S.studioTab = 'bulk';
+    go('studio');
+    bulkPlanSoon();
+    toast(`${prompts.length} prompt dari Alat Kreatif ditambahkan ke Bulk.`, 'ok');
+  }
 }
 
 function mentionNote(m) {
@@ -2505,6 +2538,12 @@ Object.assign(ACTIONS, {
       toast(`${r.renamed} berkas diganti namanya${r.skipped ? `, ${r.skipped} dilewati` : ''}.`, r.renamed ? 'ok' : 'info');
     });
   },
+  labOpen: (el) => {
+    const t = LAB_TOOLS.find((x) => x.id === el.dataset.id);
+    if (!t) return;
+    return busy('labOpen' + t.id, async () => { await call('lab:launch', t.id); });
+  },
+  flowFallback: () => { S.tool.flowOpen = !S.tool.flowOpen; render(); },
   flowTool: (el) => {
     const a = acc();
     const t = FLOW_TOOLS.find((x) => x.id === el.dataset.id);
@@ -2657,7 +2696,7 @@ async function bulkRead(id, quiet = false) {
 /** Kabar dari jendela alat Google Flow (proses utama). */
 async function toolEvent(t) {
   if (!t) return;
-  if (t.state === 'saved') { toast(`Hasil alat disimpan: ${t.name} (Unduhan → Alat).`, 'ok'); return; }
+  if (t.state === 'saved') { if (!t.quiet) toast(`Hasil alat disimpan: ${t.name} (Unduhan → Alat).`, 'ok'); return; }
   if (t.state === 'signin' || (t.state === 'error' && t.error === 'TOOL_LOAD_FAILED')) {
     const r = await dialog({
       title: t.state === 'signin' ? 'Sesi Google tidak terbawa' : 'Alat gagal dimuat',
@@ -2978,6 +3017,7 @@ async function init() {
   });
   fc.on('accent', (c) => document.documentElement.style.setProperty('--accent', c));
   fc.on('tool', (t) => toolEvent(t));
+  fc.on('lab', (x) => labEvent(x).catch((e) => toast(msg(e), 'err')));
   fc.on('login', (l) => {
     if (!S.login || S.login.id !== l.id) return;
     S.login.state = l.state;

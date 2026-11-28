@@ -111,7 +111,7 @@ jobs:
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
 
-            **Baru di versi ini (v1.7.2):** **Perbaikan login Google** yang ditolak dengan pesan This browser or app may not be secure. Penyebabnya: browser Flow tersembunyi milik akun itu masih berjalan di latar belakang (dengan kendali aplikasi), sehingga kartu login maupun Login di browser biasa ikut terbuka di browser yang dikendalikan dan Google menolaknya. Sekarang semua proses browser lama akun itu ditutup lebih dulu; bila Google tetap menolak, kartu login dibuka ulang otomatis di jendela baru, lalu tersedia tombol Buat ulang profil dan coba lagi. Dari v1.7.1: Bulk mengulang tugas gagal 3x, menggenapi target dengan tugas pengganti, dan memakai satu runtime.
+            **Baru di versi ini (v1.8.0):** **Alat Kreatif** — 12 alat offline pengganti alat Google Flow yang sering macet saat dimuat: Teks Animasi, Ubah Ukuran Video, Editor Gambar, Studio Storyboard, Efek Shader (24 efek WebGL + efek buatan AI), Mockup, Ribbit (potong klip mengikuti ketukan musik), Converge (sketsa jadi render), Character X-ray, pixelBento, Grid Architect, dan Scout360 (panorama 360 dan video tur). Semua langsung terbuka di jendela sendiri tanpa memuat Flow; bantuan AI memakai model yang terdaftar, dan hasilnya bisa dikirim ke Studio atau Bulk. Alat Flow asli tetap tersedia sebagai cadangan. Dari v1.7.2: perbaikan login Google yang ditolak (This browser or app may not be secure).
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

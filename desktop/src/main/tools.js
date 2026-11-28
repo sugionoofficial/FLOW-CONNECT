@@ -6,14 +6,22 @@ const fs = require('fs');
 const path = require('path');
 
 const VIDEO_EXT = { '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.m4v': 'video/mp4' };
-const OUT_EXT = { png: '.png', jpg: '.jpg', webp: '.webp' };
+const AUDIO_EXT = { '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.opus': 'audio/ogg', '.flac': 'audio/flac', '.weba': 'audio/webm' };
+const OUT_EXT = { png: '.png', jpg: '.jpg', webp: '.webp', webm: '.webm', mp4: '.mp4', txt: '.txt', json: '.json' };
 const MAX_VIDEO_READ = 600 * 1024 * 1024;
+const MAX_AUDIO_READ = 150 * 1024 * 1024;
 const MAX_IMAGE_READ = 40 * 1024 * 1024;
 const MAX_SAVE = 80 * 1024 * 1024;
+const MAX_VIDEO_SAVE = 400 * 1024 * 1024; // hasil rekaman video Alat Kreatif (WebM/MP4)
+const MAX_TEXT_SAVE = 2 * 1024 * 1024;
 
 function checkVideo(p) {
   if (typeof p !== 'string' || !path.isAbsolute(p) || !VIDEO_EXT[path.extname(p).toLowerCase()]) return false;
   try { const st = fs.statSync(p); return st.isFile() && st.size <= MAX_VIDEO_READ; } catch { return false; }
+}
+function checkAudio(p) {
+  if (typeof p !== 'string' || !path.isAbsolute(p) || !AUDIO_EXT[path.extname(p).toLowerCase()]) return false;
+  try { const st = fs.statSync(p); return st.isFile() && st.size <= MAX_AUDIO_READ; } catch { return false; }
 }
 
 /** Tanda tangan berkas sesuai format keluaran (hasil canvas). */
@@ -21,6 +29,10 @@ function magicOk(buf, fmt) {
   if (fmt === 'png') return buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
   if (fmt === 'jpg') return buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
   if (fmt === 'webp') return buf.length > 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP';
+  if (fmt === 'webm') return buf.length > 4 && buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3;
+  if (fmt === 'mp4') return buf.length > 12 && buf.toString('ascii', 4, 8) === 'ftyp';
+  // teks (naskah storyboard, lembar karakter): UTF-8 tanpa byte NUL
+  if (fmt === 'txt' || fmt === 'json') return buf.length > 0 && !buf.includes(0) && Buffer.from(buf.toString('utf8'), 'utf8').equals(buf);
   return false;
 }
 
@@ -38,13 +50,17 @@ function uniquePath(dir, base, ext, taken = new Set()) {
 /**
  * Simpan hasil alat ke <folder unduhan>/Alat.
  * @param {string} dir  folder tujuan
- * @param {{name:string, data:Uint8Array, format:'png'|'jpg'|'webp'}} o
+ * @param {{name:string, data:Uint8Array|string, format:'png'|'jpg'|'webp'|'webm'|'mp4'|'txt'|'json'}} o
  */
 function saveOutput(dir, o) {
-  const fmt = o && OUT_EXT[o.format] ? o.format : null;
-  if (!fmt || !o.data || typeof o.data.length !== 'number') throw new Error('INVALID_OUTPUT');
-  const buf = Buffer.from(o.data);
-  if (!buf.length || buf.length > MAX_SAVE || !magicOk(buf, fmt)) throw new Error('INVALID_OUTPUT');
+  const fmt = o && Object.prototype.hasOwnProperty.call(OUT_EXT, o.format) ? o.format : null;
+  const text = fmt === 'txt' || fmt === 'json';
+  if (!fmt || !o.data || (typeof o.data === 'string' ? !text : typeof o.data.length !== 'number')) throw new Error('INVALID_OUTPUT');
+  const buf = typeof o.data === 'string' ? Buffer.from(o.data, 'utf8') : Buffer.from(o.data);
+  const max = fmt === 'webm' || fmt === 'mp4' ? MAX_VIDEO_SAVE : text ? MAX_TEXT_SAVE : MAX_SAVE;
+  if (!buf.length) throw new Error('INVALID_OUTPUT');
+  if (buf.length > max) throw new Error('FILE_TOO_LARGE');
+  if (!magicOk(buf, fmt)) throw new Error('INVALID_OUTPUT');
   fs.mkdirSync(dir, { recursive: true });
   const file = uniquePath(dir, cleanBase(o.name) || 'hasil', OUT_EXT[fmt]);
   fs.writeFileSync(file, buf);
@@ -106,4 +122,4 @@ function applyRename(downloads, plan) {
   return { renamed, skipped };
 }
 
-module.exports = { VIDEO_EXT, checkVideo, saveOutput, renamePlan, applyRename, magicOk, MAX_IMAGE_READ };
+module.exports = { VIDEO_EXT, AUDIO_EXT, checkVideo, checkAudio, saveOutput, renamePlan, applyRename, magicOk, MAX_IMAGE_READ };

@@ -4,7 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 
 const BROWSERS = [
   { id: 'chrome', name: 'Google Chrome' },
@@ -125,12 +125,21 @@ function launchedMode(profileDir) {
 
 /** Tunggu proses browser profil ini benar-benar selesai (kunci profil dilepas) sebelum meluncurkan ulang. */
 async function waitForExit(profileDir, timeoutMs = 15000) {
-  const end = Date.now() + timeoutMs;
+  const t0 = Date.now(), end = t0 + timeoutMs;
   const locks = ['SingletonLock', 'lockfile'].map((f) => path.join(profileDir, f));
+  let lastScan = 0;
   while (Date.now() < end) {
     const portAlive = await existingDebugPort(profileDir);
     const locked = locks.some((f) => { try { fs.lstatSync(f); return true; } catch { return false; } });
     if (!portAlive && !locked) break;
+    // kunci profil bisa tertinggal setelah browser dipaksa keluar → bila tak ada lagi proses yang memakai profil ini, selesai
+    if (!portAlive && Date.now() - t0 > 1500 && Date.now() - lastScan > 1500) {
+      lastScan = Date.now();
+      if (!(await profileProcesses(profileDir).catch(() => [{}])).length) {
+        for (const f of locks) { try { fs.unlinkSync(f); } catch { /* masih dipakai / sudah hilang */ } }
+        break;
+      }
+    }
     if (!portAlive && process.platform === 'win32') {
       // Windows: "lockfile" dikunci selama browser berjalan; bila bisa dihapus, browser sudah keluar
       try { fs.unlinkSync(locks[1]); } catch { /* masih dipakai */ }
@@ -262,4 +271,94 @@ class NetLogReader {
   }
 }
 
-module.exports = { findBrowsers, resolveBrowser, launchBrowser, launchedMode, modeArgs, waitForExit, cleanUserAgent, existingDebugPort, waitForDebugPort, getJSON, BASE_ARGS, PLAIN_ARGS, closeGracefully, waitChild, NetLogReader };
+/**
+ * Baris daftar proses → proses browser yang memakai profil `profileDir` (dicocokkan dari --user-data-dir).
+ * Murni (bisa dites). text: baris "pid<spasi/tab>baris-perintah".
+ * → [{pid, main, debug, headless}]  main = proses utama (tanpa --type=); debug = dikendalikan lewat port/pipe DevTools.
+ */
+function parseProfileProcesses(text, profileDir, platform = process.platform) {
+  const win = platform === 'win32';
+  const norm = (x) => { let v = String(x || '').replace(/\\/g, '/').replace(/\/+$/, ''); return win ? v.toLowerCase() : v; };
+  const want = 'user-data-dir=' + norm(profileDir);
+  const out = [];
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const m = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (!m) continue;
+    const cmd = m[2];
+    const c = norm(cmd);
+    let i = c.indexOf(want);
+    let hit = false;
+    while (i >= 0 && !hit) {
+      const next = c.charAt(i + want.length);
+      hit = next === '' || next === '"' || next === ' ' || next === "'";
+      if (!hit) i = c.indexOf(want, i + 1);
+    }
+    if (!hit) continue;
+    out.push({ pid: Number(m[1]), main: !/\s--type=/.test(cmd), debug: /--remote-debugging-(port|pipe)/.test(cmd), headless: /--headless/.test(cmd) });
+  }
+  return out;
+}
+
+function listProcessesText(timeout = 12000) {
+  return new Promise((resolve) => {
+    const done = (err, stdout) => resolve(err && !stdout ? null : String(stdout || '')); // null = daftar proses tak terbaca
+    if (process.platform === 'win32') {
+      const ps = "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-CimInstance Win32_Process -Filter \"CommandLine like '%user-data-dir=%'\" | ForEach-Object { [string]$_.ProcessId + ' ' + $_.CommandLine }";
+      execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps], { windowsHide: true, timeout, maxBuffer: 32 * 1024 * 1024 }, done);
+    } else {
+      execFile('ps', ['-axww', '-o', 'pid=,command='], { timeout, maxBuffer: 32 * 1024 * 1024 }, done);
+    }
+  });
+}
+
+/** Proses browser (Chrome/Edge/…) yang sedang memakai folder profil ini — termasuk yang tidak lagi dikenali aplikasi. */
+async function profileProcesses(profileDir) {
+  const text = await listProcessesText();
+  if (text === null) throw new Error('PROCESS_LIST_FAILED');
+  return parseProfileProcesses(text, profileDir).filter((p) => p.pid !== process.pid);
+}
+
+/**
+ * Tutup SEMUA proses browser yang memakai profil ini (wajar dulu, lalu dipaksa).
+ * Penting sebelum membuka browser POLOS untuk login Google: Chrome/Edge hanya boleh satu proses per profil — bila
+ * masih ada proses lama yang dijalankan dengan port debug (mis. Flow tersembunyi yang \"tertinggal\"), peluncuran baru
+ * hanya menyerahkan URL ke proses lama itu, sehingga halaman login terbuka di browser yang dikendalikan dan Google
+ * menolak: "This browser or app may not be secure".
+ * @returns {Promise<{killed:number, debug:boolean}>}
+ */
+async function killProfile(profileDir, { graceMs = 6000 } = {}) {
+  let procs = await profileProcesses(profileDir);
+  if (!procs.length) return { killed: 0, debug: false };
+  const debug = procs.some((p) => p.debug || p.headless);
+  const kill = (pid, force) => {
+    try {
+      if (process.platform === 'win32') spawn('taskkill', ['/PID', String(pid), '/T', ...(force ? ['/F'] : [])], { windowsHide: true, stdio: 'ignore' }).on('error', () => {});
+      else process.kill(pid, force ? 'SIGKILL' : 'SIGTERM');
+    } catch { /* sudah keluar */ }
+  };
+  const waitGone = async (ms) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      await new Promise((r) => setTimeout(r, 400));
+      procs = await profileProcesses(profileDir);
+      if (!procs.length) return true;
+    }
+    return false;
+  };
+  const n = procs.length;
+  const mains = procs.filter((p) => p.main);
+  for (const p of mains.length ? mains : procs) kill(p.pid, false);
+  if (!(await waitGone(graceMs))) {
+    for (const p of procs) kill(p.pid, true);
+    await waitGone(5000);
+  }
+  await waitForExit(profileDir, 8000);
+  return { killed: n, debug };
+}
+
+/** URL halaman penolakan login Google ("This browser or app may not be secure"). */
+function isLoginRejectedUrl(u) {
+  return /^https:\/\/accounts\.google\.com\/(v\d\/)?signin\/rejected\b/.test(String(u || ''));
+}
+
+module.exports = { findBrowsers, resolveBrowser, launchBrowser, launchedMode, modeArgs, waitForExit, cleanUserAgent, existingDebugPort, waitForDebugPort, getJSON, BASE_ARGS, PLAIN_ARGS, closeGracefully, waitChild, NetLogReader, parseProfileProcesses, profileProcesses, killProfile, isLoginRejectedUrl };

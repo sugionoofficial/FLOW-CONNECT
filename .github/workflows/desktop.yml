@@ -111,7 +111,7 @@ jobs:
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
 
-            **Baru di versi ini (v1.7.1):** **Bulk Generate lebih andal** — tugas yang gagal diulang otomatis hingga 3×; bila tetap gagal, tugas dibiarkan berstatus gagal dan dibuat **tugas pengganti baru** agar jumlah hasil tetap genap sesuai permintaan (mis. minta 20, 12 berhasil → 8 dibuat ulang; hasil sebagian juga digenapi). Akun tidak lagi dilewati setelah 3× gagal beruntun (cukup jeda lebih lama), dan pesan galat lama yang masih tampil di Flow tidak lagi menggagalkan tugas berikutnya. Runtime kini **satu proses** untuk seluruh batch (termasuk ulangan, pengganti, dan Lanjutkan sisa), dengan ringkasan total durasi dan rata-rata per gambar/video. Dari v1.7.0: AI pembaca halaman untuk login & project baru.
+            **Baru di versi ini (v1.7.2):** **Perbaikan login Google** yang ditolak dengan pesan This browser or app may not be secure. Penyebabnya: browser Flow tersembunyi milik akun itu masih berjalan di latar belakang (dengan kendali aplikasi), sehingga kartu login maupun Login di browser biasa ikut terbuka di browser yang dikendalikan dan Google menolaknya. Sekarang semua proses browser lama akun itu ditutup lebih dulu; bila Google tetap menolak, kartu login dibuka ulang otomatis di jendela baru, lalu tersedia tombol Buat ulang profil dan coba lagi. Dari v1.7.1: Bulk mengulang tugas gagal 3x, menggenapi target dengan tugas pengganti, dan memakai satu runtime.
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

@@ -126,9 +126,25 @@ class FlowSession extends EventEmitter {
   get connected() { return !!this.port; }
 
   /** Buka browser biasa TANPA kendali (cadangan login manual — jendela browser lengkap). */
-  openForLogin() {
+  async openForLogin() {
     const exe = this.getBrowser().path;
+    await this.freeProfile();
     browser.launchBrowser({ exe, profileDir: this.profileDir, url: this.loginUrl, plain: true, extraArgs: this.extraArgs });
+  }
+
+  /**
+   * Pastikan TIDAK ada proses browser yang masih memakai profil ini (yang dikenal aplikasi maupun yang "tertinggal").
+   * Wajib sebelum browser polos untuk login: bila masih ada proses lama berport debug, Chrome menyerahkan halaman login
+   * ke proses itu dan Google menolak ("This browser or app may not be secure").
+   * @returns {Promise<{killed:number, debug:boolean}>}
+   */
+  async freeProfile() {
+    const running = this.port || await browser.existingDebugPort(this.profileDir);
+    if (running) { this.port = running; await this.closeBrowser(); }
+    if (this.cardChild) await browser.closeGracefully(this.cardChild, null, 5000);
+    await browser.waitForExit(this.profileDir, running ? 15000 : 3000);
+    const r = await browser.killProfile(this.profileDir).catch(() => ({ killed: 0, debug: false }));
+    return { killed: r.killed + (running ? 1 : 0), debug: r.debug || !!running };
   }
 
   /**
@@ -136,13 +152,31 @@ class FlowSession extends EventEmitter {
    * Browser dijalankan POLOS: tanpa port debug/CDP (bila ada, Chrome menyalakan navigator.webdriver dan Google
    * menolak: "This browser or app may not be secure"). Aplikasi hanya membaca log jaringan Chrome untuk tahu kapan
    * Google mengalihkan ke Flow, lalu menutup kartu dengan wajar (cookie login tersimpan) dan menghapus log itu.
+   * Sebelum kartu dibuka, SEMUA proses lama profil ini ditutup (lihat freeProfile). Bila Google tetap menampilkan
+   * halaman penolakan, kartu dibuka ulang sekali di proses yang benar-benar baru; masih ditolak → LOGIN_REJECTED.
    * @returns {Promise<{ok:boolean, closed?:boolean}>}
    */
   async loginCard({ card, timeoutMs = 10 * 60000, shouldStop } = {}) {
-    const running = this.port || await browser.existingDebugPort(this.profileDir);
-    if (running) { this.port = running; await this.closeBrowser(); }
-    if (this.cardChild) await browser.closeGracefully(this.cardChild, null, 5000);
-    await browser.waitForExit(this.profileDir);
+    let freed = await this.freeProfile();
+    const end = Date.now() + timeoutMs;
+    try {
+      for (let attempt = 0; ; attempt++) {
+        const r = await this._loginCardOnce({ card, end, shouldStop });
+        if (!r.rejected) return r;
+        if (attempt >= 1) {
+          throw fail('LOGIN_REJECTED', freed.debug ? 'browser lama akun ini sudah ditutup, tetapi Google tetap menolak' : 'Google menolak browser ini untuk akun ini');
+        }
+        this._setLogin('retry');
+        const again = await this.freeProfile();
+        freed = { killed: freed.killed + again.killed, debug: freed.debug || again.debug };
+        await sleep(1500);
+      }
+    } finally {
+      if (this.loginState !== 'done') this._setLogin(null);
+    }
+  }
+
+  async _loginCardOnce({ card, end, shouldStop }) {
     const netLog = path.join(this.profileDir, 'fc-login-netlog.json');
     try { fs.rmSync(netLog, { force: true }); } catch { /* tidak ada */ }
     this._setLogin('card');
@@ -151,22 +185,36 @@ class FlowSession extends EventEmitter {
     let spawnError = null;
     child.once('error', (e) => { spawnError = e; });
     const log = new browser.NetLogReader(netLog);
-    const reachedFlow = () => log.read().some((u) => this._isFlowUrl(u) && !u.startsWith(this.loginUrl));
-    const end = Date.now() + timeoutMs;
+    let flow = false, rejected = false;
+    const scan = () => {
+      for (const u of log.read()) {
+        if (this._isFlowUrl(u) && !u.startsWith(this.loginUrl)) flow = true;
+        else if (browser.isLoginRejectedUrl(u)) rejected = true;
+      }
+    };
     try {
       while (Date.now() < end) {
         if (spawnError) throw new Error('BROWSER_LAUNCH_FAILED');
         if (shouldStop && shouldStop()) { await browser.closeGracefully(child, this.profileDir); return { ok: false, closed: true }; }
-        if (reachedFlow()) {
+        scan();
+        if (flow) {
           this._setLogin('done');
           await sleep(2500); // biarkan Flow selesai memuat & menyimpan sesinya
           await browser.closeGracefully(child, this.profileDir);
           return { ok: true };
         }
+        if (rejected) {
+          // Google: "This browser or app may not be secure" → tutup kartu ini, coba lagi di proses baru
+          await sleep(1200);
+          await browser.closeGracefully(child, this.profileDir, 5000);
+          return { ok: false, rejected: true };
+        }
         if (await browser.waitChild(child, 0)) {
           // kartu ditutup pengguna — mungkin setelah login selesai
           await browser.waitForExit(this.profileDir);
-          if (reachedFlow()) { this._setLogin('done'); return { ok: true }; }
+          scan();
+          if (flow) { this._setLogin('done'); return { ok: true }; }
+          if (rejected) return { ok: false, rejected: true };
           return { ok: false, closed: true };
         }
         await sleep(500);
@@ -177,7 +225,6 @@ class FlowSession extends EventEmitter {
       if (this.cardChild === child) this.cardChild = null;
       await browser.waitForExit(this.profileDir);
       try { fs.rmSync(netLog, { force: true }); } catch { /* dihapus nanti */ }
-      if (this.loginState !== 'done') this._setLogin(null);
     }
   }
 
@@ -199,6 +246,9 @@ class FlowSession extends EventEmitter {
     let port = await browser.existingDebugPort(this.profileDir);
     if (port) this.mode = browser.launchedMode(this.profileDir);
     else {
+      // proses berport debug yang "tertinggal" (file port hilang) → tutup dulu, jika tidak peluncuran baru diserahkan ke sana
+      const orphans = await browser.profileProcesses(this.profileDir).catch(() => []);
+      if (orphans.some((p) => p.debug)) await browser.killProfile(this.profileDir).catch(() => {});
       this.mode = mode || this.getMode();
       const hidden = this.mode === 'hidden';
       browser.launchBrowser({ exe: this.getBrowser().path, profileDir: this.profileDir, url: hidden ? 'about:blank' : this.flowUrl, debug: true, mode: this.mode, extraArgs: this.extraArgs });

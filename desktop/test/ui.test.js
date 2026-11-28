@@ -91,10 +91,17 @@ const MOCK = `(() => {
     'accounts:login': (id) => new Promise((res) => {
       const ev = window.__ev.login;
       ev({ id, state: 'card' });
+      if (window.__loginReject) { // Google: "This browser or app may not be secure" → dibuka ulang sekali → tetap ditolak
+        window.__loginReject = 0;
+        setTimeout(() => ev({ id, state: 'retry' }), 100);
+        setTimeout(() => ev({ id, state: 'card' }), 200);
+        return setTimeout(() => res({ __err: 'LOGIN_REJECTED' }), 500);
+      }
       setTimeout(() => ev({ id, state: 'connecting' }), 150);
       setTimeout(() => ev({ id, state: 'project' }), 300);
       setTimeout(() => { Object.assign(statuses[id], { connected: true, signedIn: true, projectId: 'p3', projectTitle: 'Untitled' }); res({ ok: true, status: statuses[id] }); }, 450);
     }),
+    'accounts:resetProfile': () => settings,
     'accounts:resetHeadless': (id) => { const a = accounts.find((x) => x.id === id); delete a.headlessFailedAt; return settings; },
     'flow:listMedia': () => items,
     'flow:thumb': (id, it) => it.image,
@@ -125,7 +132,7 @@ const MOCK = `(() => {
   window.__calls = [];
   window.__settings = settings;
   window.fc = {
-    call: async (ch, ...a) => { window.__calls.push(ch); const d = R[ch] ? R[ch](...a) : null; return d && d.__err ? { ok: false, error: d.__err } : { ok: true, data: d }; },
+    call: async (ch, ...a) => { window.__calls.push(ch); const d = R[ch] ? await R[ch](...a) : null; return d && d.__err ? { ok: false, error: d.__err } : { ok: true, data: d }; },
     on: (ev, fn) => { (window.__ev = window.__ev || {})[ev] = fn; return () => {}; },
     pathForFile: () => ''
   };
@@ -378,6 +385,20 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   await sleep(1500);
   assert.ok(await ev('!document.querySelector("#dialog").open'), 'dialog login tertutup');
   assert.strictEqual(await ev('document.querySelector("#page h1").textContent'), 'Studio');
+  // Google menolak login ("This browser or app may not be secure") → dibuka ulang otomatis → dialog jalan keluar
+  await ev(`document.querySelector('[data-page="accounts"]').click()`);
+  await sleep(200);
+  await ev('window.__loginReject = 1');
+  await ev(`document.querySelector('[data-act=login][data-id=a2]').click()`);
+  await sleep(300);
+  assert.ok(await ev('!!document.querySelector(".login-sheet .infobar.warning") && document.querySelector(".login-sheet").textContent.includes("dibuka ulang")'), 'pemberitahuan coba ulang di kartu login');
+  await sleep(700);
+  assert.ok(await ev('document.querySelector("#dialog").open && document.querySelector("#dialog").textContent.includes("This browser or app may not be secure") && !!document.querySelector("#dialog button[value=reset]") && !!document.querySelector("#dialog button[value=window]")'), 'dialog penolakan Google');
+  await ev(`document.querySelector('#dialog button[value=reset]').click()`);
+  await sleep(1800);
+  assert.ok(await ev('window.__calls.includes("accounts:resetProfile")'), 'profil akun dibuat ulang');
+  assert.ok(await ev('window.__calls.filter((c) => c === "accounts:login").length >= 3'), 'kartu login dibuka lagi setelah reset');
+  assert.strictEqual(await ev('document.querySelector("#page h1").textContent'), 'Studio', 'login berhasil setelah profil dibuat ulang');
   // pengaturan: reset headless per akun
   await ev(`document.querySelector('[data-page="settings"]').click()`);
   await sleep(200);

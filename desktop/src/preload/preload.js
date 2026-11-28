@@ -6,7 +6,7 @@ const invoke = (channel) => (...args) => ipcRenderer.invoke(channel, ...args);
 const CHANNELS = [
   'app:info', 'settings:set', 'auto:ack',
   'license:activate', 'license:verify', 'license:deactivate', 'update:check', 'update:download', 'update:install',
-  'accounts:add', 'accounts:rename', 'accounts:remove', 'accounts:login', 'accounts:loginCancel', 'accounts:loginWindow', 'accounts:resetHeadless',
+  'accounts:add', 'accounts:rename', 'accounts:remove', 'accounts:login', 'accounts:loginCancel', 'accounts:loginWindow', 'accounts:resetHeadless', 'accounts:resetProfile',
   'accounts:connect', 'accounts:disconnect',
   'flow:status', 'flow:show', 'flow:navigate', 'flow:listMedia', 'flow:thumb', 'flow:download', 'flow:send', 'flow:afterSend', 'flow:run',
   'flow:newProject', 'flow:scan',

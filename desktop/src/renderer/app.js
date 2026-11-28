@@ -72,7 +72,8 @@ const ERR = {
   LOGIN_TIMEOUT: 'Kartu login ditutup karena terlalu lama. Coba lagi.',
   LOGIN_IN_PROGRESS: 'Kartu login untuk akun ini sudah terbuka.',
   QUEUE_RUNNING: 'Hentikan antrean otomatis terlebih dahulu.',
-  NEW_PROJECT_NOT_FOUND: 'Tombol "New project" di Google Flow tidak ditemukan. Klik "Lihat Flow" lalu buat project secara manual.',
+  NEW_PROJECT_NOT_FOUND: 'Tombol "New project" di Google Flow tidak ditemukan. Coba "Project baru" sekali lagi, atau klik "Lihat Flow" lalu buat project secara manual.',
+  FLOW_UNAVAILABLE: 'Google Flow belum bisa dipakai akun Google ini (negara, usia, atau pembatasan admin akun). Coba akun lain atau buka Flow akun ini untuk melihat penjelasannya.',
   GENERATE_NOT_STARTED: 'Flow tidak memulai pembuatan setelah Generate ditekan. Periksa kuota/kredit, lalu coba lagi.',
   FLOW_ERROR: 'Google Flow menolak permintaan ini.',
   UPLOAD_BUTTON_NOT_FOUND: 'Tombol unggah gambar di Google Flow tidak ditemukan. Buka sebuah project di Flow lalu coba lagi.',
@@ -123,7 +124,7 @@ const ERR = {
   TOO_MANY_SKILLS: 'Skill saya sudah penuh (maks. 200).',
   NO_SKILLS: 'Belum ada skill untuk diekspor.'
 };
-const DETAIL = new Set(['FRAMES_REQUIRED', 'FLOW_ERROR', 'GENERATE_FAILED', 'FLOW_REFUSED', 'UPLOAD_FAILED', 'UPLOAD_REJECTED', 'REFERENCE_NOT_ATTACHED', 'FRAME_NOT_ATTACHED', 'GENERATE_TIMEOUT', 'GENERATE_NOT_STARTED', 'INSUFFICIENT_CREDITS', 'FLOW_CONTENT_POLICY', 'CREDITS_NOT_FOUND']);
+const DETAIL = new Set(['FRAMES_REQUIRED', 'FLOW_ERROR', 'GENERATE_FAILED', 'FLOW_REFUSED', 'UPLOAD_FAILED', 'UPLOAD_REJECTED', 'REFERENCE_NOT_ATTACHED', 'FRAME_NOT_ATTACHED', 'GENERATE_TIMEOUT', 'GENERATE_NOT_STARTED', 'INSUFFICIENT_CREDITS', 'FLOW_CONTENT_POLICY', 'CREDITS_NOT_FOUND', 'NEW_PROJECT_NOT_FOUND', 'FLOW_UNAVAILABLE']);
 const msg = (e) => {
   const k = (e && e.message) || String(e);
   if (ERR[k] && DETAIL.has(k) && e.detail) return `${ERR[k]} (${e.detail})`;
@@ -1706,7 +1707,8 @@ async function loginFlow(id) {
     if (r.ok) {
       S.login.state = 'done';
       renderLoginSheet();
-      toast(r.status.projectId ? 'Masuk berhasil — project baru siap di Studio.' : 'Masuk berhasil.', 'ok');
+      if (r.projectError) toast(`Masuk berhasil, tetapi project baru belum dibuat: ${msg({ message: r.projectError.code, detail: r.projectError.detail })}`, 'err');
+      else toast(r.status.projectId ? 'Masuk berhasil — project baru siap di Studio.' : 'Masuk berhasil.', 'ok');
       await new Promise((res) => setTimeout(res, 900));
       if (d.open) d.close();
       go('studio');

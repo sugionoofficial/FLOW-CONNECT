@@ -161,7 +161,7 @@ test('Alat Kreatif: 12 alat offline tanpa error + alur utama', { skip: !CHROME &
   const saved = () => ev('window.__saved');
   const noErrors = (what) => assert.deepStrictEqual(errors.splice(0), [], 'tanpa error: ' + what);
 
-  const IDS = ['textanim', 'resize', 'editor', 'storyboard', 'shader', 'mockup', 'beat', 'converge', 'character', 'pixel', 'gridarch', 'scout'];
+  const IDS = ['textanim', 'resize', 'editor', 'storyboard', 'shader', 'mockup', 'beat', 'converge', 'character', 'pixel', 'gridarch', 'scout', 'upscale', 'metadata', 'join'];
   const only = process.env.LAB_ONLY ? process.env.LAB_ONLY.split(',') : null;
   for (const id of IDS.filter((x) => !only || only.includes(x))) {
     for (const scheme of ['dark', 'light']) {

@@ -42,7 +42,11 @@ export const LAB_TOOLS = [
   ['character', 'Character X-ray', 'Bedah karakter dari gambar: palet, siluet, garis — lalu kembangkan profil & latar ceritanya.', 'user-round-search', 'AI membuat lembar karakter & prompt konsisten', '32f2b8f8-a1a9-43ed-899f-c0fbff2e9599'],
   ['pixel', 'pixelBento', 'Pixel art, lo-fi & glitch untuk gambar/video, plus kolase bento grid.', 'tv', 'AI membuat palet dari suasana', '44b73cc0-ad82-49a6-b118-86c31ec49a71'],
   ['gridarch', 'Grid Architect', 'Buat prompt grid (sudut kamera, ekspresi, pose), ekstrak sel dari gambar grid, atau susun grid.', 'grid-3x3', 'AI menulis prompt grid konsisten', '52da09f1-1da1-4a40-96c6-41d36b3b2392'],
-  ['scout', 'Scout360', 'Jelajahi panorama 360°, ambil bidikan, buat video tur, atau buat 360 dari satu gambar.', 'orbit', 'AI mencari bidikan & menulis prompt video', '2102cb9f-a06e-4590-8a53-aa34bdcb0dff']
+  ['scout', 'Scout360', 'Jelajahi panorama 360°, ambil bidikan, buat video tur, atau buat 360 dari satu gambar.', 'orbit', 'AI mencari bidikan & menulis prompt video', '2102cb9f-a06e-4590-8a53-aa34bdcb0dff'],
+  // Alat lokal tambahan (tanpa padanan di Google Flow — flow kosong)
+  ['upscale', 'Upscale Gambar', 'Perbesar gambar 2x–4x dengan penajaman & denoise — hasil generate Flow jadi lebih tajam.', 'zoom-in', 'AI menulis prompt detail untuk Studio', ''],
+  ['metadata', 'Cek Metadata', 'Pindai EXIF/XMP/IPTC/C2PA & penanda AI, lalu hapus semuanya secara lossless.', 'shield-check', 'Cek visual AI opsional (model vision)', ''],
+  ['join', 'Gabung Video', 'Sambungkan banyak klip jadi satu video: urutkan, potong, samakan resolusi, fade, audio.', 'clapperboard', 'Offline — tanpa AI', '']
 ].map(([id, name, desc, icon, ai, flow]) => ({ id, name, desc, icon, ai, flow }));
 
 /** Alat lokal (gratis, offline, diproses di PC ini). */
@@ -117,9 +121,9 @@ export const BUILTIN_SKILLS = [
     template: 'Edit the photo {@1}: {Perubahan yang diinginkan}[, using {@2} as reference]. Keep everything else unchanged — same subject, pose, framing and lighting[, {Gaya hasil:Tanpa=|Lebih sinematik=with a more cinematic color grade|Lebih cerah=brighter and more vibrant|Hitam putih=in black and white}]. Photorealistic, seamless result'
   }),
   IMG({
-    id: 'b-charsheet', name: 'Lembar karakter', icon: 'id-card', desc: 'Tampak depan, samping, belakang — untuk karakter konsisten.',
-    settings: { ratio: '16:9', count: 1 }, refs: { min: 0, max: 1 },
-    template: 'Character reference sheet of {Karakter}[, based on {@1}], showing front view, side view and back view side by side, full body, neutral standing pose, consistent design across all views, {Gaya:Anime=anime style|Kartun 3D=3D cartoon style|Realistis=realistic style|Komik=comic book style}, plain light grey background, clean lines, character turnaround design sheet'
+    id: 'b-charsheet', name: 'Lembar karakter', icon: 'id-card', desc: 'Hero, turnaround, ekspresi & palet — untuk karakter konsisten di semua adegan.',
+    settings: { ratio: '3:4', count: 1 }, refs: { min: 0, max: 1 },
+    template: 'Character reference sheet of {Karakter}[, based on {@1}], {Tata letak:Panel besar + grid=one large hero portrait panel on the left (head to mid-torso) with a structured grid of smaller panels on the right|Turnaround bar=front, side and back views in one row on a shared baseline|Grid 3x3=a neat 3x3 grid of panels}, showing {Isi panel:Turnaround lengkap=front full body, three-quarter full body, side profile and back view, plus walking and sitting poses|Turnaround + ekspresi=front, side and back full-body views plus expression close-ups: neutral, happy, angry, surprised, sad and thinking|Hero + ekspresi=a large three-quarter hero pose plus expression close-ups}, full body, neutral standing pose, identical character in every panel — same face, hair, outfit, colors, proportions and accessories; only pose, angle and expression change, {Gaya:Realistis=photorealistic, high-resolution, realistic skin and fabric detail|Anime=anime style, cel shading|Kartun 3D=3D cartoon style, Pixar-like|Komik=comic book style}, {Latar:Latar terang polos=plain light neutral background|Studio abu-abu=neutral grey studio backdrop|Putih bersih=clean white background}, soft even studio lighting, small clean labels under each panel, production-ready AI video consistency sheet, no extra props, no additional characters, no watermark'
   }),
 
   // ── Video (B13–B21) ──

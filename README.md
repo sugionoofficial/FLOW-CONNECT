@@ -96,6 +96,12 @@ menjalankan uji asap pada aplikasi hasil build, lalu menerbitkan GitHub Release 
 Unduhan tetap: `releases/latest/download/FLOW-CONNECT-Desktop-Setup.exe` (dipakai tombol di Hub).
 Aplikasi belum ditandatangani (code signing), jadi Windows SmartScreen akan memberi peringatan saat instal.
 
+### Alat Kreatif & skill (v1.9.0+)
+- **Skill Character Sheet** — skill bawaan "Lembar karakter" ditingkatkan (hero + turnaround + ekspresi + palet, kunci konsistensi) dan skill admin **"Character Sheet Pro"** (migrasi `20261201000002_character_sheet_skill.sql`, muncul di Studio → Skill → "Dari admin", bisa diubah dari Admin → Skill).
+- **Upscale Gambar** (`lab/tools/upscale.js` + `upscale-core.js`) — perbesar 2x–4x (denoise + unsharp mask + kontras), ekspor PNG/JPG/WebP; opsional AI menulis prompt detail untuk buat ulang di Studio.
+- **Cek Metadata** (`lab/tools/metadata.js` + `metadata-core.js`, diport dari BLEA-AI) — pindai EXIF/XMP/IPTC/C2PA & penanda AI (Google/OpenAI/Midjourney/dsb.) pada PNG/JPG/WebP/GIF/MP4/MOV/WebM, hapus lossless, unduh hasil bersih; opsional cek visual dengan model vision.
+- **Gabung Video** (`lab/tools/join.js`) — sambungkan banyak klip: urutkan, potong per klip, samakan resolusi, fade antar klip, audio, ekspor MP4/WebM (rekam waktu-nyata via canvas).
+
 ### Lisensi & pembaruan otomatis (v1.1.0+)
 
 - **Lisensi** — pengguna membuat kunci `FC-XXXXX-…` di situs (`/app/lisensi`). Database hanya menyimpan hash SHA-256 kunci (`licenses`, `license_devices`, migrasi `20261127000001_desktop_licenses.sql`). Aplikasi memanggil RPC `activate_license` (anon) saat aktivasi, saat dibuka, dan tiap 6 jam; boleh offline hingga 7 hari. Kunci yang dicabut/kedaluwarsa langsung mengunci aplikasi. Default 3 PC per kunci, 5 kunci aktif per akun. Kunci disimpan terenkripsi (Windows DPAPI via `safeStorage`).

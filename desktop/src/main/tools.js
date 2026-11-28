@@ -7,7 +7,7 @@ const path = require('path');
 
 const VIDEO_EXT = { '.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime', '.m4v': 'video/mp4' };
 const AUDIO_EXT = { '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.opus': 'audio/ogg', '.flac': 'audio/flac', '.weba': 'audio/webm' };
-const OUT_EXT = { png: '.png', jpg: '.jpg', webp: '.webp', webm: '.webm', mp4: '.mp4', txt: '.txt', json: '.json' };
+const OUT_EXT = { png: '.png', jpg: '.jpg', webp: '.webp', gif: '.gif', webm: '.webm', mp4: '.mp4', mov: '.mov', txt: '.txt', json: '.json' };
 const MAX_VIDEO_READ = 600 * 1024 * 1024;
 const MAX_AUDIO_READ = 150 * 1024 * 1024;
 const MAX_IMAGE_READ = 40 * 1024 * 1024;
@@ -29,8 +29,9 @@ function magicOk(buf, fmt) {
   if (fmt === 'png') return buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
   if (fmt === 'jpg') return buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
   if (fmt === 'webp') return buf.length > 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP';
+  if (fmt === 'gif') return buf.length > 6 && buf.toString('ascii', 0, 4) === 'GIF8';
   if (fmt === 'webm') return buf.length > 4 && buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3;
-  if (fmt === 'mp4') return buf.length > 12 && buf.toString('ascii', 4, 8) === 'ftyp';
+  if (fmt === 'mp4' || fmt === 'mov') return buf.length > 12 && buf.toString('ascii', 4, 8) === 'ftyp';
   // teks (naskah storyboard, lembar karakter): UTF-8 tanpa byte NUL
   if (fmt === 'txt' || fmt === 'json') return buf.length > 0 && !buf.includes(0) && Buffer.from(buf.toString('utf8'), 'utf8').equals(buf);
   return false;
@@ -57,7 +58,7 @@ function saveOutput(dir, o) {
   const text = fmt === 'txt' || fmt === 'json';
   if (!fmt || !o.data || (typeof o.data === 'string' ? !text : typeof o.data.length !== 'number')) throw new Error('INVALID_OUTPUT');
   const buf = typeof o.data === 'string' ? Buffer.from(o.data, 'utf8') : Buffer.from(o.data);
-  const max = fmt === 'webm' || fmt === 'mp4' ? MAX_VIDEO_SAVE : text ? MAX_TEXT_SAVE : MAX_SAVE;
+  const max = fmt === 'webm' || fmt === 'mp4' || fmt === 'mov' ? MAX_VIDEO_SAVE : text ? MAX_TEXT_SAVE : MAX_SAVE;
   if (!buf.length) throw new Error('INVALID_OUTPUT');
   if (buf.length > max) throw new Error('FILE_TOO_LARGE');
   if (!magicOk(buf, fmt)) throw new Error('INVALID_OUTPUT');

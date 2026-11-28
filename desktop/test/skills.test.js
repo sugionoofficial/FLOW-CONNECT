@@ -76,14 +76,14 @@ test('alat: simpan hasil hanya format gambar yang valid', () => {
   assert.throws(() => tools.saveOutput(dir, { name: 'x', data: new Uint8Array(png), format: 'exe' }), /INVALID_OUTPUT/);
 });
 
-test('Alat Kreatif: 12 pengganti alat Flow, ikon & modul tersedia', async () => {
+test('Alat Kreatif: 12 pengganti alat Flow + alat lokal, ikon & modul tersedia', async () => {
   const { LAB_TOOLS, FLOW_TOOLS } = await esm('skills');
   const { ICONS } = await esm('icons');
   const { LAB_IDS } = require('../src/main/labwin');
-  assert.strictEqual(LAB_TOOLS.length, 12);
+  assert.strictEqual(LAB_TOOLS.length, 15);
   assert.deepStrictEqual(LAB_TOOLS.map((t) => t.id), LAB_IDS, 'id sama dengan jendela lab');
   const flowIds = FLOW_TOOLS.map((t) => t.id);
-  assert.deepStrictEqual(LAB_TOOLS.map((t) => t.flow).sort(), [...flowIds].sort(), 'setiap alat Flow punya pengganti');
+  assert.deepStrictEqual(LAB_TOOLS.filter((t) => t.flow).map((t) => t.flow).sort(), [...flowIds].sort(), 'setiap alat Flow punya pengganti');
   const dir = path.join(__dirname, '..', 'src', 'lab');
   for (const t of LAB_TOOLS) {
     assert.ok(ICONS[t.icon], `ikon ${t.icon} (${t.name})`);

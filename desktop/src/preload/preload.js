@@ -14,7 +14,7 @@ const CHANNELS = [
   'flow:credits', 'bulk:state', 'bulk:plan', 'bulk:start', 'bulk:stop', 'bulk:resume', 'bulk:clear',
   'files:pickImages', 'files:register', 'files:preview', 'files:pickFolder', 'files:pickBrowser', 'files:open', 'files:show',
   'files:openDownloads', 'files:forget', 'files:thumb', 'shell:external',
-  'assistant:catalog', 'assistant:chat',
+  'assistant:catalog', 'assistant:model', 'assistant:chat',
   'skills:catalog', 'skills:mine', 'skills:save', 'skills:remove', 'skills:export', 'skills:import',
   'flow:openTool', 'lab:launch', 'tools:pick', 'tools:register', 'tools:read', 'tools:save', 'tools:renamePlan', 'tools:rename'
 ];

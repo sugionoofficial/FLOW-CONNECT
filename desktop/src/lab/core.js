@@ -171,6 +171,13 @@ const ERR = {
   DAILY_LIMIT: 'Batas harian bantuan AI tercapai. Coba lagi besok — fitur offline tetap bisa dipakai.',
   NO_MODEL: 'Belum ada model AI aktif di admin. Fitur offline tetap bisa dipakai.',
   NO_API_KEY: 'Kunci API model AI belum diatur admin.',
+  PROVIDER_DAILY_LIMIT: 'Kuota harian provider AI habis. Tunggu reset kuota atau hubungi admin untuk menyiapkan provider lain. Mengganti model gratis pada provider yang sama tidak mengatasi batas ini.',
+  PROVIDER_RATE_LIMIT: 'Terlalu banyak permintaan ke provider AI. Tunggu sebentar sebelum mencoba lagi.',
+  PROVIDER_CREDITS: 'Saldo provider AI tidak cukup. Admin perlu memeriksa kredit provider.',
+  PROVIDER_AUTH: 'Kunci API provider AI ditolak atau aksesnya dibatasi. Hubungi admin untuk memeriksa konfigurasi provider.',
+  MODEL_UNAVAILABLE: 'Model ini tidak tersedia di provider. Muat ulang daftar model atau minta admin memperbaruinya.',
+  MODEL_NO_VISION: 'Model ini tidak mendukung gambar. Pilih model yang bisa membaca gambar.',
+  AI_EMPTY_REPLY: 'Model tidak mengembalikan teks. Pilih model chat, bukan model pembuat musik/gambar.',
   PROVIDER_ERROR: 'Model AI sedang bermasalah. Coba lagi sebentar lagi.',
   NETWORK: 'Tidak bisa terhubung ke server AI. Periksa internet — fitur offline tetap bisa dipakai.',
   EMPTY_MESSAGE: 'Isi teks dulu.',
@@ -314,7 +321,7 @@ export function onDropFiles(fn) {
 }
 
 // ---------- AI ----------
-export const aiState = { model: null, listeners: new Set() };
+export const aiState = { model: null, modelId: '', listeners: new Set() };
 /** Ambil JSON dari jawaban model (blok ```json, atau objek/array pertama). */
 export function parseJSON(text) {
   const s = String(text || '');
@@ -341,15 +348,16 @@ export function parseJSON(text) {
  * @returns {Promise<any>} teks jawaban, atau objek JSON bila o.json
  */
 export async function ai(prompt, o = {}) {
+  const model = o.model || aiState.modelId || undefined;
   const full = o.json ? `${prompt}\n\nJawab HANYA dengan JSON valid (tanpa penjelasan, tanpa markdown).` : prompt;
-  const r = await call('lab:ai', { prompt: full, image: o.image, history: o.history, mode: o.mode });
+  const r = await call('lab:ai', { prompt: full, model, image: o.image, history: o.history, mode: o.mode });
   if (r && r.model) { aiState.model = r.model.label || null; aiState.listeners.forEach((f) => f(aiState.model)); }
   const reply = String((r && r.reply) || '');
   if (!o.json) return reply;
   try { return parseJSON(reply); } catch (e) {
     if (o.retry === false) throw e;
     // satu kali minta ulang dengan penegasan format
-    const r2 = await call('lab:ai', { prompt: full + '\nPENTING: keluaran harus JSON murni yang bisa di-parse.', image: o.image, mode: o.mode });
+    const r2 = await call('lab:ai', { prompt: full + '\nPENTING: keluaran harus JSON murni yang bisa di-parse.', model, image: o.image, mode: o.mode });
     return parseJSON(r2 && r2.reply);
   }
 }

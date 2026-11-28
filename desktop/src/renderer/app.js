@@ -108,6 +108,13 @@ const ERR = {
   DAILY_LIMIT: 'Batas chat Asisten Prompt hari ini untuk lisensi Anda sudah tercapai. Coba lagi besok.',
   NO_API_KEY: 'Asisten Prompt belum siap: admin belum memasang kunci API layanan AI.',
   NO_MODEL: 'Belum ada model chat yang diaktifkan admin.',
+  PROVIDER_DAILY_LIMIT: 'Kuota harian provider AI habis. Tunggu reset kuota atau hubungi admin untuk menyiapkan provider lain. Mengganti model gratis pada provider yang sama tidak mengatasi batas ini.',
+  PROVIDER_RATE_LIMIT: 'Terlalu banyak permintaan ke provider AI. Tunggu sebentar sebelum mencoba lagi.',
+  PROVIDER_CREDITS: 'Saldo provider AI tidak cukup. Admin perlu memeriksa kredit provider.',
+  PROVIDER_AUTH: 'Kunci API provider AI ditolak atau aksesnya dibatasi. Hubungi admin untuk memeriksa konfigurasi provider.',
+  MODEL_UNAVAILABLE: 'Model ini tidak tersedia di provider. Muat ulang daftar model atau minta admin memperbaruinya.',
+  MODEL_NO_VISION: 'Model ini tidak mendukung gambar. Pilih model yang bisa membaca gambar.',
+  AI_EMPTY_REPLY: 'Model tidak mengembalikan teks. Pilih model chat, bukan model pembuat musik/gambar.',
   PROVIDER_ERROR: 'Layanan AI sedang bermasalah. Coba lagi sebentar lagi.',
   UNSUPPORTED_PROVIDER: 'Model chat yang dipilih admin belum didukung.',
   EMPTY_MESSAGE: 'Tulis pesan terlebih dahulu.',
@@ -337,6 +344,7 @@ async function chatCatalog(force) {
   try {
     S.chat.catalog = await call('assistant:catalog', !!force);
     S.chat.catalogError = null;
+    if (chatModels().some((m) => m.id === S.chat.model)) await call('assistant:model', S.chat.model);
     if (force) toast(`Daftar model dimuat ulang · ${chatModels().length} model`, 'ok');
   } catch (e) {
     S.chat.catalogError = e.message;
@@ -2732,7 +2740,7 @@ const CHANGES = {
   autoProject: async (el) => { S.settings = await call('settings:set', { autoProject: el.checked }); render(); },
   aiPageReader: async (el) => { S.settings = await call('settings:set', { aiPageReader: el.checked }); render(); },
   studioModel: (el) => setStudio({ model: el.value }),
-  chatModel: (el) => { S.chat.model = el.value; chatSave(); render(); },
+  chatModel: (el) => { S.chat.model = el.value; chatSave(); call('assistant:model', el.value).catch((e) => toast(msg(e), 'err')); render(); },
   studioApply: (el) => setStudio({ apply: el.checked }),
   browser: async (el) => {
     if (el.value === 'custom') S.settings = await call('files:pickBrowser');
@@ -2952,6 +2960,7 @@ async function init() {
   S.update = S.info.update;
   S.flowOptions = S.info.flowOptions || {};
   chatRestore();
+  if (S.chat.model) await call('assistant:model', S.chat.model).catch(() => {});
   document.documentElement.style.setProperty('--accent', S.info.accent);
   document.body.classList.add('platform-' + S.info.platform);
   const chrome = S.info.chrome || {};

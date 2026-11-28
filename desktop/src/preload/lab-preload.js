@@ -2,7 +2,7 @@
 // Jembatan aman jendela Alat Kreatif (src/lab) → proses utama. Hanya saluran "lab:*".
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
-const CHANNELS = ['lab:info', 'lab:pick', 'lab:register', 'lab:read', 'lab:save', 'lab:ai', 'lab:toStudio', 'lab:toBulk', 'lab:show'];
+const CHANNELS = ['lab:info', 'lab:catalog', 'lab:pick', 'lab:register', 'lab:read', 'lab:save', 'lab:ai', 'lab:toStudio', 'lab:toBulk', 'lab:show'];
 
 contextBridge.exposeInMainWorld('lab', {
   call: (channel, ...args) => {

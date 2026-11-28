@@ -173,3 +173,6 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 18px; ma
 .tl-item .input { height: 26px; font-size: 12px; padding: 0 6px; }
 .hint-over { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 12px; padding: 4px 12px; border-radius: 12px; pointer-events: none; z-index: 3; }
 canvas.grab { cursor: grab; } canvas.grab:active { cursor: grabbing; } canvas.cross { cursor: crosshair; }
+
+/* Model selector stays compact alongside the offline/AI status pills. */
+.lab-head .tools select { max-width: 260px; padding: 6px 8px; border: 1px solid var(--stroke-2); border-radius: 6px; color: var(--text); background: var(--card); }

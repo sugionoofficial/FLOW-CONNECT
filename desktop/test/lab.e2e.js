@@ -89,6 +89,7 @@ const MOCK = `(() => {
   };
   const R = {
     'lab:info': () => ({ tool: new URLSearchParams(location.search).get('t'), accent: '#0067c0', dark: false, licensed: true, version: '1.8.0' }),
+    'lab:catalog': () => ({ selected: 'active-model', models: [{ id: 'active-model', label: 'Model aktif', category: 'chat', provider: 'uji', ready: true }, { id: 'other-model', label: 'Model lain', category: 'chat', provider: 'uji', ready: true }] }),
     'lab:pick': (k, multi) => classify(window.__pick && window.__pick.length ? window.__pick.splice(0) : (multi && k === 'image' ? ['/foto/produk.png', '/foto/latar.png'] : PICK[k] || PICK.image)),
     'lab:register': (paths) => classify(paths),
     'lab:read': async (p) => {
@@ -98,7 +99,7 @@ const MOCK = `(() => {
       return { name: p.split('/').pop(), mime: 'image/png', data: await png(p) };
     },
     'lab:save': (o) => { const n = typeof o.data === 'string' ? o.data.length : o.data.length; window.__saved.push({ name: o.name, format: o.format, size: n, head: typeof o.data === 'string' ? o.data.slice(0, 200) : Array.from(o.data.slice(0, 12)) }); return '/unduhan/Alat/' + o.name + '.' + o.format; },
-    'lab:ai': (o) => { window.__ai.push({ prompt: o.prompt, image: !!o.image }); return new Promise((r) => setTimeout(() => r({ reply: AI(o.prompt), model: { id: 'm', label: 'Gemma Uji' } }), 60)); },
+    'lab:ai': (o) => { window.__ai.push({ prompt: o.prompt, image: !!o.image, model: o.model }); return new Promise((r) => setTimeout(() => r({ reply: AI(o.prompt), model: { id: 'm', label: 'Gemma Uji' } }), 60)); },
     'lab:toStudio': (o) => { window.__studio.push(o); return { images: (o.images || []).length }; },
     'lab:toBulk': (o) => { window.__bulk.push(o); return { prompts: o.prompts.length }; },
     'lab:show': () => true
@@ -173,6 +174,13 @@ test('Alat Kreatif: 12 alat offline tanpa error + alur utama', { skip: !CHROME &
       noErrors(`${id} (${scheme})`);
     }
   }
+  await ev(`import('./core.js').then(async (core) => {
+    const select = document.querySelector('[aria-label="Model AI"]');
+    if (select.value !== 'active-model') throw new Error('model aktif tidak dipilih');
+    select.value = 'other-model'; select.dispatchEvent(new Event('change'));
+    await core.ai('uji koneksi model');
+    if (window.__ai.at(-1).model !== 'other-model') throw new Error('model tidak diteruskan');
+  })`);
   // alur per alat diuji di berkas yang sama (lihat di bawah)
   t.diagnostic('alat dimuat: ' + IDS.length);
   if (process.env.LAB_NOFLOW) return;

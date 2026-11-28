@@ -1062,6 +1062,8 @@ class FlowSession extends EventEmitter {
         if (credits) throw fail('INSUFFICIENT_CREDITS', credits);
         const before = (await this.listMedia(st.projectId).catch(() => [])).map((i) => i.mediaId);
         const tiles0 = ((await this.call('failedTiles').catch(() => null)) || { count: 0 }).count;
+        // pesan galat yang SUDAH tampil sebelum Generate (sisa tugas sebelumnya) tidak boleh menggagalkan tugas ini
+        const errs0 = ((await this.call('pageErrors').catch(() => null)) || []).map((e) => e.text);
         const net = await this._net();
         const mark = net.mark();
         await sleep(rand(600, 1400));
@@ -1070,10 +1072,10 @@ class FlowSession extends EventEmitter {
         res = { click, settings, refs: prep.refs, mentions: prep.mentions, projectId: st.projectId, mode: this.mode, fellBack: attempt > 0 };
         say('Memastikan Flow mulai membuat…');
         // tunggu sampai permintaan generate benar-benar terkirim selagi jendela masih "aktif"
-        obs = await this.observe({ mark, before, exclude: prep.refs.map((r) => r.mediaId), kind: spec.kind, prompt: job.prompt, wait: false, startMs: spec.startMs, tiles0, shouldStop: hooks.shouldStop });
+        obs = await this.observe({ mark, before, exclude: prep.refs.map((r) => r.mediaId), kind: spec.kind, prompt: job.prompt, wait: false, startMs: spec.startMs, tiles0, errs0, shouldStop: hooks.shouldStop });
         if (obs.ok && hooks.wait !== false) {
           await this.endWork();
-          obs = await this.observe({ mark, before, exclude: prep.refs.map((r) => r.mediaId), kind: spec.kind, prompt: job.prompt, wait: true, timeoutMs: hooks.timeoutMs || 8 * 60000, imageMs: spec.imageMs, tiles0, onProgress: say, shouldStop: hooks.shouldStop });
+          obs = await this.observe({ mark, before, exclude: prep.refs.map((r) => r.mediaId), kind: spec.kind, prompt: job.prompt, wait: true, timeoutMs: hooks.timeoutMs || 8 * 60000, imageMs: spec.imageMs, tiles0, errs0, onProgress: say, shouldStop: hooks.shouldStop });
         }
       } finally { await this.endWork(); }
       if (obs.error) {
@@ -1456,7 +1458,7 @@ class FlowSession extends EventEmitter {
    *  • gambar: balasan tidak datang dalam batas waktu → GENERATE_TIMEOUT
    * → { ok:true, items, projectId } | { error:{code, detail, suspect} }
    */
-  async observe({ mark, before, exclude = [], kind, prompt, wait = true, timeoutMs = 8 * 60000, startMs = 25000, imageMs = 180000, tiles0 = 0, onProgress, shouldStop }) {
+  async observe({ mark, before, exclude = [], kind, prompt, wait = true, timeoutMs = 8 * 60000, startMs = 25000, imageMs = 180000, tiles0 = 0, errs0 = [], onProgress, shouldStop }) {
     const net = await this._net();
     const say = onProgress || (() => {});
     const skip = new Set([...(before || []), ...exclude]);
@@ -1466,6 +1468,7 @@ class FlowSession extends EventEmitter {
     const imgs = [];
     const status = (t) => { if (t !== lastSay) { lastSay = t; say(t); } };
     const errOut = (code, detail, suspect = false) => ({ error: { code, detail: detail ? String(detail).slice(0, 300) : null, suspect } });
+    let stale = new Set(errs0 || []); // pesan lama: diabaikan selama masih tampil; bila hilang lalu muncul lagi → dihitung
     while (true) {
       if (shouldStop && shouldStop()) throw new Error('STOPPED');
       // 1) lalu lintas Flow
@@ -1502,8 +1505,11 @@ class FlowSession extends EventEmitter {
         }
       }
       // 2) pesan galat di halaman
-      const perr = await this.call('pageError').catch(() => null);
-      if (perr) return errOut(perr.suspect ? 'FLOW_UNUSUAL_ACTIVITY' : 'GENERATE_FAILED', perr.text, perr.suspect);
+      const errs = (await this.call('pageErrors').catch(() => null)) || [];
+      const perr = errs.find((x) => !stale.has(x.text));
+      stale = new Set(errs.filter((x) => stale.has(x.text)).map((x) => x.text));
+      // hanya "unusual activity"/captcha yang mengistirahatkan akun; "something went wrong" = gagal biasa (diulang)
+      if (perr) return errOut(perr.unusual ? 'FLOW_UNUSUAL_ACTIVITY' : 'GENERATE_FAILED', perr.text, perr.suspect);
       const tiles = await this.call('failedTiles').catch(() => null);
       if (tiles && tiles.count > tiles0) return errOut('GENERATE_FAILED', tiles.texts[tiles.texts.length - 1]);
       // 3) daftar project: hasil baru siap?
@@ -1542,7 +1548,7 @@ class FlowSession extends EventEmitter {
         if (credits) return errOut('INSUFFICIENT_CREDITS', credits);
         return errOut('GENERATE_NOT_STARTED', null, !!stuck);
       }
-      if (imageReply && !imgs.length && Date.now() - imageReply.t > 20000 && !(fresh && fresh.length)) return errOut('GENERATE_FAILED', 'Flow tidak mengembalikan gambar (kemungkinan diblokir filter keamanan)');
+      if (imageReply && !imgs.length && Date.now() - imageReply.t > 45000 && !(fresh && fresh.length)) return errOut('GENERATE_FAILED', 'Flow tidak mengembalikan gambar (kemungkinan diblokir filter keamanan)');
       if (kind === 'image' && submitted && !imageReply && !firstSeen && Date.now() - submitted.t > imageMs) return errOut('GENERATE_TIMEOUT', 'Flow tidak menjawab dalam ' + Math.round(imageMs / 1000) + ' dtk');
       if (el > timeoutMs) return errOut('GENERATE_TIMEOUT');
       if (!submitted && !firstSeen) status('Menunggu Flow memulai…');

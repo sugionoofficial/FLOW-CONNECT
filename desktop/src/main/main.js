@@ -940,9 +940,10 @@ app.whenReady().then(async () => {
   // banyak perubahan kecil berturut-turut → dikirim maks. ±3×/detik (batch bisa berisi 300 tugas)
   bulk.on('update', () => { if (Date.now() - bulkSent > 300) bulkSend(); else if (!bulkTimer) bulkTimer = setTimeout(bulkSend, 300); });
   bulk.on('activity', (t) => send('bulk-activity', t));
-  bulk.on('finished', ({ items, failed, skipped, stopped, ms }) => {
-    const t = Math.round(ms / 1000), dur = t >= 3600 ? `${Math.floor(t / 3600)} j ${Math.floor((t % 3600) / 60)} m` : `${Math.floor(t / 60)} m ${t % 60} d`;
-    notify(stopped ? 'Bulk Generate dihentikan' : 'Bulk Generate selesai', `${items} hasil${failed ? `, ${failed} gagal` : ''}${skipped ? `, ${skipped} terlewat` : ''} · ${dur}.`);
+  bulk.on('finished', ({ items, target, failed, replaced, skipped, stopped, ms, perItemMs, kind }) => {
+    const fmt = (v) => { const t = Math.round(v / 1000); return t >= 3600 ? `${Math.floor(t / 3600)} j ${Math.floor((t % 3600) / 60)} m` : t >= 60 ? `${Math.floor(t / 60)} m ${t % 60} d` : `${t} d`; };
+    const unit = kind === 'video' ? 'video' : 'gambar';
+    notify(stopped ? 'Bulk Generate dihentikan' : 'Bulk Generate selesai', `${items}/${target} ${unit}${failed ? `, ${failed} gagal${replaced ? ` (${replaced} diganti)` : ''}` : ''}${skipped ? `, ${skipped} terlewat` : ''} · total ${fmt(ms)}${perItemMs ? ` · rata-rata ${fmt(perItemMs)}/${unit}` : ''}.`);
   });
   license = new LicenseManager({ store, version: app.getVersion(), crypt });
   assistant = new Assistant({ license });

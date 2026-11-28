@@ -924,6 +924,9 @@ button.runtime-pill:hover { background: var(--hover); }
 .bulk-stats { display: flex; flex-wrap: wrap; gap: 8px 22px; }
 .bulk-stats b { font-size: 18px; font-variant-numeric: tabular-nums; font-family: var(--font-display); }
 .bulk-run .activity { margin: 0; }
+.bulk-sum { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: var(--radius); background: var(--ok-bg); color: var(--text); }
+.bulk-sum .ic { color: var(--ok); flex: none; }
+.bulk-sum b { font-variant-numeric: tabular-nums; }
 .bulk-run .actionbar { margin: 0; }
 .bulk-accs-t { margin-bottom: 14px; }
 .bulk-jobs .prompt { max-width: 460px; }

@@ -309,7 +309,7 @@ test('Bulk: akun yang gagal dipulihkan (project baru), ulangan diambil akun lain
   assert.strictEqual(nProj('a2'), base + 1, 'a2 dipulihkan dengan project baru setelah 2× gagal beruntun');
   assert.strictEqual(nProj('a3'), base + 1, 'tampilan edit → project baru yang bersih');
   const retried = b.jobs.filter((j) => (j.failedOn || []).length);
-  assert.ok(retried.length >= 3);
+  assert.strictEqual(retried.reduce((n, j) => n + j.failedOn.length, 0), 3, '3 kegagalan tercatat (satu tugas bisa gagal di dua akun)');
   assert.ok(retried.every((j) => j.status === 'done' && !j.failedOn.includes(j.accountId)), 'ulangan diselesaikan akun lain');
   assert.strictEqual(a2.note, null, 'catatan galat hilang setelah akun berhasil lagi');
   // alasan gagal tampil di tabel akun selama belum pulih

@@ -239,22 +239,53 @@ export const io = {
 };
 
 export function loadVideoBlob(blob) {
-  return new Promise((resolve, reject) => {
+  const open = (bl) => new Promise((resolve, reject) => {
     const v = document.createElement('video');
     v.preload = 'auto'; v.playsInline = true; v.crossOrigin = 'anonymous';
+    v.onloadeddata = () => { v.onloadeddata = null; v.onerror = null; resolve(v); };
     v.onerror = () => reject(new Error('VIDEO_DECODE_FAILED'));
-    v.onloadeddata = () => {
-      v.onloadeddata = null;
-      if (Number.isFinite(v.duration)) return resolve(v);
-      // WebM dari perekam layar/MediaRecorder sering tanpa durasi → lompat jauh agar peramban menghitungnya
-      const done = () => { v.removeEventListener('durationchange', check); v.removeEventListener('seeked', check); clearTimeout(to); v.currentTime = 0; resolve(v); };
-      const check = () => { if (Number.isFinite(v.duration)) done(); };
-      const to = setTimeout(done, 4000);
-      v.addEventListener('durationchange', check); v.addEventListener('seeked', check);
-      v.currentTime = 1e7;
-    };
-    v.src = URL.createObjectURL(blob);
+    v.src = URL.createObjectURL(bl);
   });
+  return open(blob).then(async (v) => {
+    if (Number.isFinite(v.duration)) return v;
+    // WebM dari MediaRecorder / perekam layar sering tanpa durasi (tak bisa digeser) → baca dari cluster terakhir & tulis ke header
+    const ms = webmDurationMs(new Uint8Array(await blob.arrayBuffer()));
+    if (!ms) return v;
+    const fixed = await fixWebmDuration(blob, ms);
+    if (fixed === blob) return v;
+    try { const v2 = await open(fixed); URL.revokeObjectURL(v.src); return v2; } catch { return v; }
+  });
+}
+/** Perkiraan durasi WebM (ms) dari Timecode cluster terakhir + timecode blok terakhir. 0 bila tak terbaca. */
+export function webmDurationMs(b) {
+  const id = (i) => readVint(b, i, true);
+  let scale = 1e6; // TimecodeScale (ns) — bawaan 1 ms
+  for (let i = 0; i < Math.min(b.length - 4, 8192); i++) {
+    if (b[i] === 0x2a && b[i + 1] === 0xd7 && b[i + 2] === 0xb1) { const s = readVint(b, i + 3); if (s && s.v <= 8) { let v = 0; for (let k = 0; k < s.v; k++) v = v * 256 + b[i + 3 + s.len + k]; if (v > 0) scale = v; } break; }
+  }
+  for (let i = b.length - 8; i >= 0; i--) {
+    if (b[i] !== 0x1f || b[i + 1] !== 0x43 || b[i + 2] !== 0xb6 || b[i + 3] !== 0x75) continue;
+    const cs = readVint(b, i + 4); if (!cs) continue;
+    let p = i + 4 + cs.len;
+    const t = id(p); if (!t || t.v !== 0xe7) continue; // cluster sah dimulai dengan Timecode
+    const ts = readVint(b, p + 1); if (!ts || ts.v > 8) continue;
+    let tc = 0; for (let k = 0; k < ts.v; k++) tc = tc * 256 + b[p + 1 + ts.len + k];
+    p += 1 + ts.len + ts.v;
+    let rel = 0;
+    while (p < b.length - 4) {
+      const e = id(p); if (!e) break;
+      const s = readVint(b, p + e.len); if (!s || s.unknown) break;
+      const body = p + e.len + s.len;
+      let blk = -1;
+      if (e.v === 0xa3) blk = body; // SimpleBlock
+      else if (e.v === 0xa0 && b[body] === 0xa1) { const bs = readVint(b, body + 1); if (bs) blk = body + 1 + bs.len; } // BlockGroup → Block
+      if (blk >= 0) { const tr = readVint(b, blk); if (tr && blk + tr.len + 1 < b.length) { const r = (b[blk + tr.len] << 8 | b[blk + tr.len + 1]) << 16 >> 16; if (r > rel) rel = r; } }
+      p = body + s.v;
+    }
+    const ms = (tc + rel) * scale / 1e6 + 33;
+    return ms > 0 && ms < 24 * 3600 * 1000 ? ms : 0;
+  }
+  return 0;
 }
 export function seek(v, t) {
   return new Promise((resolve) => {

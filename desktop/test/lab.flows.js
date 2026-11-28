@@ -26,6 +26,7 @@ exports.resize = async ({ ev, open, click, waitFor, sleep, saved, noErrors, shot
   await open('resize');
   await click('.stage .btn', 'Pilih video');
   await waitFor('document.querySelectorAll(".side .file").length === 1', 10000, 'video dimuat');
+  assert.ok(await ev('/[0-9.]+s/.test(document.querySelector(".side .file").textContent) && !/Infinity/.test(document.querySelector(".side .file").textContent)'), 'durasi WebM tanpa header terbaca: ' + await ev('document.querySelector(".side .file").textContent'));
   await sleep(300);
   assert.deepStrictEqual(await ev('[document.querySelector(".stage canvas").width, document.querySelector(".stage canvas").height]'), [1080, 1920], '9:16 1080p');
   await click('.side .btn', 'Fokus otomatis');

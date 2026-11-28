@@ -57,7 +57,12 @@ jobs:
         if: matrix.os == 'windows-latest'
         env:
           CHROME_HEADED_ARGS: '--disable-gpu'
-        run: node --test --test-reporter=spec --test-force-exit --test-name-pattern="Chrome asli berjendela" test/flow.test.js
+        run: |
+          set -o pipefail
+          node --test --test-reporter=spec --test-force-exit --test-name-pattern="Chrome asli berjendela" test/flow.test.js 2>&1 | tee headed.log
+      - name: Ringkasan uji kartu login
+        if: always() && matrix.os == 'windows-latest'
+        run: node scripts/test-annotate.js headed.log
 
   build-win:
     name: Build installer Windows

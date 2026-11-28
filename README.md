@@ -115,6 +115,15 @@ Aplikasi belum ditandatangani (code signing), jadi Windows SmartScreen akan memb
 
 Tanpa Client ID, aplikasi tetap jalan dengan mode “Pakai email”.
 
+## Provider AI Arena (Asisten Prompt & pembaca halaman)
+Arena tersedia sebagai provider `openai_compat` (`arena`, base URL `https://api.arena.ai/v1`) — migrasi `20261201000001_arena_provider.sql` menambah provider + model router `coding-router-preview` (kategori chat, bisa baca gambar). Cara mengaktifkan:
+1. Buat API key di [platform.arena.ai/dashboard/keys](https://platform.arena.ai/dashboard/keys) (salin sekali, jangan commit ke repo).
+2. Situs → **Admin → Provider & Model → Arena → Kunci API** → tempel key → Simpan (tersimpan terenkripsi di Supabase Vault, hanya dipakai Edge Function `prompt-chat`).
+3. Klik **Ambil model** untuk menambah model langsung Arena (daftar dari `GET /v1/models`), lalu pilih model bawaan di kategori Chat prompt bila perlu.
+4. Uji di **Admin → Chat Prompt → Uji coba** dengan model Arena.
+
+Catatan: `coding-router-preview` disetel untuk tool coding; bila hasil Asisten Prompt kurang pas, pakai model langsung dari “Ambil model”. Biaya mengikuti saldo workspace Arena (lihat Usage di dasbor Arena).
+
 ## Database (`supabase/migrations`)
 - `20261125000001_init_schema.sql` — skema awal (profiles, dsb.).
 - `20261126000001_google_accounts_hub.sql` — menghapus sistem generate/kredit simulasi, menambah tabel `google_accounts` (RLS per user, unik `(user_id, email)`, satu default, batas 10) + RPC `set_default_google_account`.

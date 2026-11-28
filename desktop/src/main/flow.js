@@ -561,6 +561,8 @@ class FlowSession extends EventEmitter {
       await this._escape();
       await sleep(350);
     }
+    // kartu yang tidak bisa ditutup dengan Escape (mis. "What's new" Flow: panah → … → Get started)
+    if (await this.call('overlayOpen').catch(() => false)) await this._dismissOnboarding();
   }
 
   async _waitFor(fn, timeoutMs, step = 250) {
@@ -638,7 +640,13 @@ class FlowSession extends EventEmitter {
         const st0 = await this.status();
         // dari dalam project: kembali ke beranda Flow dulu
         if (st0.projectId) await this.navigate(this.flowUrl);
-        const done = async (st) => { await this.ensurePage(); await this.waitReady(); await this._dismissOnboarding(); return { projectId: st.projectId, projectTitle: st.projectTitle }; };
+        const done = async (st) => {
+          await this.ensurePage(); await this.waitReady();
+          // kartu "What's new" / sambutan sering muncul sesaat SETELAH project terbuka → tunggu sebentar
+          await this._waitFor(() => this.call('onboardingTarget'), 3500, 400);
+          await this._dismissOnboarding();
+          return { projectId: st.projectId, projectTitle: st.projectTitle };
+        };
         // tunggu project terbuka; dialog yang muncul setelah klik (sambutan / "Create") ikut ditangani
         // status selalu diperiksa sekali lagi sebelum menyerah → tidak pernah membuat 2 project
         const opened = async (ms) => {
@@ -689,12 +697,12 @@ class FlowSession extends EventEmitter {
     });
   }
 
-  /** Tutup dialog sambutan / persetujuan Flow (maks. 6 langkah). Mengembalikan jumlah klik. */
+  /** Tutup dialog sambutan / persetujuan / kartu "What's new" Flow (maks. 16 langkah). Mengembalikan jumlah klik. */
   async _dismissOnboarding() {
     let n = 0;
     const cookie = await this.call('cookieReject').catch(() => null);
     if (cookie) { await this._click(cookie); await sleep(500); n++; }
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 16; i++) {
       const t = await this.call('onboardingTarget').catch(() => null);
       if (!t) break;
       await sleep(rand(200, 450));

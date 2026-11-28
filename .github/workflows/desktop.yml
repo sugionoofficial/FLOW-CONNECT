@@ -111,7 +111,7 @@ jobs:
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
 
-            **Baru di versi ini (v1.6.3):** **Project baru untuk akun Google yang baru pertama kali memakai Flow** — dialog sambutan & persetujuan syarat ditutup otomatis (centang setuju → lanjutkan → mengerti; tidak pernah menekan Sign out, langganan, atau beli), tombol "New project" dikenali dalam lebih banyak bahasa akun (bila tidak, beranda Flow dibuka dalam bahasa Inggris), dan bila mode tersembunyi tetap gagal aplikasi mencoba lewat jendela diperkecil. Bila Flow belum tersedia untuk akun itu (negara/usia/admin), pesannya ditampilkan dengan jelas; galat lain kini menyertakan ringkasan halaman Flow untuk diagnosa. Juga dari v1.6.2: alat Google Flow dibuka di jendela aplikasi (browser tetap tersembunyi).
+            **Baru di versi ini (v1.6.4):** **Kartu \"What's new\" Google Flow tidak lagi menghalangi** — kartu pembaruan Flow yang muncul saat membuat project (tidak bisa ditutup, harus panah → Get started) kini dilewati otomatis: panah berikutnya ditekan sampai halaman terakhir lalu \"Get started\", juga bila kartu muncul di tengah pemakaian. Juga dari v1.6.3: dialog sambutan & persetujuan untuk akun Google baru ditutup otomatis, tombol \"New project\" dikenali dalam lebih banyak bahasa, dan pesan jelas bila Flow tidak tersedia untuk akun itu.
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

@@ -446,8 +446,8 @@ function ModelPicker({ provider, existing, onClose, onAdded }: { provider: Provi
 
   const add = async () => {
     if (!list) return
-    const rows = list.filter((m) => sel.has(m.id)).map((m, i) => {
-      const config: Record<string, number> = {}
+    const rows = list.filter((m) => sel.has(m.id) && (cat !== 'chat' || !m.outputs.length || m.outputs.includes('text'))).map((m, i) => {
+      const config: Record<string, unknown> = { output_modalities: m.outputs }
       if (m.input_per_m != null) config.input_per_m = m.input_per_m
       if (m.output_per_m != null) config.output_per_m = m.output_per_m
       if (m.vision) config.vision = 1
@@ -562,6 +562,7 @@ function ChatTab() {
     setSending(false)
     if (error) {
       let msg = await fnError(error)
+      if (msg.includes('PROVIDER_DAILY_LIMIT')) msg = 'Kuota harian provider habis. Tunggu reset kuota atau siapkan provider lain. Mengganti model gratis pada provider yang sama tidak membantu.'
       if (msg.includes('NO_API_KEY')) msg = 'Kunci API provider belum diatur (tab Provider & Model → Kunci API).'
       setMsgs([...next, { role: 'assistant', content: `⚠️ ${msg}` }])
       return

@@ -94,3 +94,24 @@ test('preload membuka semua saluran IPC yang ditangani main', () => {
   assert.ok(handled.length > 30);
   assert.deepStrictEqual(handled.filter((c) => !exposed.has(c)), [], 'saluran tanpa jembatan preload');
 });
+
+test('chat: kode provider yang aman tidak disembunyikan sebagai galat umum', async () => {
+  const codes = ['PROVIDER_DAILY_LIMIT', 'PROVIDER_RATE_LIMIT', 'PROVIDER_CREDITS', 'PROVIDER_AUTH', 'MODEL_UNAVAILABLE', 'MODEL_NO_VISION', 'AI_EMPTY_REPLY'];
+  for (const code of codes) {
+    const { a } = setup(async () => ({ status: 502, body: { error: code } }));
+    await assert.rejects(a.chat({ messages: [{ role: 'user', content: 'hai' }] }), (e) => e.message === code);
+    await assert.rejects(a.readPage({ text: 'halaman' }), (e) => e.message === code);
+  }
+});
+
+test('provider: bedakan kuota harian, rate limit, kredit, autentikasi, model, dan jawaban kosong', async () => {
+  const { providerError } = await import('../../supabase/functions/prompt-chat/provider-errors.mjs');
+  assert.strictEqual(providerError(429, 'Rate limit exceeded: free-models-per-day'), 'PROVIDER_DAILY_LIMIT');
+  assert.strictEqual(providerError(429, 'temporarily rate limited'), 'PROVIDER_RATE_LIMIT');
+  assert.strictEqual(providerError(402, 'Payment Required'), 'PROVIDER_CREDITS');
+  assert.strictEqual(providerError(401, 'bad key'), 'PROVIDER_AUTH');
+  assert.strictEqual(providerError(404, 'unavailable for free'), 'MODEL_UNAVAILABLE');
+  assert.strictEqual(providerError(400, 'This model does not support image inputs'), 'MODEL_NO_VISION');
+  assert.strictEqual(providerError(200, 'EMPTY_REPLY'), 'AI_EMPTY_REPLY');
+  assert.strictEqual(providerError(500, 'private upstream response'), 'PROVIDER_ERROR');
+});

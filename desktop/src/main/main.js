@@ -379,6 +379,7 @@ function registerLabIpc() {
     tool, version: app.getVersion(), platform: process.platform, accent: accent(), dark: nativeTheme.shouldUseDarkColors,
     licensed: license.licensed, alatDir: path.join(store.data.downloadDir, 'Alat')
   }));
+  handleLab('lab:catalog', async (tool, sender, force) => ({ models: await assistant.catalog(!!force), selected: assistant.model }));
   handleLab('lab:pick', async (tool, sender, kind, multi) => {
     const k = LAB_PICK[kind] ? kind : 'image';
     const r = await dialog.showOpenDialog(labWins.windowOf(sender) || win, {
@@ -410,7 +411,7 @@ function registerLabIpc() {
       if (o.image.length > 4000000 || !DATA_IMAGE_RE.test(o.image)) throw new Error('INVALID_IMAGE');
       image = o.image;
     } else if (typeof o.imagePath === 'string') image = chatRequest({ imagePath: o.imagePath }).image;
-    return assistant.chat({ messages: [...history, { role: 'user', content: prompt }], model: typeof o.model === 'string' ? o.model : undefined, mode: o.mode, image });
+    return assistant.chat({ messages: [...history, { role: 'user', content: prompt }], model: typeof o.model === 'string' && o.model ? o.model : assistant.model || undefined, mode: o.mode, image });
   });
   // Hasil alat → Studio (prompt + gambar referensi) / Bulk (daftar prompt) di jendela utama
   handleLab('lab:toStudio', (tool, sender, o) => {
@@ -454,6 +455,12 @@ function registerIpc() {
   });
 
   // Asisten Prompt (chat AI lewat server FLOW CONNECT)
+  handle('assistant:model', (id) => {
+    if (typeof id === 'string' && (id === '' || /^[0-9a-f-]{36}$/i.test(id))) {
+      assistant.model = id; store.data.aiChatModel = id; store.save();
+    }
+    return assistant.model;
+  });
   handle('assistant:catalog', (force) => assistant.catalog(!!force));
   handle('assistant:chat', (req) => assistant.chat(chatRequest(req || {})));
   handle('skills:catalog', async (force) => (await assistant.skills(!!force)).map((x) => {
@@ -1065,6 +1072,7 @@ app.whenReady().then(async () => {
   });
   license = new LicenseManager({ store, version: app.getVersion(), crypt });
   assistant = new Assistant({ license });
+  assistant.model = typeof store.data.aiChatModel === 'string' ? store.data.aiChatModel : '';
   license.on('change', (st) => {
     send('license', st);
     if (!license.licensed) { queue.stop(); bulk.stop(); }

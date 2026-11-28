@@ -13,6 +13,31 @@ async function boot() {
   const aiPill = h('span.pill.ai', { title: 'Bantuan AI memakai model yang terdaftar di admin FLOW CONNECT' }, ic('wand-sparkles'), h('span', { text: 'AI: ' + meta.ai }));
   aiState.listeners.add((m) => { if (m) aiPill.lastChild.textContent = 'AI · ' + m; });
   const headTools = h('div.tools', h('span.pill.ok', { title: 'Diproses di PC ini — tidak memuat halaman Google Flow' }, ic('zap'), 'Offline'), aiPill);
+  const modelSelect = h('select', { 'aria-label': 'Model AI', title: 'Model AI untuk alat ini; pilihan awal mengikuti Asisten Prompt' }, h('option', { value: '', text: 'Memuat model AI…' }));
+  const refreshModels = h('button', { title: 'Muat ulang model AI', 'aria-label': 'Muat ulang model AI' }, ic('refresh-cw'));
+  async function loadModels(force = false) {
+    refreshModels.disabled = true;
+    try {
+      const data = await call('lab:catalog', force);
+      const models = (data?.models || []).filter((m) => m.category === 'chat');
+      const wanted = aiState.modelId || data?.selected;
+      const chosen = models.find((m) => m.id === wanted) || models.find((m) => m.is_default && m.ready) || models.find((m) => m.ready) || models[0];
+      modelSelect.replaceChildren(h('option', { value: '', text: 'Bawaan admin' }), ...models.map((m) => h('option', { value: m.id, text: `${m.label} · ${m.provider_name || m.provider}${m.vision ? ' · gambar' : ''}${m.ready ? '' : ' · kunci belum diatur'}`, disabled: !m.ready })));
+      aiState.modelId = chosen?.ready ? chosen.id : '';
+      modelSelect.value = aiState.modelId;
+      aiPill.lastChild.textContent = chosen?.ready ? 'AI · ' + chosen.label : 'AI belum dikonfigurasi';
+    } catch (e) {
+      aiPill.lastChild.textContent = 'Daftar AI gagal dimuat';
+      if (force) toast(errText(e), 'err');
+    } finally { refreshModels.disabled = false; }
+  }
+  modelSelect.addEventListener('change', () => {
+    aiState.modelId = modelSelect.value;
+    aiPill.lastChild.textContent = 'AI · ' + modelSelect.selectedOptions[0].textContent;
+  });
+  refreshModels.addEventListener('click', () => loadModels(true));
+  headTools.append(modelSelect, refreshModels);
+  void loadModels();
   const side = h('div.side');
   const stage = h('div.stage');
   const bar = h('div.stagebar');

@@ -4,6 +4,7 @@
 // - Web mengirim JWT pengguna (Authorization: Bearer <access token>).
 // - Kunci API provider (mis. OpenCode Console) diambil dari Supabase Vault; tidak pernah dikirim ke klien.
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import { providerError } from './provider-errors.mjs'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -118,11 +119,14 @@ async function pageReader(admin: any, body: any, licenseId: string | null, userI
     .filter((m, i, a) => m && a.indexOf(m) === i).slice(0, 4)
   if (!chain.length) return json({ error: 'NO_MODEL' }, 503)
   let lastErr: string | null = null
+  let lastCode = 'PROVIDER_ERROR'
+  const exhausted = new Set<string>()
   let status = 502
   for (const model of chain) {
     const provider = model.provider
+    if (exhausted.has(provider.id)) continue
     const { data: secret } = await admin.rpc('ai_provider_secret', { p_provider: provider.id })
-    if (!secret) { lastErr = 'NO_API_KEY'; continue }
+    if (!secret) { lastErr = 'NO_API_KEY'; lastCode = 'NO_API_KEY'; continue }
     const withImage = !!image && (vis(model) || model === chosen)
     const user = withImage
       ? [{ type: 'text', text }, { type: 'image_url', image_url: { url: image } }]
@@ -167,8 +171,10 @@ async function pageReader(admin: any, body: any, licenseId: string | null, userI
     })
     if (ok) return json({ reply, model: { id: model.id, label: model.label }, vision: withImage, usage: { input: inT, output: outT } })
     lastErr = errText
+    lastCode = providerError(Number(/^HTTP (\d+)/.exec(errText || '')?.[1]) || 0, errText || '')
+    if (lastCode === 'PROVIDER_DAILY_LIMIT') exhausted.add(provider.id)
   }
-  return json({ error: lastErr === 'NO_API_KEY' ? 'NO_API_KEY' : 'PROVIDER_ERROR', detail: isAdmin ? lastErr : undefined }, status)
+  return json({ error: lastCode, detail: isAdmin ? lastErr : undefined }, status)
 }
 
 Deno.serve(async (req) => {
@@ -353,6 +359,7 @@ Deno.serve(async (req) => {
   let errText: string | null = null
   let usage: { prompt_tokens?: number; completion_tokens?: number } = {}
   let status = 502
+  let errorCode = 'PROVIDER_ERROR'
   try {
     const base = apiBase(provider.base_url)
     const res = await fetch(`${base}/chat/completions`, {
@@ -366,10 +373,11 @@ Deno.serve(async (req) => {
       reply = String(out.choices[0].message?.content ?? '').trim()
       usage = out.usage ?? {}
       ok = !!reply
-      if (!ok) errText = 'EMPTY_REPLY'
+      if (!ok) { errText = 'EMPTY_REPLY'; errorCode = 'AI_EMPTY_REPLY' }
     } else {
       status = res.status === 401 || res.status === 403 ? 502 : res.status === 429 ? 429 : 502
       errText = `HTTP ${res.status}: ${String(out?.error?.message ?? out?.message ?? out?.errors?.[0]?.message ?? '').slice(0, 300)}`
+      errorCode = providerError(res.status, errText)
     }
   } catch (e) {
     errText = `NETWORK: ${(e as Error).message}`.slice(0, 300)
@@ -386,6 +394,6 @@ Deno.serve(async (req) => {
     input_tokens: inT, output_tokens: outT, cost_usd: cost, ok, error: errText,
   })
 
-  if (!ok) return json({ error: 'PROVIDER_ERROR', detail: isAdmin ? errText : undefined }, status)
+  if (!ok) return json({ error: errorCode, detail: isAdmin ? errText : undefined }, status)
   return json({ reply, model: { id: model.id, label: model.label }, usage: { input: inT, output: outT } })
 })

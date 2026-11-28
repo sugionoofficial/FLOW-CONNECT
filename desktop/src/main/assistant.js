@@ -11,7 +11,7 @@ const MAX_CHARS = 6000;
 
 // galat server → kode yang dikenali tampilan
 const KNOWN = new Set(['INVALID_IMAGE', 'INVALID_KEY', 'REVOKED', 'EXPIRED', 'INVALID_DEVICE', 'LICENSE_REQUIRED', 'DAILY_LIMIT', 'NO_MODEL', 'NO_API_KEY',
-  'PROVIDER_ERROR', 'UNSUPPORTED_PROVIDER', 'EMPTY_MESSAGE', 'PAGE_READER_OFF']);
+  'PROVIDER_ERROR', 'PROVIDER_DAILY_LIMIT', 'PROVIDER_RATE_LIMIT', 'PROVIDER_CREDITS', 'PROVIDER_AUTH', 'MODEL_UNAVAILABLE', 'MODEL_NO_VISION', 'AI_EMPTY_REPLY', 'UNSUPPORTED_PROVIDER', 'EMPTY_MESSAGE', 'PAGE_READER_OFF']);
 
 class Assistant {
   /**
@@ -28,6 +28,7 @@ class Assistant {
     this.apiKey = key;
     this._catalog = null;
     this._skills = null;
+    this.model = ''; // pilihan bersama Asisten Prompt → Alat Kreatif
   }
 
   /** Skill dari admin (situs → Admin → Skill): [{id, name, description, category, icon, template, settings, refs}] */

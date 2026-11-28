@@ -118,7 +118,7 @@ jobs:
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
 
-            **Baru di versi ini (v1.9.0):** 15 Alat Kreatif offline, termasuk **Upscale Gambar** (2x–4x, denoise & penajaman), **Cek Metadata** (pindai & hapus metadata), dan **Gabung Video** (urutkan, potong, resolusi, fade & audio). Skill **Lembar karakter** ditingkatkan dengan hero, turnaround, ekspresi & palet. Tersedia juga skill admin **Character Sheet Pro** dan preset provider AI **Arena** (memerlukan API key). Termasuk perbaikan Bulk dari v1.8.1.
+            **Baru di versi ini (v1.9.1):** pemilihan model AI langsung di setiap Alat Kreatif (pilihan awal mengikuti Asisten Prompt), tombol muat ulang model, dan pesan galat khusus untuk kuota harian provider, rate limit, kredit, kunci API, model tidak tersedia, serta jawaban kosong. Tidak lagi menyamarkan semua galat sebagai “layanan sedang bermasalah”. Model musik Lyria dipindahkan ke kategori Audio, bukan Chat. Kuota provider yang habis tetap perlu reset kuota / konfigurasi admin; tidak ada perpindahan otomatis ke model berbayar.
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

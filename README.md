@@ -102,6 +102,12 @@ Aplikasi belum ditandatangani (code signing), jadi Windows SmartScreen akan memb
 - **Cek Metadata** (`lab/tools/metadata.js` + `metadata-core.js`, diport dari BLEA-AI) — pindai EXIF/XMP/IPTC/C2PA & penanda AI (Google/OpenAI/Midjourney/dsb.) pada PNG/JPG/WebP/GIF/MP4/MOV/WebM, hapus lossless, unduh hasil bersih; opsional cek visual dengan model vision.
 - **Gabung Video** (`lab/tools/join.js`) — sambungkan banyak klip: urutkan, potong per klip, samakan resolusi, fade antar klip, audio, ekspor MP4/WebM (rekam waktu-nyata via canvas).
 
+### Koneksi AI alat (v1.9.1+)
+- Di kepala setiap Alat Kreatif ada pemilih **Model AI** dan tombol muat ulang. Pilihan awal mengikuti model Asisten Prompt; model dapat diganti untuk alat tersebut tanpa mengubah model generate Google Flow.
+- Badge model berarti model yang dipilih, bukan jaminan layanan provider tersedia. Fitur offline tetap bekerja tanpa AI.
+- Galat AI dibedakan: kuota harian provider, rate limit sementara, saldo tidak cukup, kunci ditolak, model tidak tersedia, model tidak mendukung gambar, jawaban tanpa teks.
+- **OpenRouter `free-models-per-day`**: kuota ada pada akun/provider, bukan per model. Mengganti ke model gratis lain pada akun yang sama tidak mengatasi kuota habis. Tunggu reset provider atau siapkan provider berkuota di Admin → Provider & Model. Aplikasi tidak mengaktifkan model berbayar secara otomatis.
+
 ### Lisensi & pembaruan otomatis (v1.1.0+)
 
 - **Lisensi** — pengguna membuat kunci `FC-XXXXX-…` di situs (`/app/lisensi`). Database hanya menyimpan hash SHA-256 kunci (`licenses`, `license_devices`, migrasi `20261127000001_desktop_licenses.sql`). Aplikasi memanggil RPC `activate_license` (anon) saat aktivasi, saat dibuka, dan tiap 6 jam; boleh offline hingga 7 hari. Kunci yang dicabut/kedaluwarsa langsung mengunci aplikasi. Default 3 PC per kunci, 5 kunci aktif per akun. Kunci disimpan terenkripsi (Windows DPAPI via `safeStorage`).

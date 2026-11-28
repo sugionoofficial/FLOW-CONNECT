@@ -1111,7 +1111,7 @@ class FlowSession extends EventEmitter {
         stop();
         // tepat sebelum Generate: masih di grid? (bukan tampilan edit / kartu terpilih / Flow Agent) — kalau tidak, batal
         const vs = await this.call('viewState').catch(() => null);
-        if (vs && (vs.sub || vs.agent)) {
+        if (vs && ((vs.sub && vs.sub !== this._gridSub) || vs.agent)) {
           await this.ensureGrid(say).catch(() => {});
           throw fail('FLOW_EDIT_MODE', vs.sub ? vs.path : 'Flow Agent aktif');
         }
@@ -1161,6 +1161,8 @@ class FlowSession extends EventEmitter {
     for (let a = 0; a < 3; a++) {
       vs = await this.call('viewState').catch(() => null);
       if (!vs) return null; // agen belum siap (halaman bukan Flow) — biarkan langkah berikut yang melapor
+      if (a === 0 && !vs.composer) vs = (await this.waitComposer(15000)) || vs; // halaman masih menggambar
+      if (vs.sub && vs.sub !== 'edit' && vs.sub === this._gridSub) vs.sub = null; // sub-halaman yang memang grid project
       if (!vs.sub && !vs.selected && !vs.agent) return vs;
       if (vs.sub) {
         say(`Flow sedang di tampilan ${vs.sub === 'edit' ? 'edit gambar' : vs.sub} — kembali ke grid project (tidak mengedit)…`);
@@ -1171,8 +1173,11 @@ class FlowSession extends EventEmitter {
         if (m) {
           u.pathname = m[1];
           await this.navigate(u.toString());
-          await sleep(rand(1500, 2500));
         } else if (vs.back) { await this._click(vs.back); await sleep(1500); }
+        // halaman Flow (Angular) baru menggambar kotak prompt & tombol "+" beberapa detik SETELAH dimuat
+        const after = await this.waitComposer();
+        // Flow mengalihkan kembali ke sub-halaman yang sama (bukan tampilan edit) → itulah grid project-nya
+        if (after && after.sub && after.sub !== 'edit' && after.path === vs.path) { this._gridSub = after.sub; return after; }
         continue;
       }
       if (vs.agent) {
@@ -1187,8 +1192,15 @@ class FlowSession extends EventEmitter {
       }
     }
     vs = await this.call('viewState').catch(() => vs);
-    if (vs && vs.sub) throw fail('FLOW_EDIT_MODE', vs.path);
+    if (vs && vs.sub && vs.sub !== this._gridSub) throw fail('FLOW_EDIT_MODE', vs.path);
     return vs;
+  }
+
+  /** Tunggu kotak prompt & tombol "+" Flow tergambar (setelah memuat/berpindah halaman). → viewState | null */
+  async waitComposer(timeoutMs = 25000) {
+    const vs = await this._waitFor(async () => { const v = await this.call('viewState'); return v && v.composer && v.add ? v : null; }, timeoutMs, 400);
+    if (vs) await sleep(rand(500, 900));
+    return vs || this.call('viewState').catch(() => null);
   }
 
   /** MODE AMAN: siapkan Flow (setelan + unggah gambar + prompt ber-"@") — pengguna sendiri yang menekan Generate. */
@@ -1322,8 +1334,15 @@ class FlowSession extends EventEmitter {
     await this._closeOverlays();
     const cookie = await this.call('cookieReject').catch(() => null);
     if (cookie) { await this._click(cookie); await sleep(600); }
-    // 1) "+" → menu "Upload" → dialog file (dicegat, diisi file)
-    const add = await this.call('toolbarAdd');
+    // 1) "+" → menu "Upload" → dialog file (dicegat, diisi file). Halaman yang baru dimuat → tunggu tombolnya tergambar.
+    let add = await this._waitFor(() => this.call('toolbarAdd'), 15000, 400);
+    if (!add) {
+      // masih belum ada: kembali ke grid project (bukan tampilan lain) lalu tunggu sekali lagi
+      await this._closeOverlays();
+      await this.ensureGrid(say).catch(() => {});
+      const vs = await this.waitComposer(20000);
+      add = vs && vs.add ? await this.call('toolbarAdd') : null;
+    }
     if (add) {
       await this._click(add);
       const item = await this._waitFor(() => this.call('uploadMenuItem'), 5000, 250);
@@ -1340,7 +1359,10 @@ class FlowSession extends EventEmitter {
         how = 'input';
       }
     }
-    if (!how) throw fail('UPLOAD_BUTTON_NOT_FOUND');
+    if (!how) {
+      const vs = await this.call('viewState').catch(() => null);
+      throw fail('UPLOAD_BUTTON_NOT_FOUND', vs ? `${vs.path}${vs.composer ? '' : ' · kotak prompt belum tampil'}${vs.agent ? ' · Flow Agent aktif' : ''}` : null);
+    }
     const isUpload = (e) => e.kind !== 'request' && e.rpcids.includes(wire.UPLOAD_RPC);
     const ev = await net.wait(mark, isUpload, timeoutMs);
     if (!ev) {

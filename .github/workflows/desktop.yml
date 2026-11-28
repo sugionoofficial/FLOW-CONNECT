@@ -123,7 +123,7 @@ jobs:
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
 
-            **Baru di versi ini (v1.9.1):** pemilihan model AI langsung di setiap Alat Kreatif (pilihan awal mengikuti Asisten Prompt), tombol muat ulang model, dan pesan galat khusus untuk kuota harian provider, rate limit, kredit, kunci API, model tidak tersedia, serta jawaban kosong. Tidak lagi menyamarkan semua galat sebagai “layanan sedang bermasalah”. Model musik Lyria dipindahkan ke kategori Audio, bukan Chat. Kuota provider yang habis tetap perlu reset kuota / konfigurasi admin; tidak ada perpindahan otomatis ke model berbayar.
+            **Baru di versi ini (v1.9.2):** perbaikan galat Bulk/Studio "tombol unggah gambar tidak ditemukan". Setelah kembali dari tampilan edit Flow, atau saat project baru dibuka, aplikasi sekarang menunggu tombol "+" dan kotak prompt Flow selesai tampil sebelum mengunggah foto referensi. Dari v1.9.1: pemilihan model AI langsung di setiap Alat Kreatif (pilihan awal mengikuti Asisten Prompt), tombol muat ulang model, dan pesan galat khusus untuk kuota harian provider, rate limit, kredit, kunci API, model tidak tersedia, serta jawaban kosong. Tidak lagi menyamarkan semua galat sebagai “layanan sedang bermasalah”. Model musik Lyria dipindahkan ke kategori Audio, bukan Chat. Kuota provider yang habis tetap perlu reset kuota / konfigurasi admin; tidak ada perpindahan otomatis ke model berbayar.
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

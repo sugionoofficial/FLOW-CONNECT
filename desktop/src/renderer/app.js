@@ -70,6 +70,7 @@ const ERR = {
   FORBIDDEN: 'Tidak diizinkan.',
   BROWSER_LAUNCH_FAILED: 'Browser tidak bisa dijalankan. Periksa pilihan browser di Pengaturan.',
   LOGIN_TIMEOUT: 'Kartu login ditutup karena terlalu lama. Coba lagi.',
+  LOGIN_REJECTED: 'Google menolak login: "This browser or app may not be secure".',
   LOGIN_IN_PROGRESS: 'Kartu login untuk akun ini sudah terbuka.',
   QUEUE_RUNNING: 'Hentikan antrean otomatis terlebih dahulu.',
   NEW_PROJECT_NOT_FOUND: 'Tombol "New project" di Google Flow tidak ditemukan. Coba "Project baru" sekali lagi, atau klik "Lihat Flow" lalu buat project secara manual.',
@@ -1683,6 +1684,7 @@ function loginSheetHtml() {
   return `<form method="dialog"><div class="body login-sheet">
     <div class="ls-head"><div class="ls-logo">${icon('log-in', 'lg')}</div><div><h3>Masuk ke Google</h3><div class="muted small">${esc((accById(l.id) || {}).label || '')}</div></div></div>
     <ol class="ls-steps">${LOGIN_STEPS.map(([, t, d], i) => `<li class="${i < idx || l.state === 'done' ? 'done' : i === idx ? 'now' : ''}"><span class="ls-dot">${i < idx || l.state === 'done' ? icon('check') : i === idx ? icon('loader-circle', 'spin') : i + 1}</span><div><b>${t}</b>${d ? `<div class="muted small">${d}</div>` : ''}</div></li>`).join('')}</ol>
+    ${l.retried && (l.state === 'retry' || l.state === 'card') ? infobar('warning', 'rotate-ccw', 'Google menolak browser lama. ', 'Semua jendela browser akun ini ditutup; kartu login dibuka ulang di jendela baru…') : ''}
     <p class="small faint">Kartu tidak muncul? Periksa taskbar, atau gunakan <a data-ls="window">login di browser biasa</a>.</p>
   </div><div class="foot"><button class="btn" value="cancel" data-ls="cancel">${l.state === 'card' ? 'Batal' : 'Tutup'}</button></div></form>`;
 }
@@ -1701,7 +1703,7 @@ async function loginFlow(id) {
     const b = e.target.closest('[data-ls]');
     if (!b) return;
     e.preventDefault();
-    if (b.dataset.ls === 'window') { call('accounts:loginCancel', id); d.close(); ACTIONS.loginWindowHelp(); }
+    if (b.dataset.ls === 'window') { call('accounts:loginCancel', id); d.close(); setTimeout(() => ACTIONS.loginWindowHelp({ dataset: { id } }), 300); }
     else { if (S.login && S.login.state === 'card') call('accounts:loginCancel', id); d.close(); }
   };
   d.addEventListener('click', onClick);
@@ -1724,8 +1726,31 @@ async function loginFlow(id) {
     } else if (d.open) d.close();
   } catch (e) {
     if (d.open) d.close();
+    if (e.message === 'LOGIN_REJECTED') { S.login = null; render(); return loginRejected(id, e); }
     toast(msg(e), 'err');
   } finally { S.login = null; render(); }
+}
+
+/** Google: "This browser or app may not be secure" — sudah dicoba ulang otomatis di proses baru; tawarkan jalan keluar. */
+async function loginRejected(id, e) {
+  const a = accById(id) || {};
+  await new Promise((r) => setTimeout(r, 80)); // event "close" kartu login (antre) harus lewat dulu sebelum dialog baru dibuka
+  const r = await dialog({
+    title: 'Google menolak login',
+    body: `<p>Google menampilkan <b>"This browser or app may not be secure"</b> untuk ${esc(a.label || 'akun ini')}. Aplikasi sudah menutup semua jendela browser akun ini dan mencoba ulang di jendela baru, tetapi masih ditolak${e.detail ? ` <span class="faint">(${esc(e.detail)})</span>` : ''}.</p>
+      <p class="muted small">Coba urut dari atas: <b>buat ulang profil</b> akun ini (data login lama di profil ini dihapus; akun lain tidak tersentuh), lalu kartu login dibuka lagi. Bila masih ditolak: perbarui Chrome/Edge, pilih browser lain di Pengaturan → Browser, atau tunggu ±1 jam (Google kadang membatasi bila banyak akun masuk berturut-turut dari satu PC).</p>`,
+    buttons: [{ label: 'Buat ulang profil & coba lagi', value: 'reset', primary: true }, { label: 'Login di browser biasa', value: 'window' }, { label: 'Tutup', value: 'cancel' }]
+  });
+  if (!r) return;
+  if (r.value === 'window') return ACTIONS.loginWindowHelp({ dataset: { id } });
+  if (r.value === 'reset') {
+    try {
+      S.settings = await call('accounts:resetProfile', id);
+      toast('Profil browser akun ini dibuat ulang. Membuka kartu login…', 'info');
+      render();
+      return loginFlow(id);
+    } catch (err) { toast(msg(err), 'err'); }
+  }
 }
 
 const ACTIONS = {
@@ -1781,15 +1806,15 @@ const ACTIONS = {
   },
   async setActive(el) { S.settings = await call('settings:set', { activeAccountId: el.dataset.id }); render(); },
   login: (el) => loginFlow(el.dataset.id),
-  loginWindowHelp: async () => {
-    const a = acc();
+  loginWindowHelp: async (el) => {
+    const a = (el && el.dataset && el.dataset.id && accById(el.dataset.id)) || acc();
     if (!a) return;
     const r = await dialog({
       title: 'Login di browser biasa',
       body: '<p>Cadangan bila kartu login bermasalah: jendela Chrome/Edge biasa dibuka di halaman login Google. Setelah berhasil masuk, <b>tutup jendela itu</b>, lalu klik <b>Hubungkan</b>.</p>',
       buttons: [{ label: 'Buka browser', value: 'ok', primary: true }, { label: 'Batal', value: 'cancel' }]
     });
-    if (r) await call('accounts:loginWindow', a.id);
+    if (r) await call('accounts:loginWindow', a.id).catch((e) => toast(msg(e), 'err'));
   },
   connect: (el) => busy('connect' + `data-id="${el.dataset.id}"`, async () => {
     S.activity = 'Membuka Google Flow di latar belakang…';
@@ -2956,6 +2981,7 @@ async function init() {
   fc.on('login', (l) => {
     if (!S.login || S.login.id !== l.id) return;
     S.login.state = l.state;
+    if (l.state === 'retry') S.login.retried = true;
     renderLoginSheet();
   });
   fc.on('navigate', (p) => {

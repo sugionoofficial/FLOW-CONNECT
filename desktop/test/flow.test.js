@@ -216,7 +216,9 @@ document.getElementById('pro').addEventListener('click',function(){fetch('/mock/
       if (u.pathname === '/mock/onb') { state.onb.push(u.searchParams.get('step')); if (state.firstRun && u.searchParams.get('step') === 'tour') state.firstRun = false; if (u.searchParams.get('step') === 'changelog') state.changelog = null; res.writeHead(204); return res.end(); }
       if (req.method === 'GET' && u.pathname === '/mock-login') {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-        return res.end('<!doctype html><title>Login</title><p>Masuk…</p><script>fetch("/mock/wd?v="+navigator.webdriver);setTimeout(function(){location.href=new URLSearchParams(location.search).get("continue")},1200)</script>');
+        // state.rejectLogin = n → Google menolak n kali berikutnya ("This browser or app may not be secure")
+        const to = state.rejectLogin > 0 ? (state.rejectLogin--, 'https://accounts.google.com/v3/signin/rejected?rrk=46&hl=en') : null;
+        return res.end('<!doctype html><title>Login</title><p>Masuk…</p><script>fetch("/mock/wd?v="+navigator.webdriver);setTimeout(function(){location.href=' + (to ? JSON.stringify(to) : 'new URLSearchParams(location.search).get("continue")') + '},1200)</script>');
       }
       if (u.pathname === '/mock/wd') { state.webdriver = u.searchParams.get('v'); res.writeHead(204); return res.end();
       }
@@ -555,6 +557,58 @@ test('Kartu login → mode tersembunyi → project baru → setelan Flow → cad
   assert.strictEqual(res2.settings.missing.length, 0);
   assert.strictEqual(mock.generated[mock.generated.length - 1].settings.model, 'Nano Banana 2.1');
   await sleep(10);
+});
+
+test('Kartu login: proses browser lama (berport debug, tak dikenal aplikasi) ditutup dulu; Google menolak → dibuka ulang sekali, lalu LOGIN_REJECTED', { skip: !CHROME && 'Chrome tidak ditemukan (set CHROME_PATH)', timeout: 180000 }, async (t) => {
+  const browser = require('../src/main/browser');
+  const mock = await mockFlow();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fc-reject-'));
+  const base = `http://127.0.0.1:${mock.port}`;
+  const flowUrl = `${base}/?view=landing&ce=1`;
+  const profileDir = path.join(tmp, 'profile');
+  const s = new FlowSession({
+    profileDir, getBrowser: () => ({ path: CHROME }), flowUrl, getMode: () => 'hidden',
+    loginUrl: `http://localhost:${mock.port}/mock-login?continue=${encodeURIComponent(flowUrl)}`,
+    agentCfg: { mediaHosts: ['127.0.0.1'], allowHttp: true }, extraArgs: EXTRA
+  });
+  t.after(async () => { await browser.killProfile(profileDir).catch(() => {}); mock.server.closeAllConnections(); mock.server.close(); try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* Windows */ } });
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  // halaman login di host lain (localhost) daripada Flow (127.0.0.1) — seperti accounts.google.com ↔ flow.google.com
+
+  // browser Flow tersembunyi yang "tertinggal": masih berjalan dengan port debug, tetapi file port-nya hilang
+  const orphan = browser.launchBrowser({ exe: CHROME, profileDir, url: 'about:blank', debug: true, mode: 'hidden', extraArgs: EXTRA });
+  await browser.waitForDebugPort(profileDir);
+  fs.rmSync(path.join(profileDir, 'DevToolsActivePort'), { force: true });
+  assert.strictEqual(await browser.existingDebugPort(profileDir), null, 'aplikasi tidak lagi mengenali proses itu');
+  const found = await browser.profileProcesses(profileDir);
+  assert.ok(found.some((p) => p.pid === orphan.pid && p.main && p.debug), 'proses lama ditemukan dari baris perintah: ' + JSON.stringify(found));
+
+  // 1) Google menolak sekali → kartu ditutup, dibuka ulang di proses baru → berhasil
+  mock.state.rejectLogin = 1;
+  const states = [];
+  s.on('login', (x) => states.push(x));
+  const lr = await s.loginCard({ card: { x: 100, y: 100, width: 460, height: 640 }, timeoutMs: 60000 });
+  assert.deepStrictEqual(lr, { ok: true });
+  assert.deepStrictEqual(states, ['card', 'retry', 'card', 'done']);
+  assert.ok(!alive(orphan.pid), 'proses berport debug yang lama sudah ditutup sebelum kartu login dibuka');
+  assert.deepStrictEqual(await browser.profileProcesses(profileDir), [], 'kartu login juga sudah ditutup');
+
+  // 2) masih ditolak setelah dibuka ulang → LOGIN_REJECTED (tidak menunggu sampai batas waktu)
+  mock.state.rejectLogin = 2;
+  const t0 = Date.now();
+  await assert.rejects(() => s.loginCard({ card: { x: 100, y: 100, width: 460, height: 640 }, timeoutMs: 120000 }), /LOGIN_REJECTED/);
+  assert.ok(Date.now() - t0 < 60000, 'penolakan terdeteksi cepat');
+  assert.deepStrictEqual(await browser.profileProcesses(profileDir), []);
+
+  // 3) "login di browser biasa" juga menutup proses lama profil ini lebih dulu
+  const orphan2 = browser.launchBrowser({ exe: CHROME, profileDir, url: 'about:blank', debug: true, mode: 'hidden', extraArgs: EXTRA });
+  await browser.waitForDebugPort(profileDir);
+  fs.rmSync(path.join(profileDir, 'DevToolsActivePort'), { force: true });
+  await s.openForLogin();
+  assert.ok(!alive(orphan2.pid), 'proses lama ditutup sebelum browser biasa dibuka');
+  await new Promise((r) => setTimeout(r, 1500));
+  const plain = await browser.profileProcesses(profileDir);
+  assert.ok(plain.length && plain.every((p) => !p.debug), 'browser biasa tanpa port debug: ' + JSON.stringify(plain));
 });
 
 test('Kartu login (Chrome asli berjendela): tanpa port debug → navigator.webdriver=false, Google tidak menolak', { skip: !(CHROME && HEADED_ARGS) && 'set CHROME_HEADED_ARGS (butuh desktop)', timeout: 120000 }, async (t) => {

@@ -524,10 +524,24 @@ function registerIpc() {
   handle('accounts:loginCancel', (id) => { const c = logins.get(id); if (c) c.stop = true; });
   // cadangan: jendela browser biasa tanpa kendali (bila kartu login bermasalah)
   handle('accounts:loginWindow', async (id) => {
+    if (logins.has(id)) throw new Error('LOGIN_IN_PROGRESS');
+    await session(id).openForLogin(); // semua proses lama profil ini ditutup dulu (lihat FlowSession.freeProfile)
+  });
+  // Google tetap menolak login di profil ini → buat ulang profil browser akun ini (akun lain tidak tersentuh)
+  handle('accounts:resetProfile', async (id) => {
+    const a = account(id);
+    if (logins.has(id)) throw new Error('LOGIN_IN_PROGRESS');
+    if (queue.running || (bulk.running && bulk.batch && bulk.batch.accounts.some((x) => x.id === id))) throw new Error(queue.running ? 'QUEUE_RUNNING' : 'BULK_RUNNING');
     const s = session(id);
-    if (s.connected) await s.closeBrowser();
-    await browser.waitForExit(profileDir(id));
-    s.openForLogin();
+    await s.freeProfile();
+    s.disconnect();
+    if (toolWins) await toolWins.forget(id).catch(() => {});
+    await new Promise((r) => setTimeout(r, 800));
+    fs.rmSync(profileDir(id), { recursive: true, force: true, maxRetries: 5, retryDelay: 400 });
+    delete a.signedInAt; delete a.headlessFailedAt; delete a.headlessReason;
+    store.save();
+    await refreshStatus(id).catch(() => {});
+    return publicSettings();
   });
   handle('accounts:resetHeadless', (id) => {
     const a = account(id);

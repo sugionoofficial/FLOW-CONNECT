@@ -454,8 +454,9 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: '2', altKey: true, bubbles: true }))`);
   await sleep(250);
   assert.strictEqual(await ev('document.querySelector(".subtab.on").textContent'), 'Alat', 'Alt+2 → Alat');
-  assert.strictEqual(await ev('document.querySelectorAll(".tool-card").length'), 31, 'Bulk + 12 Alat Kreatif + 6 alat lokal + 12 alat Flow');
-  assert.strictEqual(await ev('document.querySelectorAll(".tool-card.lab[data-act=labOpen]").length'), 12, '12 Alat Kreatif offline');
+  assert.strictEqual(await ev('document.querySelectorAll(".tool-card").length'), 34, 'Bulk + 15 Alat Kreatif + 6 alat lokal + 12 alat Flow');
+  assert.strictEqual(await ev('document.querySelectorAll(".tool-card.lab[data-act=labOpen]").length'), 15, '15 Alat Kreatif offline');
+  assert.deepStrictEqual(await ev('["upscale", "metadata", "join"].filter(id => document.querySelector(`.tool-card.lab[data-act=labOpen][data-id="${id}"]`))'), ['upscale', 'metadata', 'join'], 'tiga alat v1.9.0 tersedia');
   assert.ok(await ev('!document.querySelector("details.flow-fallback").open'), 'alat Flow asli disembunyikan sebagai cadangan');
   await ev(`document.querySelector('[data-act=labOpen][data-id=storyboard]').click()`);
   await sleep(150);

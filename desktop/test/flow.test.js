@@ -37,7 +37,7 @@ const BIGPNG = makePng(32, 32, [10, 200, 120]);
 function mockFlow() {
   const media = []; // {id, prompt, files, at}
   const generated = [];
-  const state = { assets: [], blockNext: 0, projects: 0, rpc: false, terms: false, unsafeNext: 0, failNext: 0, uploads: [], polls: 0, onb: [], firstRun: false, lang: null, blocked: false, homeOnly: false };
+  const state = { assets: [], blockNext: 0, projects: 0, rpc: false, terms: false, unsafeNext: 0, failNext: 0, uploads: [], polls: 0, onb: [], firstRun: false, lang: null, blocked: false, homeOnly: false, changelog: null };
   let port;
   // panel setelan meniru Flow terbaru: chip "Video · 8s · x2" → dialog berisi radio + daftar model
   const settingsUi = `
@@ -135,6 +135,30 @@ document.getElementById('prompt').addEventListener('keydown',function(e){if(!pic
     });
 });
 `;
+  // kartu "What's new" Flow (state.changelog = 'icon' | 'svg'): muncul sesaat setelah project terbuka, TIDAK tertutup
+  // dengan Escape; panah (tanpa teks) → … → halaman terakhir baru "Get started" aktif (sebelumnya hanya diredupkan)
+  const changelogCard = () => {
+    if (!state.changelog) return '';
+    const next = state.changelog === 'svg' ? '<svg width="20" height="20" viewBox="0 0 24 24"><path d="M4 11h12l-5-5 1.4-1.4L20 12l-7.4 7.4L11 18l5-5H4z"/></svg>' : '<i class="google-symbols">arrow_forward</i>';
+    const back = state.changelog === 'svg' ? '<svg width="20" height="20" viewBox="0 0 24 24"><path d="M20 11H8l5-5-1.4-1.4L4 12l7.4 7.4L13 18l-5-5h12z"/></svg>' : '<i class="google-symbols">arrow_back</i>';
+    const pages = state.changelog === 'svg' ? 2 : 3;
+    return `<div id="chbd" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50"></div>
+<div role="dialog" aria-modal="true" id="chl" style="display:none;position:fixed;left:25%;top:5%;width:50%;height:85%;background:#222;color:#eee;padding:16px;z-index:51;box-sizing:border-box">
+<h2 id="cht">A faster, easier-to-reach Flow Agent</h2><p>Click Read More or Use side panel to open the full chat view.</p>
+<button id="chback" style="display:none;position:absolute;left:16px;bottom:70px;width:45%;height:32px">${back}</button>
+<button id="chnext" style="position:absolute;right:16px;bottom:70px;width:45%;height:32px">${next}</button>
+<button id="chall" style="position:absolute;left:16px;bottom:16px">View all changelogs</button>
+<button id="chgo" style="position:absolute;right:16px;bottom:16px;opacity:.4">Get started</button></div>
+<script>(function(){var p=0,N=${pages},T=['A faster, easier-to-reach Flow Agent','Smarter search in your projects','Tool Builder upgrades'];
+function $(i){return document.getElementById(i)}
+function paint(){$('cht').textContent=T[p];$('chnext').style.display=p<N-1?'block':'none';$('chback').style.display=p>0?'block':'none';$('chgo').style.opacity=p===N-1?'1':'.4'}
+setTimeout(function(){$('chbd').style.display='block';$('chl').style.display='block';paint()},700);
+$('chnext').addEventListener('click',function(e){if(!e.isTrusted)return;p=Math.min(N-1,p+1);paint()});
+$('chback').addEventListener('click',function(e){if(!e.isTrusted)return;fetch('/mock/onb?step=BACK');p=Math.max(0,p-1);paint()});
+$('chall').addEventListener('click',function(){fetch('/mock/onb?step=CHANGELOGS')});
+$('chgo').addEventListener('click',function(e){if(!e.isTrusted)return;if(p<N-1){fetch('/mock/onb?step=EARLY');return}fetch('/mock/onb?step=changelog');$('chbd').remove();$('chl').remove()});
+})();</script>`;
+  };
   const page = (signedIn, ce) => `<!doctype html><html lang="id"><head><title>Film Saya - Google Flow</title></head><body>
 <script>window.WIZ_global_data=${JSON.stringify(signedIn ? { SNlM0e: 'AT_TOKEN', oPEP7c: 'kreator@gmail.com', cfb2h: 'bl1', FdrFJe: 'sid' } : {})};window.__rpc=${state.rpc};window.__terms=${state.terms};</script>
 <header><button aria-label="Setelan"><i>settings</i></button><button aria-label="Tambah media" id="add"><i>add</i></button></header>
@@ -159,7 +183,7 @@ document.getElementById('file').addEventListener('change',function(e){files=[].m
 function val(){var p=document.getElementById('prompt');return p.tagName==='TEXTAREA'?p.value:p.innerText}
 document.getElementById('prompt').addEventListener('input',function(){document.getElementById('gen').disabled=!val().trim()});
 ${genJs}
-</script></body></html>`;
+</script>${changelogCard()}</body></html>`;
   // beranda Flow (daftar project + tombol "New project") & halaman sambutan publik
   // akun baru (state.firstRun): dialog syarat (centang dulu) → dialog sambutan (dengan tawaran langganan yang TIDAK boleh
   // diklik); bahasa akun tak dikenal (state.lang) → label "New project" hanya bila ?hl=en; state.blocked → Flow tidak tersedia
@@ -189,7 +213,7 @@ document.getElementById('pro').addEventListener('click',function(){fetch('/mock/
       const keep = u.searchParams.get('ce') === '1' ? '?ce=1' : '';
       if (req.method === 'GET' && u.pathname === '/' && u.searchParams.get('view') === 'landing') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(landing(keep)); }
       if (req.method === 'GET' && u.pathname === '/' && (u.searchParams.get('view') === 'home' || (state.homeOnly && !u.searchParams.get('view')))) { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(home(keep, u.searchParams.get('hl'))); }
-      if (u.pathname === '/mock/onb') { state.onb.push(u.searchParams.get('step')); if (state.firstRun && u.searchParams.get('step') === 'tour') state.firstRun = false; res.writeHead(204); return res.end(); }
+      if (u.pathname === '/mock/onb') { state.onb.push(u.searchParams.get('step')); if (state.firstRun && u.searchParams.get('step') === 'tour') state.firstRun = false; if (u.searchParams.get('step') === 'changelog') state.changelog = null; res.writeHead(204); return res.end(); }
       if (req.method === 'GET' && u.pathname === '/mock-login') {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         return res.end('<!doctype html><title>Login</title><p>Masuk…</p><script>fetch("/mock/wd?v="+navigator.webdriver);setTimeout(function(){location.href=new URLSearchParams(location.search).get("continue")},1200)</script>');
@@ -747,4 +771,30 @@ test('Akun Google baru: dialog syarat & sambutan ditutup, bahasa akun tak dikena
   const t0 = Date.now();
   await assert.rejects(() => s.newProject(), (e) => e.message === 'FLOW_UNAVAILABLE' && /available in your country/.test(e.detail));
   assert.ok(Date.now() - t0 < 20000);
+});
+
+test('Kartu "What\'s new" Flow setelah project baru (tak bisa ditutup Escape): panah berikutnya → Get started', { skip: !CHROME && 'Chrome tidak ditemukan (set CHROME_PATH)', timeout: 120000 }, async (t) => {
+  const mock = await mockFlow();
+  Object.assign(mock.state, { homeOnly: true, changelog: 'icon' });
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fc-chl-'));
+  const base = `http://127.0.0.1:${mock.port}`;
+  const s = new FlowSession({ profileDir: path.join(tmp, 'profile'), getBrowser: () => ({ path: CHROME }), flowUrl: `${base}/`, agentCfg: { mediaHosts: ['127.0.0.1'], allowHttp: true }, extraArgs: EXTRA });
+  t.after(async () => { await Promise.race([s.closeBrowser().catch(() => {}), new Promise((r) => setTimeout(r, 15000))]); mock.server.closeAllConnections(); mock.server.close(); try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* Windows */ } });
+  await s.connect();
+  await s.navigate(`${base}/`);
+  await new Promise((r) => setTimeout(r, 600));
+  const np = await s.newProject();
+  assert.match(np.projectId, /^p-new-/);
+  assert.strictEqual(mock.state.projects, 1, 'tepat satu project');
+  assert.deepStrictEqual(mock.state.onb, ['changelog'], 'panah → panah → Get started; "View all changelogs" / kembali tidak diklik');
+  assert.strictEqual(await s.call('overlayOpen'), false, 'kartu sudah tertutup');
+  // varian ikon svg tanpa nama, ditemukan lewat _closeOverlays (dipakai sebelum mengetik prompt / setelan)
+  mock.state.onb.length = 0;
+  Object.assign(mock.state, { changelog: 'svg' });
+  await s.navigate(`${base}/project/p-test-1?ce=1`);
+  await new Promise((r) => setTimeout(r, 1400));
+  assert.strictEqual(await s.call('overlayOpen'), true);
+  await s._closeOverlays();
+  assert.deepStrictEqual(mock.state.onb, ['changelog']);
+  assert.strictEqual(await s.call('overlayOpen'), false);
 });

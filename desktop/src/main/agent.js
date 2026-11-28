@@ -4,7 +4,7 @@
 // ambil file media, mencari kolom prompt / input file / tombol Generate.
 // Tidak pernah membuat token reCAPTCHA — Generate selalu lewat tombol UI Flow sendiri.
 
-const AGENT_VERSION = 12;
+const AGENT_VERSION = 13;
 
 /* eslint-disable */
 function fcAgent(V, cfg) {
@@ -478,12 +478,56 @@ function fcAgent(V, cfg) {
   var ONB_RANK = [/agree|accept|setuju|terima|understand|mengerti/i, /^(create|buat)/i, /continue|lanjut|get started|let['’]?s|mulai|start/i, /got it|^ok|oke|done|selesai/i, /next|berikutnya|selanjutnya/i, /no,? thanks|not now|maybe later|tidak|nanti/i, /skip|lewati|close|dismiss|tutup/i];
   var PAGE_AGREE = /^(i agree|agree and continue|accept and continue|i accept|setuju dan lanjutkan|saya setuju)$/i;
   function onbRank(lab) { for (var i = 0; i < ONB_RANK.length; i++) if (ONB_RANK[i].test(lab)) return i; return ONB_RANK.length; }
+  // nama ikon tombol tanpa teks (Material Symbols: "arrow_forward", atau data-icon / aria-label pada svg)
+  function iconName(el) {
+    var ic = el.querySelectorAll(ICON_SEL + ', svg, [data-icon]');
+    var out = '';
+    for (var i = 0; i < ic.length; i++) out += ' ' + (ic[i].getAttribute('data-icon') || ic[i].getAttribute('aria-label') || ic[i].textContent || '');
+    return out.replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+  // tombol kelihatan nonaktif (Flow kadang hanya meredupkan "Get started" sampai halaman terakhir)
+  function looksDisabled(el, root) {
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') return true;
+    for (var n = el; n && n !== root && n.nodeType === 1; n = n.parentElement) {
+      var cs = getComputedStyle(n);
+      if (parseFloat(cs.opacity) < 0.55 || cs.pointerEvents === 'none' || cs.cursor === 'not-allowed') return true;
+    }
+    return false;
+  }
+  var PAGER_NEXT_LABEL = /^(next|next page|next slide|berikutnya|selanjutnya|halaman berikutnya|›|»|→|>)$/i;
+  var ICON_WORD = /^(arrow_forward(_ios)?|arrow_right(_alt)?|chevron_right|navigate_next|keyboard_arrow_right|east|arrow_back(_ios)?|arrow_left|chevron_left|navigate_before|keyboard_arrow_left|west|close)$/;
+  var PAGER_NEXT_ICON = /arrow_forward|arrow_right|chevron_right|navigate_next|keyboard_arrow_right|east|forward|next|right/;
+  var PAGER_BACK_ICON = /arrow_back|arrow_left|chevron_left|navigate_before|keyboard_arrow_left|west|back|previous|prev|left/;
+  // tombol panah "berikutnya" di kartu berhalaman (mis. kartu "What's new" / changelog Flow): teks kosong / ikon panah
+  function pagerKind(el, root) {
+    var lab = labelOf(el);
+    if (ICON_WORD.test(lab)) lab = ''; // ligatur ikon tanpa kelas ikon terbaca sebagai teks
+    if (lab) {
+      if (PAGER_NEXT_LABEL.test(lab)) return 'next';
+      if (/^(back|previous|sebelumnya|kembali|‹|«|←|<)$/i.test(lab)) return 'back';
+      return null;
+    }
+    var ic = iconName(el) || (ICON_WORD.test(labelOf(el)) ? labelOf(el) : '');
+    if (ic) { if (PAGER_BACK_ICON.test(ic)) return 'back'; if (PAGER_NEXT_ICON.test(ic)) return 'next'; if (/close|clear|cancel/.test(ic)) return 'close'; }
+    // ikon svg tanpa nama di bagian bawah kartu: separuh kanan = berikutnya, separuh kiri = kembali;
+    // di bagian atas kartu (pojok) = tombol tutup
+    var r = el.getBoundingClientRect(), rr = root.getBoundingClientRect();
+    if (r.width < 16 || r.height < 16) return null;
+    if (r.top + r.height / 2 < rr.top + rr.height * 0.4) return 'close';
+    return (r.left + r.width / 2) > (rr.left + rr.width / 2) ? 'next' : 'back';
+  }
+  function dialogHasSignOut(root) {
+    if (/sign ?out|log ?out/i.test(root.innerText || '')) return true;
+    var bs = root.querySelectorAll('button, [role="button"], a, [role="menuitem"], [role="link"]');
+    for (var i = 0; i < bs.length; i++) if (SIGN_OUT.test(labelOf(bs[i]))) return true;
+    return false;
+  }
   function onboardingTarget() {
     var dl = Array.prototype.filter.call(document.querySelectorAll('[role="dialog"], [role="alertdialog"], [aria-modal="true"], .cdk-overlay-pane, dialog[open]'), visible);
     for (var d = dl.length - 1; d >= 0; d--) {
       var root = dl[d];
       var txt = root.innerText || '';
-      if (SIGN_OUT.test(txt) || root.querySelector('[contenteditable="true"], [role="textbox"]')) continue; // panel akun / kolom prompt: jangan disentuh
+      if (dialogHasSignOut(root) || root.querySelector('[contenteditable="true"], [role="textbox"]')) continue; // panel akun / kolom prompt: jangan disentuh
       // kotak centang persetujuan (syarat & ketentuan) dicentang dulu
       var cbs = root.querySelectorAll('input[type="checkbox"], [role="checkbox"]');
       for (var c = 0; c < cbs.length; c++) {
@@ -493,16 +537,25 @@ function fcAgent(V, cfg) {
         if (hit && visible(hit)) return box(hit, { kind: 'checkbox', dialog: maskText(txt).slice(0, 120) });
       }
       var bs = root.querySelectorAll('button, [role="button"], a[role="button"]');
-      var best = null, bestRank = 99;
+      var best = null, bestRank = 99, next = null, close = null;
       for (var b = 0; b < bs.length; b++) {
         var el = bs[b];
-        if (!visible(el) || el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+        if (!visible(el) || looksDisabled(el, root)) continue;
         var lab = labelOf(el);
-        if (!ONB_OK.test(lab) || ONB_BAD.test(lab)) continue;
+        if (ONB_BAD.test(lab)) continue;
+        var pk = pagerKind(el, root);
+        if (pk === 'next' && !next) next = el;
+        if (pk === 'close' && !close) close = el;
+        if (!ONB_OK.test(lab)) continue;
         var r = onbRank(lab);
         if (r < bestRank) { bestRank = r; best = el; }
       }
+      // kartu berhalaman: panah "berikutnya" dulu sampai halaman terakhir (di sana "Get started" aktif);
+      // persetujuan (I agree) tetap didahulukan, dan kartu yang berputar tanpa akhir tidak diikuti terus
+      root.__fcNext = root.__fcNext || 0;
+      if (next && bestRank > 0 && root.__fcNext < 12) { root.__fcNext++; return box(next, { kind: 'next', dialog: maskText(txt).slice(0, 120) }); }
       if (best) return box(best, { kind: 'dismiss', dialog: maskText(txt).slice(0, 120) });
+      if (close) return box(close, { kind: 'close', dialog: maskText(txt).slice(0, 120) });
     }
     // halaman persetujuan penuh (bukan dialog): hanya tombol "I agree" yang jelas
     var pb = document.querySelectorAll('button, [role="button"]');

@@ -4,7 +4,7 @@
 // ambil file media, mencari kolom prompt / input file / tombol Generate.
 // Tidak pernah membuat token reCAPTCHA — Generate selalu lewat tombol UI Flow sendiri.
 
-const AGENT_VERSION = 11;
+const AGENT_VERSION = 12;
 
 /* eslint-disable */
 function fcAgent(V, cfg) {
@@ -453,19 +453,85 @@ function fcAgent(V, cfg) {
     if (!hit && scope !== 'overlay') hit = search(document);
     return hit ? box(hit) : null;
   }
-  var NEW_PROJECT = /^\+?\s*(new project|create (a )?new project|start new project|project baru|proyek baru|buat project( baru)?|buat proyek( baru)?|nuevo proyecto|新建项目|新建項目|新增專案)\s*$/i;
-  var LANDING_CTA = /^(create with (google )?flow|get started|start creating|try (it )?now|coba flow|mulai membuat)$/i;
+  // "New project" dalam berbagai bahasa akun Google (ikon "add" di depan diabaikan)
+  var NEW_PROJECT = /^(?:\+|add|add_2|add_circle)?\s*(new project|create (a )?new project|start (a )?new project|create (your )?first project|create project|project baru|proyek baru|projek baru|buat project( baru)?|buat proyek( baru)?|proyek anyar|proyék anyar|nuevo proyecto|novo projeto|nouveau projet|neues projekt|nuovo progetto|nieuw project|nowy projekt|yeni proje|новый проект|dự án mới|โปรเจกต์ใหม่|โปรเจ็กต์ใหม่|新しいプロジェクト|새 프로젝트|新建项目|新建項目|新增專案|مشروع جديد)\s*$/i;
+  var NEW_PROJECT_LOOSE = /\b(new project|project baru|proyek baru)\b/i;
+  var LANDING_CTA = /^(create with (google )?flow|get started|start creating|try (it )?now|try flow|coba flow|mulai membuat|mulai|ayo mulai)$/i;
   function newProjectTarget() {
     var els = document.querySelectorAll('button, [role="button"], a[href], [role="link"], [tabindex="0"]');
-    var cta = null;
+    var cta = null, loose = null;
     for (var i = 0; i < els.length; i++) {
       var el = els[i];
       if (!visible(el)) continue;
       var lab = labelOf(el);
       if (NEW_PROJECT.test(lab)) return box(el, { kind: 'new' });
+      if (!loose && lab.length <= 40 && NEW_PROJECT_LOOSE.test(lab)) loose = el;
       if (!cta && LANDING_CTA.test(lab)) cta = el;
     }
+    if (loose) return box(loose, { kind: 'new' });
     return cta ? box(cta, { kind: 'cta' }) : null;
+  }
+
+  // ---------- Sambutan / persetujuan pertama kali (akun Google yang baru memakai Flow) ----------
+  var ONB_OK = /^(i agree|agree|accept|i accept|accept all|agree and continue|accept and continue|i understand|continue|get started|let['’]?s go|let['’]?s get started|got it|ok|okay|next|done|start creating|try (it )?now|skip|skip tour|close|dismiss|no thanks|no,? thanks|not now|maybe later|create|create project|setuju|saya setuju|setuju dan lanjutkan|terima|saya mengerti|mengerti|lanjutkan|lanjut|mulai|oke|berikutnya|selanjutnya|selesai|lewati|tutup|tidak sekarang|nanti saja|tidak,? terima kasih|buat|buat project)$/i;
+  var ONB_BAD = /sign ?out|log ?out|keluar|switch account|ganti akun|add account|tambah akun|subscribe|upgrade|buy|purchase|beli|langganan|tingkatkan|delete|hapus|google ai (pro|ultra)|add ai credits|tambah kredit/i;
+  var ONB_RANK = [/agree|accept|setuju|terima|understand|mengerti/i, /^(create|buat)/i, /continue|lanjut|get started|let['’]?s|mulai|start/i, /got it|^ok|oke|done|selesai/i, /next|berikutnya|selanjutnya/i, /no,? thanks|not now|maybe later|tidak|nanti/i, /skip|lewati|close|dismiss|tutup/i];
+  var PAGE_AGREE = /^(i agree|agree and continue|accept and continue|i accept|setuju dan lanjutkan|saya setuju)$/i;
+  function onbRank(lab) { for (var i = 0; i < ONB_RANK.length; i++) if (ONB_RANK[i].test(lab)) return i; return ONB_RANK.length; }
+  function onboardingTarget() {
+    var dl = Array.prototype.filter.call(document.querySelectorAll('[role="dialog"], [role="alertdialog"], [aria-modal="true"], .cdk-overlay-pane, dialog[open]'), visible);
+    for (var d = dl.length - 1; d >= 0; d--) {
+      var root = dl[d];
+      var txt = root.innerText || '';
+      if (SIGN_OUT.test(txt) || root.querySelector('[contenteditable="true"], [role="textbox"]')) continue; // panel akun / kolom prompt: jangan disentuh
+      // kotak centang persetujuan (syarat & ketentuan) dicentang dulu
+      var cbs = root.querySelectorAll('input[type="checkbox"], [role="checkbox"]');
+      for (var c = 0; c < cbs.length; c++) {
+        var cb = cbs[c];
+        if (isChecked(cb) || cb.disabled) continue;
+        var hit = visible(cb) && cb.getBoundingClientRect().width >= 8 ? cb : cb.closest('label, mat-checkbox, .mdc-checkbox, .mdc-form-field');
+        if (hit && visible(hit)) return box(hit, { kind: 'checkbox', dialog: maskText(txt).slice(0, 120) });
+      }
+      var bs = root.querySelectorAll('button, [role="button"], a[role="button"]');
+      var best = null, bestRank = 99;
+      for (var b = 0; b < bs.length; b++) {
+        var el = bs[b];
+        if (!visible(el) || el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+        var lab = labelOf(el);
+        if (!ONB_OK.test(lab) || ONB_BAD.test(lab)) continue;
+        var r = onbRank(lab);
+        if (r < bestRank) { bestRank = r; best = el; }
+      }
+      if (best) return box(best, { kind: 'dismiss', dialog: maskText(txt).slice(0, 120) });
+    }
+    // halaman persetujuan penuh (bukan dialog): hanya tombol "I agree" yang jelas
+    var pb = document.querySelectorAll('button, [role="button"]');
+    for (var k = 0; k < pb.length; k++) {
+      if (visible(pb[k]) && !pb[k].disabled && PAGE_AGREE.test(labelOf(pb[k]))) return box(pb[k], { kind: 'agree' });
+    }
+    return null;
+  }
+  function maskText(t) { return String(t || '').replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '•••@•••').replace(/\s+/g, ' ').trim(); }
+  // Flow tidak bisa dipakai akun ini (negara, usia, admin Workspace, daftar tunggu)
+  var BLOCKED = /(isn['’]?t|is not|not) (yet )?available (in your (country|region)|for your account|to you|for this account)|unavailable in your (country|region)|tidak tersedia (di negara|di wilayah|untuk akun)|verify your age|confirm your age|must be (at least )?18|verifikasi usia|konfirmasi usia|contact your (administrator|admin)|hubungi administrator|(doesn['’]?t|does not) have access to (google )?flow|tidak memiliki akses ke (google )?flow|join the waitlist|gabung (ke )?daftar tunggu/i;
+  function flowBlocked() {
+    var t = ((document.body && document.body.innerText) || '').replace(/\s+/g, ' ');
+    var m = BLOCKED.exec(t);
+    if (!m) return null;
+    var i = Math.max(0, m.index - 60);
+    return { text: maskText(t.slice(i, m.index + 140)) };
+  }
+  // ringkasan halaman untuk pesan galat (tanpa email)
+  function pageSummary() {
+    var h = Array.prototype.filter.call(document.querySelectorAll('h1, h2, [role="heading"]'), visible)[0];
+    var seen = {}, labels = [];
+    var bs = document.querySelectorAll('button, [role="button"], a[href]');
+    for (var i = 0; i < bs.length && labels.length < 10; i++) {
+      if (!visible(bs[i])) continue;
+      var l = maskText(labelOf(bs[i])).slice(0, 30);
+      if (l && !seen[l]) { seen[l] = 1; labels.push(l); }
+    }
+    return { path: location.pathname, lang: (document.documentElement.lang || ''), heading: maskText(h ? h.innerText : '').slice(0, 80), buttons: labels, dialogs: overlays().length };
   }
   // chip setelan di samping kolom prompt (mis. "Video · 8s · x2" / aria-label "Settings trigger")
   function settingsTrigger() {
@@ -778,6 +844,7 @@ function fcAgent(V, cfg) {
     status: status, listMedia: listMedia, getMedia: getMedia, fetchB64: fetchB64, focusPrompt: focusPrompt,
     promptText: promptText, setPromptFallback: setPromptFallback, markFileInput: markFileInput, pasteFiles: pasteFiles,
     findGenerate: findGenerate, find: find, newProjectTarget: newProjectTarget, settingsTrigger: settingsTrigger,
+    onboardingTarget: onboardingTarget, flowBlocked: flowBlocked, pageSummary: pageSummary,
     legacyModeTrigger: legacyModeTrigger, modelTrigger: modelTrigger, overlayOpen: overlayOpen, optionLabels: optionLabels,
     pageError: pageError, toolbarAdd: toolbarAdd, uploadMenuItem: uploadMenuItem, dialogCount: dialogCount,
     mentionOptions: mentionOptions, mentionChips: mentionChips, caretToEnd: caretToEnd, emptyFrameChip: emptyFrameChip,

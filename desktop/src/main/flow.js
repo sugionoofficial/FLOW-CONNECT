@@ -625,7 +625,12 @@ class FlowSession extends EventEmitter {
     await this._closeOverlays();
   }
 
-  /** Klik tombol "New project" Flow (dan tombol "Create with Google Flow" di halaman sambutan bila perlu). */
+  /**
+   * Klik tombol "New project" Flow (dan tombol "Create with Google Flow" di halaman sambutan bila perlu).
+   * Akun Google yang baru pertama kali memakai Flow: dialog sambutan / persetujuan ditutup dulu (setuju / lanjutkan /
+   * mengerti — tidak pernah Sign out, langganan, atau beli). Tombol tidak ketemu (bahasa akun lain) → beranda dibuka
+   * ulang dalam bahasa Inggris. Flow tidak tersedia untuk akun ini → FLOW_UNAVAILABLE dengan teks dari Flow.
+   */
   newProject({ timeoutMs = 25000 } = {}) {
     return this._exclusive(async () => {
       await this.beginWork();
@@ -633,23 +638,64 @@ class FlowSession extends EventEmitter {
         const st0 = await this.status();
         // dari dalam project: kembali ke beranda Flow dulu
         if (st0.projectId) await this.navigate(this.flowUrl);
-        const opened = async (ms) => this._waitFor(async () => { const x = await this.status(); return x.projectId ? x : null; }, ms, 500);
-        let clicked = false;
-        for (let attempt = 0; attempt < 4; attempt++) {
+        const done = async (st) => { await this.ensurePage(); await this.waitReady(); await this._dismissOnboarding(); return { projectId: st.projectId, projectTitle: st.projectTitle }; };
+        // tunggu project terbuka; dialog yang muncul setelah klik (sambutan / "Create") ikut ditangani
+        const opened = async (ms) => {
+          for (const end = Date.now() + ms; Date.now() < end;) {
+            const x = await this.status();
+            if (x.projectId) return x;
+            const o = await this.call('onboardingTarget').catch(() => null);
+            if (o) { await this._click(o); await sleep(rand(800, 1200)); } else await sleep(500);
+          }
+          return null;
+        };
+        let clicked = false, english = false;
+        for (let attempt = 0; attempt < 6; attempt++) {
           // klik sebelumnya mungkin masih diproses (PC/jaringan lambat) → jangan sampai membuat 2 project
-          if (clicked) { const late = await opened(4000); if (late) { await this.ensurePage(); await this.waitReady(); return { projectId: late.projectId, projectTitle: late.projectTitle }; } }
-          const t = await this._waitFor(() => this.call('newProjectTarget'), 8000, 400);
-          if (!t) break;
+          if (clicked) { const late = await opened(4000); if (late) return done(late); }
+          await this._dismissOnboarding();
+          const blocked = await this.call('flowBlocked').catch(() => null);
+          if (blocked) throw fail('FLOW_UNAVAILABLE', blocked.text);
+          let t = await this._waitFor(() => this.call('newProjectTarget'), 8000, 400);
+          if (!t && await this._dismissOnboarding()) t = await this._waitFor(() => this.call('newProjectTarget'), 6000, 400);
+          if (!t) {
+            if (english) break;
+            english = true; // bahasa akun yang tidak dikenali → beranda Flow berbahasa Inggris
+            const u = new URL(this.flowUrl);
+            u.searchParams.set('hl', 'en');
+            await this.navigate(u.toString()).catch(() => {});
+            await sleep(1500);
+            continue;
+          }
           await sleep(rand(250, 600));
           await this._click(t);
           if (t.kind === 'cta') { await sleep(2500); await this.waitReady(); continue; }
           clicked = true;
           const st = await opened(timeoutMs);
-          if (st) { await this.ensurePage(); await this.waitReady(); return { projectId: st.projectId, projectTitle: st.projectTitle }; }
+          if (st) return done(st);
         }
-        throw new Error((await this.status()).signedIn ? 'NEW_PROJECT_NOT_FOUND' : 'NOT_SIGNED_IN');
+        const fin = await this.status();
+        if (!fin.signedIn) throw new Error('NOT_SIGNED_IN');
+        const sum = await this.call('pageSummary').catch(() => null);
+        throw fail('NEW_PROJECT_NOT_FOUND', sum ? `halaman ${sum.path}${sum.heading ? ` "${sum.heading}"` : ''}${sum.buttons.length ? ` · tombol: ${sum.buttons.join(', ')}` : ''}` : null);
       } finally { await this.endWork(); }
     });
+  }
+
+  /** Tutup dialog sambutan / persetujuan Flow (maks. 6 langkah). Mengembalikan jumlah klik. */
+  async _dismissOnboarding() {
+    let n = 0;
+    const cookie = await this.call('cookieReject').catch(() => null);
+    if (cookie) { await this._click(cookie); await sleep(500); n++; }
+    for (let i = 0; i < 6; i++) {
+      const t = await this.call('onboardingTarget').catch(() => null);
+      if (!t) break;
+      await sleep(rand(200, 450));
+      await this._click(t);
+      n++;
+      await sleep(rand(700, 1100));
+    }
+    return n;
   }
 
   /** Pilih radio/opsi di panel setelan Flow. Mengembalikan true bila sudah/berhasil dipilih. */

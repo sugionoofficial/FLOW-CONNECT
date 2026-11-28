@@ -214,10 +214,27 @@ async function connectAccount(id, { project = false } = {}) {
   if (st.signedIn && !a.signedInAt) { a.signedInAt = Date.now(); store.save(); }
   if (project && st.signedIn && !st.projectId && store.data.autoProject) {
     send('activity', 'Membuat project baru di Google Flow…');
-    await s.newProject().catch((e) => send('activity', 'Project baru belum dibuat: ' + e.message));
+    await createProject(id).catch((e) => send('activity', projectNote(e)));
   }
   return s;
 }
+
+/**
+ * Buat project Flow baru. Mode tersembunyi tidak menemukan tombol "New project" → coba sekali lagi di jendela
+ * diperkecil (akun baru kadang tampil berbeda tanpa jendela).
+ */
+async function createProject(id) {
+  const s = session(id);
+  try { return await s.newProject(); } catch (e) {
+    if (e.message !== 'NEW_PROJECT_NOT_FOUND' || s.mode !== 'hidden') throw e;
+    send('activity', 'Tombol "New project" tidak terbaca di mode tersembunyi — mencoba jendela diperkecil…');
+    await s.relaunch('minimized');
+    const r = await s.newProject();
+    markHeadlessFailed(id, 'Project baru gagal di mode tersembunyi');
+    return r;
+  }
+}
+const projectNote = (e) => 'Project baru belum dibuat: ' + e.message + (e.detail ? ` (${e.detail})` : '');
 
 async function refreshStatus(id) {
   const s = sessions.get(id);
@@ -478,13 +495,14 @@ function registerIpc() {
       await connectAccount(id);
       const st = await s.status();
       if (st.signedIn) { const a = account(id); a.signedInAt = Date.now(); delete a.headlessFailedAt; store.save(); }
-      if (store.data.autoProject && !st.projectId) {
+      let projectError = null;
+      if (store.data.autoProject && !st.projectId && st.signedIn) {
         send('login', { id, state: 'project' });
-        await s.newProject().catch((e) => send('activity', 'Project baru belum dibuat: ' + e.message));
+        await createProject(id).catch((e) => { projectError = { code: e.message, detail: e.detail || null }; send('activity', projectNote(e)); });
       }
       const fin = await refreshStatus(id);
       send('login', { id, state: fin.signedIn ? 'done' : 'not-signed-in' });
-      return { ok: !!fin.signedIn, status: fin };
+      return { ok: !!fin.signedIn, status: fin, projectError };
     } catch (e) {
       send('login', { id, state: 'error', error: e.message });
       throw e;
@@ -586,8 +604,8 @@ function registerIpc() {
     return imgs;
   };
   handle('flow:newProject', async (id) => {
-    const s = await connectAccount(id);
-    await s.newProject();
+    await connectAccount(id);
+    await createProject(id);
     return refreshStatus(id);
   });
   handle('flow:scan', async (id) => {

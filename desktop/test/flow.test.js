@@ -37,7 +37,7 @@ const BIGPNG = makePng(32, 32, [10, 200, 120]);
 function mockFlow() {
   const media = []; // {id, prompt, files, at}
   const generated = [];
-  const state = { assets: [], blockNext: 0, projects: 0, rpc: false, terms: false, unsafeNext: 0, failNext: 0, uploads: [], polls: 0 };
+  const state = { assets: [], blockNext: 0, projects: 0, rpc: false, terms: false, unsafeNext: 0, failNext: 0, uploads: [], polls: 0, onb: [], firstRun: false, lang: null, blocked: false, homeOnly: false };
   let port;
   // panel setelan meniru Flow terbaru: chip "Video · 8s · x2" → dialog berisi radio + daftar model
   const settingsUi = `
@@ -161,10 +161,22 @@ document.getElementById('prompt').addEventListener('input',function(){document.g
 ${genJs}
 </script></body></html>`;
   // beranda Flow (daftar project + tombol "New project") & halaman sambutan publik
-  const home = (q) => `<!doctype html><html><head><title>Google Flow</title></head><body>
+  // akun baru (state.firstRun): dialog syarat (centang dulu) → dialog sambutan (dengan tawaran langganan yang TIDAK boleh
+  // diklik); bahasa akun tak dikenal (state.lang) → label "New project" hanya bila ?hl=en; state.blocked → Flow tidak tersedia
+  const home = (q, hl) => `<!doctype html><html><head><title>Google Flow</title></head><body>
 <script>window.WIZ_global_data={SNlM0e:'AT_TOKEN',oPEP7c:'kreator@gmail.com',cfb2h:'bl1',FdrFJe:'sid'};</script>
 <header><button aria-label="Akun"><i>account_circle</i></button></header>
-<main><div class="grid"><a href="#" id="old">Project lama</a><button id="np"><i>add_2</i><span>New project</span></button></div></main>
+${state.blocked ? '<main><h1>Flow isn’t available in your country yet</h1><p>We’re working to bring Flow to more places.</p></main>' : `<main><div class="grid"><a href="#" id="old">Project lama</a><button id="np"><i>add_2</i><span>${state.lang && hl !== 'en' ? 'Proyèk Énggal Pisan' : 'New project'}</span></button></div></main>`}
+${state.firstRun ? `<div role="dialog" aria-modal="true" id="terms" style="position:fixed;inset:20%;background:#fff;border:1px solid #888;padding:12px"><h2>Welcome to Flow</h2><p>Review the Terms of Service.</p>
+<label><input type="checkbox" id="agreecb"> I agree to the Google Terms of Service</label> <button id="tcont" disabled>Continue</button></div>
+<div role="dialog" id="tour" style="display:none;position:fixed;inset:25%;background:#fff;border:1px solid #888;padding:12px"><p>Here's how Flow works</p><button id="pro">Upgrade to Google AI Pro</button> <button id="gotit">Got it</button></div>
+<script>
+var cb=document.getElementById('agreecb'),tc=document.getElementById('tcont');
+cb.addEventListener('change',function(e){if(!e.isTrusted)return;tc.disabled=!cb.checked});
+tc.addEventListener('click',function(e){if(!e.isTrusted)return;fetch('/mock/onb?step=terms');document.getElementById('terms').remove();document.getElementById('tour').style.display='block'});
+document.getElementById('gotit').addEventListener('click',function(e){if(!e.isTrusted)return;fetch('/mock/onb?step=tour');document.getElementById('tour').remove()});
+document.getElementById('pro').addEventListener('click',function(){fetch('/mock/onb?step=UPSELL')});
+</script>` : ''}
 <script>document.getElementById('np').addEventListener('click',function(e){if(!e.isTrusted)return;fetch('/mock/project',{method:'POST'}).then(function(r){return r.json()}).then(function(j){location.href='/project/'+j.id+${JSON.stringify(q)}})});</script></body></html>`;
   const landing = (q) => `<!doctype html><html><head><title>Flow</title></head><body><main><h1>Flow</h1>
 <a role="button" href="/?view=home${q.replace(/^\?/, '&')}" id="cta">Create with Google Flow</a></main>
@@ -176,7 +188,8 @@ ${genJs}
     req.on('end', () => {
       const keep = u.searchParams.get('ce') === '1' ? '?ce=1' : '';
       if (req.method === 'GET' && u.pathname === '/' && u.searchParams.get('view') === 'landing') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(landing(keep)); }
-      if (req.method === 'GET' && u.pathname === '/' && u.searchParams.get('view') === 'home') { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(home(keep)); }
+      if (req.method === 'GET' && u.pathname === '/' && (u.searchParams.get('view') === 'home' || (state.homeOnly && !u.searchParams.get('view')))) { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); return res.end(home(keep, u.searchParams.get('hl'))); }
+      if (u.pathname === '/mock/onb') { state.onb.push(u.searchParams.get('step')); if (state.firstRun && u.searchParams.get('step') === 'tour') state.firstRun = false; res.writeHead(204); return res.end(); }
       if (req.method === 'GET' && u.pathname === '/mock-login') {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         return res.end('<!doctype html><title>Login</title><p>Masuk…</p><script>fetch("/mock/wd?v="+navigator.webdriver);setTimeout(function(){location.href=new URLSearchParams(location.search).get("continue")},1200)</script>');
@@ -713,4 +726,25 @@ test('Skill Foto: unggah referensi ke Flow → @ chip → generate gambar → ha
   await s.navigate(`${base}/project/p-test-1?ce=1`);
   await new Promise((r) => setTimeout(r, 800));
   await assert.rejects(() => s.uploadReference(latar, 'latar', { timeoutMs: 4000 }), /UPLOAD_TERMS/);
+});
+
+test('Akun Google baru: dialog syarat & sambutan ditutup, bahasa akun tak dikenal → beranda bahasa Inggris, Flow tidak tersedia → pesan jelas', { skip: !CHROME && 'Chrome tidak ditemukan (set CHROME_PATH)', timeout: 120000 }, async (t) => {
+  const mock = await mockFlow();
+  Object.assign(mock.state, { firstRun: true, lang: 'su', homeOnly: true });
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fc-new-'));
+  const base = `http://127.0.0.1:${mock.port}`;
+  const s = new FlowSession({ profileDir: path.join(tmp, 'profile'), getBrowser: () => ({ path: CHROME }), flowUrl: `${base}/`, agentCfg: { mediaHosts: ['127.0.0.1'], allowHttp: true }, extraArgs: EXTRA });
+  t.after(async () => { await Promise.race([s.closeBrowser().catch(() => {}), new Promise((r) => setTimeout(r, 15000))]); mock.server.closeAllConnections(); mock.server.close(); try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* Windows */ } });
+  await s.connect();
+  await s.navigate(`${base}/`);
+  await new Promise((r) => setTimeout(r, 600));
+  const np = await s.newProject();
+  assert.match(np.projectId, /^p-new-/);
+  assert.deepStrictEqual(mock.state.onb, ['terms', 'tour'], 'syarat dicentang + Continue, lalu Got it — tawaran langganan tidak diklik');
+  assert.strictEqual(mock.state.projects, 1, 'tepat satu project');
+  // Flow tidak tersedia untuk akun ini → FLOW_UNAVAILABLE dengan teks Flow, tanpa menunggu lama
+  Object.assign(mock.state, { blocked: true });
+  const t0 = Date.now();
+  await assert.rejects(() => s.newProject(), (e) => e.message === 'FLOW_UNAVAILABLE' && /available in your country/.test(e.detail));
+  assert.ok(Date.now() - t0 < 20000);
 });

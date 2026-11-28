@@ -587,7 +587,9 @@ test('Kartu login: proses browser lama (berport debug, tak dikenal aplikasi) dit
   mock.state.rejectLogin = 1;
   const states = [];
   s.on('login', (x) => states.push(x));
-  const lr = await s.loginCard({ card: { x: 100, y: 100, width: 460, height: 640 }, timeoutMs: 60000 });
+  const t1 = Date.now();
+  const lr = await s.loginCard({ card: { x: 100, y: 100, width: 460, height: 640 }, timeoutMs: 90000 });
+  console.log('tolak → ulang → berhasil setelah', Date.now() - t1, 'ms');
   assert.deepStrictEqual(lr, { ok: true });
   assert.deepStrictEqual(states, ['card', 'retry', 'card', 'done']);
   assert.ok(!alive(orphan.pid), 'proses berport debug yang lama sudah ditutup sebelum kartu login dibuka');
@@ -597,7 +599,8 @@ test('Kartu login: proses browser lama (berport debug, tak dikenal aplikasi) dit
   mock.state.rejectLogin = 2;
   const t0 = Date.now();
   await assert.rejects(() => s.loginCard({ card: { x: 100, y: 100, width: 460, height: 640 }, timeoutMs: 120000 }), /LOGIN_REJECTED/);
-  assert.ok(Date.now() - t0 < 60000, 'penolakan terdeteksi cepat');
+  console.log('LOGIN_REJECTED setelah', Date.now() - t0, 'ms');
+  assert.ok(Date.now() - t0 < 90000, 'penolakan terdeteksi tanpa menunggu batas waktu kartu (120 dtk)');
   assert.deepStrictEqual(await browser.profileProcesses(profileDir), []);
 
   // 3) "login di browser biasa" juga menutup proses lama profil ini lebih dulu

@@ -125,12 +125,21 @@ function launchedMode(profileDir) {
 
 /** Tunggu proses browser profil ini benar-benar selesai (kunci profil dilepas) sebelum meluncurkan ulang. */
 async function waitForExit(profileDir, timeoutMs = 15000) {
-  const end = Date.now() + timeoutMs;
+  const t0 = Date.now(), end = t0 + timeoutMs;
   const locks = ['SingletonLock', 'lockfile'].map((f) => path.join(profileDir, f));
+  let lastScan = 0;
   while (Date.now() < end) {
     const portAlive = await existingDebugPort(profileDir);
     const locked = locks.some((f) => { try { fs.lstatSync(f); return true; } catch { return false; } });
     if (!portAlive && !locked) break;
+    // kunci profil bisa tertinggal setelah browser dipaksa keluar → bila tak ada lagi proses yang memakai profil ini, selesai
+    if (!portAlive && Date.now() - t0 > 1500 && Date.now() - lastScan > 1500) {
+      lastScan = Date.now();
+      if (!(await profileProcesses(profileDir).catch(() => [{}])).length) {
+        for (const f of locks) { try { fs.unlinkSync(f); } catch { /* masih dipakai / sudah hilang */ } }
+        break;
+      }
+    }
     if (!portAlive && process.platform === 'win32') {
       // Windows: "lockfile" dikunci selama browser berjalan; bila bisa dihapus, browser sudah keluar
       try { fs.unlinkSync(locks[1]); } catch { /* masih dipakai */ }
@@ -292,7 +301,7 @@ function parseProfileProcesses(text, profileDir, platform = process.platform) {
 
 function listProcessesText(timeout = 12000) {
   return new Promise((resolve) => {
-    const done = (err, stdout) => resolve(err && !stdout ? '' : String(stdout || ''));
+    const done = (err, stdout) => resolve(err && !stdout ? null : String(stdout || '')); // null = daftar proses tak terbaca
     if (process.platform === 'win32') {
       const ps = "[Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-CimInstance Win32_Process -Filter \"CommandLine like '%user-data-dir=%'\" | ForEach-Object { [string]$_.ProcessId + ' ' + $_.CommandLine }";
       execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps], { windowsHide: true, timeout, maxBuffer: 32 * 1024 * 1024 }, done);
@@ -304,7 +313,9 @@ function listProcessesText(timeout = 12000) {
 
 /** Proses browser (Chrome/Edge/…) yang sedang memakai folder profil ini — termasuk yang tidak lagi dikenali aplikasi. */
 async function profileProcesses(profileDir) {
-  return parseProfileProcesses(await listProcessesText(), profileDir).filter((p) => p.pid !== process.pid);
+  const text = await listProcessesText();
+  if (text === null) throw new Error('PROCESS_LIST_FAILED');
+  return parseProfileProcesses(text, profileDir).filter((p) => p.pid !== process.pid);
 }
 
 /**

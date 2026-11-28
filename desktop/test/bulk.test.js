@@ -288,3 +288,36 @@ test('Bulk: hasil sebagian digenapi; pengganti dibatasi per slot; galat lama di 
   assert.strictEqual(resumableJobs(b2).length, 1, 'hanya pengganti terakhir yang bisa dilanjutkan');
   assert.strictEqual(b2.accounts[0].status, 'done', 'akun tetap dipakai sampai akhir');
 });
+
+test('Bulk: akun yang gagal dipulihkan (project baru), ulangan diambil akun lain, alasan gagal tampil; FLOW_EDIT_MODE diulang', async () => {
+  const store = mkStore(ACCS.slice(0, 3));
+  const prompts = Array.from({ length: 12 }, (_, i) => 'p' + (i + 1));
+  // a2: 2 percobaan pertama gagal (mis. tersangkut di tampilan edit) lalu pulih; a3: sekali FLOW_EDIT_MODE
+  const fs = fakeSessions((id, n) => (id === 'a2' && n <= 2 ? 'GENERATE_TIMEOUT' : id === 'a3' && n === 1 ? 'FLOW_EDIT_MODE' : null));
+  const r = new BulkRunner({ store, getSession: fs.get, unitMs: 1 });
+  r.start({ prompts, options: { kind: 'image', count: 1 }, accounts: ACCS.slice(0, 3).map((a) => ({ id: a.id })), minDelay: 3, maxDelay: 3, parallel: true });
+  const res = await done(r);
+  const b = store.data.bulk;
+  assert.strictEqual(res.items, 12);
+  assert.strictEqual(res.failed, 0, 'semua tugas yang gagal berhasil saat diulang');
+  const [a1, a2, a3] = b.accounts;
+  assert.ok(a2.done > 0 && a3.done > 0, `semua akun ikut bekerja (a1 ${a1.done}, a2 ${a2.done}, a3 ${a3.done})`);
+  const projects = fs.log.filter((x) => x[0] === 'project').map((x) => x[1]);
+  const nProj = (id) => projects.filter((x) => x === id).length;
+  const base = nProj('a1'); // project awal batch (bila diaktifkan) — akun sehat tidak dapat project tambahan
+  assert.ok(base <= 1, 'akun yang sehat tidak diganggu');
+  assert.strictEqual(nProj('a2'), base + 1, 'a2 dipulihkan dengan project baru setelah 2× gagal beruntun');
+  assert.strictEqual(nProj('a3'), base + 1, 'tampilan edit → project baru yang bersih');
+  const retried = b.jobs.filter((j) => (j.failedOn || []).length);
+  assert.ok(retried.length >= 3);
+  assert.ok(retried.every((j) => j.status === 'done' && !j.failedOn.includes(j.accountId)), 'ulangan diselesaikan akun lain');
+  assert.strictEqual(a2.note, null, 'catatan galat hilang setelah akun berhasil lagi');
+  // alasan gagal tampil di tabel akun selama belum pulih
+  const store2 = mkStore(ACCS.slice(0, 2));
+  const fs2 = fakeSessions((id) => (id === 'a2' ? 'REFERENCE_NOT_ATTACHED' : null));
+  const r2 = new BulkRunner({ store: store2, getSession: fs2.get, unitMs: 1 });
+  r2.start({ prompts: ['x', 'y', 'z', 'w'], options: { kind: 'image', count: 1 }, accounts: ACCS.slice(0, 2).map((a) => ({ id: a.id })), minDelay: 3, maxDelay: 3, parallel: true });
+  await done(r2);
+  assert.strictEqual(store2.data.bulk.accounts[1].note, 'REFERENCE_NOT_ATTACHED');
+  assert.strictEqual(bulkSummary(store2.data.bulk).items, 4);
+});

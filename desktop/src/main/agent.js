@@ -4,7 +4,7 @@
 // ambil file media, mencari kolom prompt / input file / tombol Generate.
 // Tidak pernah membuat token reCAPTCHA — Generate selalu lewat tombol UI Flow sendiri.
 
-const AGENT_VERSION = 15;
+const AGENT_VERSION = 16;
 
 /* eslint-disable */
 function fcAgent(V, cfg) {
@@ -755,6 +755,34 @@ function fcAgent(V, cfg) {
     return (ed.closest && ed.closest('flow-prompt-box')) || ed.parentElement;
   }
   function inOverlay(el) { return !!(el.closest && el.closest(OVERLAY_SEL)); }
+  // ---------- Penjaga mode: Bulk/Studio harus generate BIASA di grid project ----------
+  // Flow punya tampilan edit (/project/<id>/edit/<media>): prompt di sana MENGEDIT gambar itu dan hasilnya menumpuk
+  // sebagai versi di bawah satu kartu. Juga: kartu terpilih di grid & sakelar "Flow Agent" mengubah arti prompt.
+  // → { sub: 'edit'|… |null (segmen setelah id project), selected: n kartu terpilih, agent: {kotak sakelar}|null,
+  //     clearSel: {kotak tombol batal pilih}|null, back: {kotak tombol kembali}|null }
+  function viewState() {
+    var m = /\/project\/[A-Za-z0-9-]{1,128}\/?(.*)$/.exec(location.pathname);
+    var rest = m ? m[1].replace(/\/+$/, '') : '';
+    var sub = rest ? rest.split('/')[0].toLowerCase() || 'view' : null;
+    var tiles = document.querySelectorAll('flow-grid-tile-container');
+    var selected = 0;
+    for (var i = 0; i < tiles.length; i++) {
+      var t = tiles[i];
+      // pilihan grid Flow = ".selected" di dalam kartu (Ctrl+klik) / kotak centang kartu
+      if (t.getAttribute('aria-selected') === 'true' || t.classList.contains('selected') || t.querySelector('.selected, input[type="checkbox"]:checked')) selected++;
+    }
+    var agent = null, clearSel = null, back = null;
+    var els = document.querySelectorAll('button, [role="button"], [role="switch"]');
+    for (var j = 0; j < els.length; j++) {
+      var el = els[j];
+      if (!visible(el)) continue;
+      var lab = labelOf(el);
+      if (!agent && /^(flow )?agent$/i.test(lab) && (el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-checked') === 'true')) agent = box(el);
+      else if (!clearSel && /^(clear selection|deselect all|unselect all|batalkan pilihan|hapus pilihan|batal pilih)$/i.test(lab)) clearSel = box(el);
+      else if (!back && sub && (/^(back|kembali|back button to go to previous page|go back|close|tutup)$/i.test(lab) || hasLig(el, 'arrow_back'))) back = box(el);
+    }
+    return { sub: sub, path: location.pathname, selected: selected, agent: agent, clearSel: clearSel, back: back };
+  }
   // tombol "+" untuk menambah media: toolbar Flow (di luar kotak prompt) lebih dulu, lalu "+" di kotak prompt
   function toolbarAdd() {
     var els = document.querySelectorAll('button, [role="button"]');
@@ -999,7 +1027,7 @@ function fcAgent(V, cfg) {
     pageError: pageError, pageErrors: pageErrors, toolbarAdd: toolbarAdd, uploadMenuItem: uploadMenuItem, dialogCount: dialogCount,
     mentionOptions: mentionOptions, mentionChips: mentionChips, caretToEnd: caretToEnd, emptyFrameChip: emptyFrameChip,
     boundFrames: boundFrames, picker: picker, focusPickerSearch: focusPickerSearch, creditsWarning: creditsWarning,
-    failedTiles: failedTiles, cookieReject: cookieReject, durationSlider: durationSlider, focusDurationSlider: focusDurationSlider
+    failedTiles: failedTiles, cookieReject: cookieReject, viewState: viewState, durationSlider: durationSlider, focusDurationSlider: focusDurationSlider
   };
   Object.defineProperty(window, '__fcDesktop', {
     configurable: true, enumerable: false,

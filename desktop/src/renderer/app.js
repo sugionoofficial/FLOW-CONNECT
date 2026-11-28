@@ -96,6 +96,8 @@ const ERR = {
   NO_ACCOUNTS: 'Pilih minimal satu akun Google untuk Bulk Generate.',
   UNKNOWN_COST: 'Biaya kredit model ini belum diketahui — isi "Kredit per video" secara manual.',
   NOT_ENOUGH_CREDITS: 'Kredit akun yang dipilih tidak cukup untuk 1 video pun dengan setelan ini.',
+  DOWNLOAD_FAILED: 'Hasil dari alat gagal disimpan.',
+  TOOL_LOAD_FAILED: 'Alat Google Flow gagal dimuat.',
   CREDITS_NOT_FOUND: 'Saldo kredit tidak terbaca dari Google Flow. Isi jumlah kredit secara manual, atau buka Flow akun ini lalu coba lagi.',
   NO_CREDITS_LEFT: 'Terlewat — kredit semua akun sudah habis.',
   NO_ACCOUNTS_LEFT: 'Terlewat — tidak ada akun yang masih bisa dipakai.',
@@ -763,12 +765,12 @@ function alatPage() {
     <div class="tool-grid">${LOCAL_TOOLS.map((t) => `<button class="tool-card ${T.open === t.id ? 'on' : ''}" data-act="toolOpen" data-id="${t.id}" aria-pressed="${T.open === t.id}">
       <span class="tool-ic">${icon(t.icon, 'lg')}</span><span class="tool-t"><b>${t.name}</b><span class="muted small">${t.desc}</span></span></button>`).join('')}</div>
     ${T.open ? toolPanel() : ''}
-    <div class="sec-head"><h2>${icon('app-window')} Alat Google Flow</h2><span class="muted small grow">Dibuka di jendela Google Flow akun aktif — browser ditampilkan karena alatnya interaktif.</span></div>
+    <div class="sec-head"><h2>${icon('app-window')} Alat Google Flow</h2><span class="muted small grow">Dibuka di jendela aplikasi memakai akun aktif — browser Google Flow tetap tersembunyi. Hasil ekspor tersimpan di Unduhan → Alat.</span></div>
     ${flowReady ? '' : readiness(false) || ''}
     <div class="tool-grid">${FLOW_TOOLS.map((t) => `<div class="tool-card flow">
       <span class="tool-ic">${icon(t.icon, 'lg')}</span>
       <span class="tool-t"><b>${esc(t.name)}</b><span class="muted small">${esc(t.desc)}</span><span class="faint small">oleh ${esc(t.author)}</span></span>
-      ${btn('flowTool', 'Buka', { ic: S.busy.has('flowTool' + `data-id="${t.id}"`) ? 'loader-circle' : 'external-link', cls: 'sm', data: `data-id="${t.id}"`, disabled: !a, title: `Buka ${t.name} di Google Flow` })}
+      ${btn('flowTool', 'Buka', { ic: S.busy.has('flowTool' + `data-id="${t.id}"`) ? 'loader-circle' : 'app-window', cls: 'sm', data: `data-id="${t.id}"`, disabled: !a, title: `Buka ${t.name} di jendela aplikasi` })}
     </div>`).join('')}</div>`;
 }
 
@@ -2475,8 +2477,8 @@ Object.assign(ACTIONS, {
     const t = FLOW_TOOLS.find((x) => x.id === el.dataset.id);
     if (!a || !t) { toast(ERR.UNKNOWN_ACCOUNT, 'err'); return; }
     return busy('flowTool' + `data-id="${t.id}"`, async () => {
-      await call('flow:openTool', a.id, t.url);
-      toast(`${t.name} dibuka di jendela Google Flow (${a.label}).`, 'ok');
+      const r = await call('flow:openTool', a.id, t.url, { name: t.name });
+      if (!r || !r.reused) toast(`${t.name} dibuka di jendela aplikasi (${a.label}).`, 'ok');
     });
   },
 
@@ -2617,6 +2619,24 @@ async function bulkRead(id, quiet = false) {
     if (!quiet) toast(`${a ? a.label : 'Akun'}: ${r.value} kredit Google Flow.`, 'ok');
     return true;
   } catch (e) { toast(`${(accById(id) || {}).label || 'Akun'}: ${msg(e)}`, 'err'); return false; } finally { S.busy.delete(key); render(); bulkPlanSoon(); }
+}
+
+/** Kabar dari jendela alat Google Flow (proses utama). */
+async function toolEvent(t) {
+  if (!t) return;
+  if (t.state === 'saved') { toast(`Hasil alat disimpan: ${t.name} (Unduhan → Alat).`, 'ok'); return; }
+  if (t.state === 'signin' || (t.state === 'error' && t.error === 'TOOL_LOAD_FAILED')) {
+    const r = await dialog({
+      title: t.state === 'signin' ? 'Sesi Google tidak terbawa' : 'Alat gagal dimuat',
+      body: `<p>${t.state === 'signin'
+        ? `${esc(t.name || 'Alat Google Flow')} meminta masuk Google di jendela aplikasi. Login hanya dilakukan lewat kartu login akun.`
+        : `${esc(t.name || 'Alat Google Flow')} gagal dimuat${t.detail ? ` (${esc(t.detail)})` : ''}.`}</p><p class="muted small">Anda bisa membukanya di browser Google Flow akun ini sebagai gantinya (jendela browser akan tampil).</p>`,
+      buttons: [{ label: 'Tutup', value: 'cancel' }, { label: 'Buka di browser', value: 'browser', primary: true }]
+    });
+    if (r && r.value === 'browser' && t.id && t.url) call('flow:openTool', t.id, t.url, { browser: true }).catch((e) => toast(msg(e), 'err'));
+    return;
+  }
+  if (t.state === 'error') toast(msg({ message: t.error, detail: t.detail }), 'err');
 }
 
 // ---------- Event ----------
@@ -2919,6 +2939,7 @@ async function init() {
     const bar = $('.update-bar'); if (bar) bar.classList.add('attn');
   });
   fc.on('accent', (c) => document.documentElement.style.setProperty('--accent', c));
+  fc.on('tool', (t) => toolEvent(t));
   fc.on('login', (l) => {
     if (!S.login || S.login.id !== l.id) return;
     S.login.state = l.state;

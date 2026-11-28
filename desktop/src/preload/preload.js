@@ -18,7 +18,7 @@ const CHANNELS = [
   'skills:catalog', 'skills:mine', 'skills:save', 'skills:remove', 'skills:export', 'skills:import',
   'flow:openTool', 'tools:pick', 'tools:register', 'tools:read', 'tools:save', 'tools:renamePlan', 'tools:rename'
 ];
-const EVENTS = ['statuses', 'settings', 'queue', 'bulk', 'bulk-activity', 'activity', 'navigate', 'theme', 'accent', 'license', 'update', 'update-show', 'login'];
+const EVENTS = ['statuses', 'settings', 'queue', 'bulk', 'bulk-activity', 'activity', 'navigate', 'theme', 'accent', 'license', 'update', 'update-show', 'login', 'tool'];
 
 const api = {};
 for (const c of CHANNELS) api[c] = invoke(c);

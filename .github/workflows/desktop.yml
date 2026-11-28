@@ -43,7 +43,7 @@ jobs:
         run: |
           set -o pipefail
           node --test --test-reporter=spec --test-force-exit --test-timeout=600000 test/*.test.js 2>&1 | tee test.log
-      - name: Uji Alat Kreatif (12 alat offline, dijalankan tersendiri agar tidak berebut CPU)
+      - name: Uji Alat Kreatif (15 alat offline, dijalankan tersendiri agar tidak berebut CPU)
         if: always()
         run: |
           set -o pipefail
@@ -118,7 +118,7 @@ jobs:
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
 
-            **Baru di versi ini (v1.8.1):** perbaikan **Bulk**. Bulk sekarang selalu memakai generate biasa: foto referensi hanya dipakai sebagai bahan (@), tidak pernah mengedit foto yang diunggah. Kalau Google Flow membuka tampilan edit gambar, menyalakan Flow Agent, atau ada kartu yang terpilih, aplikasi kembali ke grid project dulu. Hasil editan yang menumpuk sebagai versi tidak dihitung. Akun yang gagal berturut-turut dipulihkan dengan project baru yang bersih, sehingga semua akun ikut bekerja. Tugas yang gagal di satu akun diulang oleh akun lain, dan alasan gagal tiap akun tampil di tabel akun. Dari v1.8.0: Alat Kreatif, 12 alat offline pengganti alat Google Flow.
+            **Baru di versi ini (v1.9.0):** 15 Alat Kreatif offline, termasuk **Upscale Gambar** (2x–4x, denoise & penajaman), **Cek Metadata** (pindai & hapus metadata), dan **Gabung Video** (urutkan, potong, resolusi, fade & audio). Skill **Lembar karakter** ditingkatkan dengan hero, turnaround, ekspresi & palet. Tersedia juga skill admin **Character Sheet Pro** dan preset provider AI **Arena** (memerlukan API key). Termasuk perbaikan Bulk dari v1.8.1.
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

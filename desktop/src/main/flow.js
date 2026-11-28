@@ -1098,6 +1098,7 @@ class FlowSession extends EventEmitter {
         }
         if (!st.signedIn) throw new Error('NOT_SIGNED_IN');
         stop();
+        await this.ensureGrid(say);
         let settings = null;
         if (job.options && job.options.apply !== false) {
           say('Menerapkan setelan Flow (mode, model, rasio)…');
@@ -1108,6 +1109,12 @@ class FlowSession extends EventEmitter {
         const prep = await this._exclusive(() => this.prepareComposer(job, say));
         if (spec.check) spec.check(prep);
         stop();
+        // tepat sebelum Generate: masih di grid? (bukan tampilan edit / kartu terpilih / Flow Agent) — kalau tidak, batal
+        const vs = await this.call('viewState').catch(() => null);
+        if (vs && (vs.sub || vs.agent)) {
+          await this.ensureGrid(say).catch(() => {});
+          throw fail('FLOW_EDIT_MODE', vs.sub ? vs.path : 'Flow Agent aktif');
+        }
         const credits = await this.call('creditsWarning').catch(() => null);
         if (credits) throw fail('INSUFFICIENT_CREDITS', credits);
         const before = (await this.listMedia(st.projectId).catch(() => [])).map((i) => i.mediaId);
@@ -1141,6 +1148,47 @@ class FlowSession extends EventEmitter {
       if (obs.items) this._remember(projectId, obs.items);
       return { ...res, items: obs.items || null, projectId };
     }
+  }
+
+  /**
+   * Pastikan Flow berada di GRID project (generate biasa), bukan tampilan edit gambar/video (/project/<id>/edit/…),
+   * tanpa kartu terpilih dan dengan "Flow Agent" mati. Di tampilan edit, prompt MENGEDIT gambar (mis. foto referensi
+   * yang baru diunggah) dan hasilnya menumpuk sebagai versi di bawah satu kartu — itu yang tidak boleh terjadi.
+   * → state akhir | throw FLOW_EDIT_MODE bila tetap tidak bisa keluar.
+   */
+  async ensureGrid(say = () => {}) {
+    let vs = null;
+    for (let a = 0; a < 3; a++) {
+      vs = await this.call('viewState').catch(() => null);
+      if (!vs) return null; // agen belum siap (halaman bukan Flow) — biarkan langkah berikut yang melapor
+      if (!vs.sub && !vs.selected && !vs.agent) return vs;
+      if (vs.sub) {
+        say(`Flow sedang di tampilan ${vs.sub === 'edit' ? 'edit gambar' : vs.sub} — kembali ke grid project (tidak mengedit)…`);
+        await this._closeOverlays();
+        const st = await this.status();
+        const u = new URL(st.url);
+        const m = /^(.*\/project\/[A-Za-z0-9-]{1,128})/.exec(u.pathname);
+        if (m) {
+          u.pathname = m[1];
+          await this.navigate(u.toString());
+          await sleep(rand(1500, 2500));
+        } else if (vs.back) { await this._click(vs.back); await sleep(1500); }
+        continue;
+      }
+      if (vs.agent) {
+        say('Mematikan Flow Agent (generate biasa)…');
+        await this._click(vs.agent);
+        await sleep(800);
+      }
+      if (vs.selected) {
+        say('Membatalkan pilihan kartu di grid Flow…');
+        if (vs.clearSel) await this._click(vs.clearSel); else await this._escape();
+        await sleep(600);
+      }
+    }
+    vs = await this.call('viewState').catch(() => vs);
+    if (vs && vs.sub) throw fail('FLOW_EDIT_MODE', vs.path);
+    return vs;
   }
 
   /** MODE AMAN: siapkan Flow (setelan + unggah gambar + prompt ber-"@") — pengguna sendiri yang menekan Generate. */
@@ -1263,7 +1311,7 @@ class FlowSession extends EventEmitter {
    * Flow selesai menyimpannya (balasan maseQ berisi media id). Tanpa ini Flow men-generate tanpa gambar.
    * → { mediaId, name, tag, how }
    */
-  async uploadReference(file, tag, { timeoutMs = 90000 } = {}) {
+  async uploadReference(file, tag, { timeoutMs = 90000, say = () => {} } = {}) {
     checkImageFile(file);
     const { dest, name, stem } = this._uniqueCopy(file, tag || 'gambar');
     const net = await this._net();
@@ -1308,6 +1356,8 @@ class FlowSession extends EventEmitter {
     const mediaId = ev.text ? wire.uploadedMediaId(ev.text, st.projectId) : null;
     if (!mediaId) throw fail('UPLOAD_FAILED', 'tanpa media id');
     await this._closeOverlays();
+    await sleep(rand(700, 1100));
+    await this.ensureGrid(say); // Flow bisa membuka foto yang baru diunggah di tampilan edit → kembali ke grid
     this.uploads.add(mediaId);
     this.emit('upload', mediaId);
     return { mediaId, name, stem, tag, how };
@@ -1430,7 +1480,7 @@ class FlowSession extends EventEmitter {
         continue;
       }
       say(`Mengunggah gambar ${i + 1}/${images.length} ke Google Flow…`);
-      const r = await this.uploadReference(images[i], tags[i]);
+      const r = await this.uploadReference(images[i], tags[i], { say });
       refs.push(r);
       if (key) {
         if (this._refCache.size > 600) this._refCache.clear();
@@ -1438,6 +1488,8 @@ class FlowSession extends EventEmitter {
       }
       await sleep(rand(800, 1600));
     }
+    // setelah unggah: pastikan masih di grid (bukan tampilan edit foto yang baru diunggah) sebelum menulis prompt
+    if (refs.length) await this.ensureGrid(say);
     // gambar pakai-ulang gagal dipasang → minta unggah ulang (lihat prepareComposer)
     const fromCache = (e) => { if (usedKeys.length) e.cachedRef = usedKeys; return e; };
     const prompt = String(job.prompt || '');
@@ -1562,6 +1614,11 @@ class FlowSession extends EventEmitter {
       if (perr) return errOut(perr.unusual ? 'FLOW_UNUSUAL_ACTIVITY' : 'GENERATE_FAILED', perr.text, perr.suspect);
       const tiles = await this.call('failedTiles').catch(() => null);
       if (tiles && tiles.count > tiles0) return errOut('GENERATE_FAILED', tiles.texts[tiles.texts.length - 1]);
+      // pindah ke tampilan edit saat menunggu → hasilnya versi editan, bukan generate baru: tidak dihitung
+      if (!wait || Date.now() - lastList > 4000 || imageReply) {
+        const vs = await this.call('viewState').catch(() => null);
+        if (vs && vs.sub === 'edit') return errOut('FLOW_EDIT_MODE', vs.path);
+      }
       // 3) daftar project: hasil baru siap?
       let fresh = null;
       if (Date.now() - lastList > 4000 || imageReply) {

@@ -89,6 +89,7 @@ const ERR = {
   FRAME_SLOT_NOT_FOUND: 'Slot frame awal/akhir tidak ditemukan di Google Flow.',
   FRAME_NOT_ATTACHED: 'Gambar tidak bisa dipasang sebagai frame di Google Flow.',
   GENERATE_FAILED: 'Google Flow gagal membuat hasil.',
+  FLOW_EDIT_MODE: 'Google Flow berada di tampilan EDIT gambar (bukan generate biasa). Aplikasi kembali ke grid project dan mengulang tugas sebagai generate baru — hasil editan tidak dipakai.',
   FLOW_UNUSUAL_ACTIVITY: 'Google Flow mendeteksi "aktivitas tidak biasa" dan menolak permintaan. Tunggu beberapa menit, perpanjang jeda antrean, lalu coba lagi.',
   FLOW_CONTENT_POLICY: 'Ditolak filter keamanan Google Flow (prompt atau gambar dianggap melanggar kebijakan). Ubah prompt / gambar lalu coba lagi.',
   FLOW_REFUSED: 'Google Flow menolak permintaan ini.',
@@ -125,7 +126,7 @@ const ERR = {
   TOO_MANY_SKILLS: 'Skill saya sudah penuh (maks. 200).',
   NO_SKILLS: 'Belum ada skill untuk diekspor.'
 };
-const DETAIL = new Set(['FRAMES_REQUIRED', 'FLOW_ERROR', 'GENERATE_FAILED', 'FLOW_REFUSED', 'UPLOAD_FAILED', 'UPLOAD_REJECTED', 'REFERENCE_NOT_ATTACHED', 'FRAME_NOT_ATTACHED', 'GENERATE_TIMEOUT', 'GENERATE_NOT_STARTED', 'INSUFFICIENT_CREDITS', 'FLOW_CONTENT_POLICY', 'CREDITS_NOT_FOUND', 'NEW_PROJECT_NOT_FOUND', 'FLOW_UNAVAILABLE']);
+const DETAIL = new Set(['FRAMES_REQUIRED', 'FLOW_ERROR', 'GENERATE_FAILED', 'FLOW_REFUSED', 'UPLOAD_FAILED', 'UPLOAD_REJECTED', 'REFERENCE_NOT_ATTACHED', 'FRAME_NOT_ATTACHED', 'GENERATE_TIMEOUT', 'GENERATE_NOT_STARTED', 'INSUFFICIENT_CREDITS', 'FLOW_CONTENT_POLICY', 'CREDITS_NOT_FOUND', 'NEW_PROJECT_NOT_FOUND', 'FLOW_UNAVAILABLE', 'FLOW_EDIT_MODE']);
 const msg = (e) => {
   const k = (e && e.message) || String(e);
   if (ERR[k] && DETAIL.has(k) && e.detail) return `${ERR[k]} (${e.detail})`;

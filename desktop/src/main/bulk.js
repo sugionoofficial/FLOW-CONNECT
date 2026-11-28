@@ -33,6 +33,7 @@ const RETRY_DELAY = 10;         // detik × nomor percobaan (10, 20, 30) sebelum
 const MAX_REPLACE = 3;          // tugas pengganti maks. per slot (slot = tugas asli)
 const COOL_EVERY = 5;           // tiap 5× gagal beruntun → akun istirahat sebentar (bukan dimatikan seperti dulu)
 const COOL_DELAY = 60;          // detik
+const RECOVER_EVERY = 2;        // tiap 2× gagal beruntun di satu akun → tugas berikutnya di project Flow baru (keadaan bersih)
 
 // galat yang membuat TUGAS gagal permanen TANPA diulang/diganti: masukan/berkas tidak valid (mengulang pasti sama)
 const JOB_FATAL = new Set(['INVALID_PROMPT', 'INVALID_IMAGE', 'FRAMES_REQUIRED', 'UPLOAD_REJECTED', 'UPLOAD_TERMS', 'NOTHING_TO_SEND']);
@@ -308,9 +309,16 @@ class BulkRunner extends EventEmitter {
     acct.nextAt = null;
   }
 
-  _nextJob() {
+  /** Tugas berikutnya; untuk `acct`, tugas yang pernah gagal DI AKUN ITU didahulukan untuk akun lain. */
+  _nextJob(acct) {
     const now = Date.now();
-    return this.batch.jobs.find((j) => j.status === 'pending' && !(j.retryAt > now)) || null;
+    const ready = this.batch.jobs.filter((j) => j.status === 'pending' && !(j.retryAt > now));
+    if (!acct) return ready[0] || null;
+    const fresh = ready.find((j) => !(j.failedOn || []).includes(acct.id));
+    if (fresh) return fresh;
+    // tugas yang sudah gagal di akun ini diserahkan ke akun lain yang masih aktif; hanya diambil sendiri bila tak ada
+    const others = this.batch.accounts.some((a) => a.id !== acct.id && !['exhausted', 'paused', 'error', 'done'].includes(a.status));
+    return others ? null : ready[0] || null;
   }
 
   async _worker(acct, index) {
@@ -320,11 +328,11 @@ class BulkRunner extends EventEmitter {
     while (!this.stopRequested) {
       if (['exhausted', 'paused', 'error'].includes(acct.status)) return;
       if (video && !(acct.credits >= b.cost)) { acct.status = 'exhausted'; acct.note = acct.note || 'Kredit habis'; this._emit(); return; }
-      let job = this._nextJob();
+      let job = this._nextJob(acct);
       if (!job) {
         // tugas yang sedang menunggu jeda-ulang / dipegang akun lain bisa kembali ke antrean
         const open = b.jobs.some((j) => j.status === 'pending' || (j.status === 'running' && j.accountId !== acct.id));
-        if (!open) return;
+        if (!open) { if (['running', 'waiting', 'ready'].includes(acct.status)) { acct.status = 'done'; this._emit(); } return; }
         const soon = b.jobs.filter((j) => j.status === 'pending' && j.retryAt).reduce((m, j) => Math.min(m, j.retryAt), Infinity);
         await sleep(Math.max(20, Math.min(1000, soon - Date.now())));
         continue;
@@ -365,6 +373,13 @@ class BulkRunner extends EventEmitter {
       if (b.newProject && acct.jobsRun % PROJECT_EVERY === 0) {
         this._log(`[${tag}] Membuat project baru untuk batch ini…`);
         await session.newProject().catch((e) => this._log(`[${tag}] Project baru belum dibuat: ${e.message}`));
+        acct.fresh = false;
+      } else if (acct.fresh) {
+        // akun ini gagal beruntun / Flow tersangkut di tampilan edit → mulai lagi di project baru yang bersih
+        // (gambar referensi diunggah ulang ke project itu), agar akun tetap ikut bekerja, tidak diam
+        acct.fresh = false;
+        this._log(`[${tag}] Memulihkan akun: membuka project Flow baru yang bersih…`);
+        await Promise.resolve().then(() => session.newProject()).catch((e) => this._log(`[${tag}] Project baru belum dibuat: ${e.message}`));
       }
       acct.jobsRun++;
       const res = await session.generate({ prompt, images, tags, reuseRefs: true, options: { ...b.options, count: job.count } }, {
@@ -394,6 +409,7 @@ class BulkRunner extends EventEmitter {
       if (got < job.count) this._replace(job, job.count - got, `hanya ${got}/${job.count} hasil`);
       acct.done++;
       acct.fails = 0;
+      if (acct.note && acct.status === 'running') acct.note = null; // catatan galat terakhir sudah tidak berlaku
       acct.backoff = Math.max(1, acct.backoff / 2);
       if (video) { acct.credits = Math.max(0, acct.credits - b.cost * job.count); acct.used += b.cost * job.count; }
       b.updatedAt = Date.now();
@@ -434,6 +450,9 @@ class BulkRunner extends EventEmitter {
       job.attempts = (job.attempts || 0) + 1;
       acct.fails++;
       acct.backoff = Math.min(MAX_BACKOFF, acct.backoff * 2);
+      acct.note = code; // tampil di tabel akun: kenapa akun ini gagal
+      job.failedOn = [...new Set([...(job.failedOn || []), acct.id])];
+      if (code === 'FLOW_EDIT_MODE' || acct.fails % RECOVER_EVERY === 0) acct.fresh = true;
       // video yang melewati batas tunggu mungkin tetap dibuat Flow (kredit terpakai) → jangan diulang otomatis
       const spent = video && code === 'GENERATE_TIMEOUT';
       if (spent) { acct.credits = Math.max(0, acct.credits - b.cost * job.count); acct.used += b.cost * job.count; }

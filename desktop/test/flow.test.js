@@ -80,7 +80,9 @@ function flist(){var q=document.getElementById('fq').value.toLowerCase(),l=docum
 document.getElementById('fq').addEventListener('input',function(e){if(e.isTrusted)setTimeout(flist,200)});
 paintFrames();`;
   // unggah lewat "+" → Upload, pemilih "@" yang membuat .mention-chip, kirim lewat batchexecute
-  const refsJs = String.raw`var files=[], assets=[], pick={open:false,i:0,opts:[]};
+  const refsJs = String.raw`var files=[], assets=(window.__assets||[]).slice(), pick={open:false,i:0,opts:[]};
+// sakelar "Flow Agent" (harus mati untuk generate biasa)
+document.getElementById('agentbtn').addEventListener('click',function(e){if(!e.isTrusted)return;window.__agentOn=!window.__agentOn;this.setAttribute('aria-pressed',String(window.__agentOn));fetch('/mock/agent?on='+window.__agentOn)});
 // "+" → menu → "Upload media" → dialog file → unggah (maseQ)
 document.getElementById('add').addEventListener('click',function(e){if(!e.isTrusted)return;var m=document.getElementById('addmenu');m.style.display=m.style.display==='none'?'':'none'});
 document.getElementById('upitem').addEventListener('click',function(e){
@@ -90,7 +92,9 @@ document.getElementById('upitem').addEventListener('click',function(e){
   var inp=document.createElement('input');inp.type='file';inp.accept='image/*';
   inp.addEventListener('change',function(){var f=inp.files[0];if(!f)return;
     f.arrayBuffer().then(function(buf){return fetch('/_/AiSandboxAngularFrontend/data/batchexecute?rpcids=maseQ&rt=c',{method:'POST',body:JSON.stringify({name:f.name,size:buf.byteLength})})})
-     .then(function(r){return r.text()}).then(function(t){var m=/"([0-9a-f]{8}-[0-9a-f-]{27})/.exec(t.replace(/\\/g,''));if(m)assets.push({id:m[1],title:f.name})});
+     .then(function(r){return r.text()}).then(function(t){var m=/"([0-9a-f]{8}-[0-9a-f-]{27})/.exec(t.replace(/\\/g,''));if(m)assets.push({id:m[1],title:f.name});
+       // Flow terbaru: foto yang baru diunggah bisa langsung terbuka di tampilan EDIT (prompt di sana = mengedit foto itu)
+       if(m&&window.__editAfterUpload)history.pushState({},'',location.pathname.replace(/\/$/,'')+'/edit/'+m[1]+location.search)});
   });
   inp.click();
 });
@@ -113,7 +117,7 @@ document.getElementById('prompt').addEventListener('keydown',function(e){if(!pic
   const genJs = String.raw`document.getElementById('gen').addEventListener('click',function(e){
   if(!e.isTrusted) return; // klik harus asli
   var refs=[].map.call(document.querySelectorAll('.mention-chip'),function(c){return c.getAttribute('data-entity-id')});
-  var body={prompt:val(),files:files,refs:refs,frames:FR.filter(Boolean),settings:Object.assign({},S),ua:navigator.userAgent,project:(/\/project\/([\w-]+)/.exec(location.pathname)||[])[1]||null};
+  var body={prompt:val(),files:files,refs:refs,frames:FR.filter(Boolean),settings:Object.assign({},S),ua:navigator.userAgent,path:location.pathname,agent:!!window.__agentOn,project:(/\/project\/([\w-]+)/.exec(location.pathname)||[])[1]||null};
   var done=function(pid){
     if(location.pathname==='/') history.pushState({},'', '/project/'+pid+location.search);
     var p=document.getElementById('prompt'); if(p.tagName==='TEXTAREA') p.value=''; else p.textContent=''; document.getElementById('gen').disabled=true; files=[]; document.getElementById('chips').textContent='';
@@ -160,8 +164,8 @@ $('chgo').addEventListener('click',function(e){if(!e.isTrusted)return;if(p<N-1){
 })();</script>`;
   };
   const page = (signedIn, ce) => `<!doctype html><html lang="id"><head><title>Film Saya - Google Flow</title></head><body>
-<script>window.WIZ_global_data=${JSON.stringify(signedIn ? { SNlM0e: 'AT_TOKEN', oPEP7c: 'kreator@gmail.com', cfb2h: 'bl1', FdrFJe: 'sid' } : {})};window.__rpc=${state.rpc};window.__terms=${state.terms};</script>
-<header><button aria-label="Setelan"><i>settings</i></button><button aria-label="Tambah media" id="add"><i>add</i></button></header>
+<script>window.WIZ_global_data=${JSON.stringify(signedIn ? { SNlM0e: 'AT_TOKEN', oPEP7c: 'kreator@gmail.com', cfb2h: 'bl1', FdrFJe: 'sid' } : {})};window.__rpc=${state.rpc};window.__terms=${state.terms};window.__editAfterUpload=${!!state.editAfterUpload};window.__agentOn=${!!state.agentOn};window.__assets=${state.persistAssets ? JSON.stringify(state.assets.map((a) => ({ id: a.id, title: a.name }))) : '[]'};</script>
+<header><button aria-label="Setelan"><i>settings</i></button><button aria-label="Tambah media" id="add"><i>add</i></button><button aria-label="Flow Agent" id="agentbtn" aria-pressed="${!!state.agentOn}"><i>auto_awesome</i></button></header>
 <div class="cdk-overlay-pane" id="addmenu" role="menu" style="display:none;position:fixed;left:20px;top:50px;background:#fff;border:1px solid #ccc"><button role="menuitem" id="upitem"><i>upload</i>Upload media</button><button role="menuitem"><i>photo_library</i>Library</button></div>
 <flow-add-menu-popover-content id="fpop" style="display:none;position:fixed;left:20px;bottom:200px;background:#fff;border:1px solid #ccc"><input type="text" id="fq" aria-label="Search assets"><div id="flist"></div></flow-add-menu-popover-content>
 <div class="cdk-overlay-pane" id="pk" style="display:none;position:fixed;left:20px;bottom:160px;background:#fff;border:1px solid #ccc"></div>
@@ -220,6 +224,7 @@ document.getElementById('pro').addEventListener('click',function(){fetch('/mock/
         const to = state.rejectLogin > 0 ? (state.rejectLogin--, 'https://accounts.google.com/v3/signin/rejected?rrk=46&hl=en') : null;
         return res.end('<!doctype html><title>Login</title><p>Masuk…</p><script>fetch("/mock/wd?v="+navigator.webdriver);setTimeout(function(){location.href=' + (to ? JSON.stringify(to) : 'new URLSearchParams(location.search).get("continue")') + '},1200)</script>');
       }
+      if (u.pathname === '/mock/agent') { state.agentOn = u.searchParams.get('on') === 'true'; res.writeHead(204); return res.end(); }
       if (u.pathname === '/mock/wd') { state.webdriver = u.searchParams.get('v'); res.writeHead(204); return res.end();
       }
       if (u.pathname === '/mock/project') { state.projects++; res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ id: 'p-new-' + state.projects })); }
@@ -924,4 +929,66 @@ test('AI pembaca halaman: syarat + sambutan + bahasa asing + kartu "What\'s new"
   await s.newProject();
   assert.strictEqual(n, 1);
   assert.ok(events.some((e) => e.error === 'DAILY_LIMIT'));
+});
+
+test('Generate biasa, BUKAN edit: foto unggahan yang terbuka di tampilan edit, tampilan edit & Flow Agent → kembali ke grid dulu', { skip: !CHROME && 'Chrome tidak ditemukan (set CHROME_PATH)', timeout: 300000 }, async (t) => {
+  const mock = await mockFlow();
+  mock.state.rpc = true;
+  mock.state.persistAssets = true; // aset unggahan tetap ada setelah halaman dimuat ulang (seperti Flow asli)
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fc-noedit-'));
+  const base = `http://127.0.0.1:${mock.port}`;
+  const s = new FlowSession({
+    profileDir: path.join(tmp, 'profile'), getBrowser: () => ({ path: CHROME }),
+    flowUrl: `${base}/?ce=1`, agentCfg: { mediaHosts: ['127.0.0.1', 'flow-content.google'], allowHttp: true }, extraArgs: EXTRA
+  });
+  t.after(async () => { await Promise.race([s.closeBrowser().catch(() => {}), new Promise((r) => setTimeout(r, 15000))]); mock.server.closeAllConnections(); mock.server.close(); try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* Windows */ } });
+  await s.connect();
+  await s.navigate(`${base}/project/p-test-1?ce=1`);
+  await new Promise((r) => setTimeout(r, 800));
+  const wajah = path.join(tmp, 'wajah.png');
+  fs.writeFileSync(wajah, makePng(64, 64, [200, 150, 120]));
+  const job = (prompt) => ({ prompt, images: [wajah], tags: ['wajah'], reuseRefs: true, options: { kind: 'image', model: 'Nano Banana 2.1', ratio: '9:16', count: 1 } });
+
+  // 1) Flow membuka foto yang baru diunggah di tampilan EDIT → aplikasi kembali ke grid, foto jadi bahan "@", generate biasa
+  mock.state.editAfterUpload = true;
+  await s.navigate(`${base}/project/p-test-1?ce=1`);
+  await new Promise((r) => setTimeout(r, 600));
+  const logs = [];
+  const r1 = await s.generate(job('A POV selfie photo of @wajah at the beach'), { onLog: (x) => logs.push(x), timeoutMs: 60000 });
+  const g1 = mock.generated[mock.generated.length - 1];
+  assert.strictEqual(g1.path, '/project/p-test-1', 'Generate ditekan di grid project, bukan di /edit/');
+  assert.deepStrictEqual(g1.refs, r1.refs.map((r) => r.mediaId), 'foto unggahan dipakai sebagai bahan @, bukan diedit');
+  assert.ok(logs.some((l) => /kembali ke grid project/.test(l)), logs.join(' | '));
+  assert.strictEqual(r1.items.length, 1);
+  mock.state.editAfterUpload = false;
+
+  // 2) tugas berikutnya dimulai saat Flow masih di tampilan edit sebuah gambar → keluar dulu
+  await s.navigate(`${base}/project/p-test-1/edit/${r1.items[0].mediaId}?ce=1`);
+  await new Promise((r) => setTimeout(r, 600));
+  assert.strictEqual((await s.call('viewState')).sub, 'edit');
+  const up0 = mock.state.uploads.length;
+  await s.generate(job('A POV selfie photo of @wajah in a cafe'), { timeoutMs: 60000 });
+  const g2 = mock.generated[mock.generated.length - 1];
+  assert.strictEqual(g2.path, '/project/p-test-1');
+  assert.strictEqual(g2.refs.length, 1);
+  assert.strictEqual(mock.state.uploads.length, up0, 'foto yang sama dipakai ulang, tidak diunggah lagi');
+
+  // 3) "Flow Agent" menyala → dimatikan sebelum generate
+  mock.state.agentOn = true;
+  await s.navigate(`${base}/project/p-test-1?ce=1`);
+  await new Promise((r) => setTimeout(r, 600));
+  assert.ok((await s.call('viewState')).agent, 'sakelar Flow Agent terbaca menyala');
+  await s.generate({ prompt: 'Sunset over rice terraces', options: { kind: 'image', count: 1 } }, { timeoutMs: 60000 });
+  const g3 = mock.generated[mock.generated.length - 1];
+  assert.strictEqual(g3.agent, false, 'generate biasa, bukan lewat Flow Agent');
+  assert.strictEqual(mock.state.agentOn, false);
+
+  // 4) masuk tampilan edit tepat sebelum Generate → dibatalkan (FLOW_EDIT_MODE, diulang oleh Bulk), tidak ada generate
+  const n0 = mock.generated.length;
+  const prep0 = s.prepareComposer.bind(s);
+  s.prepareComposer = async (j, say) => { const out = await prep0(j, say); await (await s.ensurePage()).send('Runtime.evaluate', { expression: `history.pushState({}, '', '/project/p-test-1/edit/x1?ce=1')` }); return out; };
+  await assert.rejects(() => s.generate({ prompt: 'Mountain lake', options: { kind: 'image', count: 1 } }, { timeoutMs: 60000 }), /FLOW_EDIT_MODE/);
+  s.prepareComposer = prep0;
+  assert.strictEqual(mock.generated.length, n0, 'tidak menekan Generate di tampilan edit');
+  assert.strictEqual((await s.call('viewState')).sub, null, 'sudah kembali ke grid');
 });

@@ -5,11 +5,12 @@
 const path = require('path');
 
 /** Daftar alat (id → judul jendela). Sumber data kartu ada di src/renderer/skills.js (LAB_TOOLS). */
-const LAB_IDS = ['textanim', 'resize', 'editor', 'storyboard', 'shader', 'mockup', 'beat', 'converge', 'character', 'pixel', 'gridarch', 'scout'];
+const LAB_IDS = ['textanim', 'resize', 'editor', 'storyboard', 'shader', 'mockup', 'beat', 'converge', 'character', 'pixel', 'gridarch', 'scout', 'upscale', 'metadata', 'join'];
 const TITLES = {
   textanim: 'Teks Animasi', resize: 'Ubah Ukuran Video', editor: 'Editor Gambar', storyboard: 'Studio Storyboard',
   shader: 'Efek Shader', mockup: 'Mockup', beat: 'Ribbit — Video Ikut Ketukan', converge: 'Converge — Sketsa jadi Render',
-  character: 'Character X-ray', pixel: 'pixelBento', gridarch: 'Grid Architect', scout: 'Scout360'
+  character: 'Character X-ray', pixel: 'pixelBento', gridarch: 'Grid Architect', scout: 'Scout360',
+  upscale: 'Upscale Gambar', metadata: 'Cek Metadata', join: 'Gabung Video'
 };
 
 /**

@@ -392,8 +392,8 @@ function registerLabIpc() {
   handleLab('lab:read', (tool, sender, p) => readToolFile(p));
   handleLab('lab:save', (tool, sender, o) => {
     const file = tools.saveOutput(path.join(store.data.downloadDir, 'Alat'), o || {});
-    if (/\.(png|jpe?g|webp)$/i.test(file)) allowedFiles.add(file);
-    if (/\.(webm|mp4)$/i.test(file)) allowedVideos.add(file);
+    if (/\.(png|jpe?g|webp|gif)$/i.test(file)) allowedFiles.add(file);
+    if (/\.(webm|mp4|mov)$/i.test(file)) allowedVideos.add(file);
     send('tool', { state: 'saved', name: path.basename(file), path: file, quiet: true });
     return file;
   });

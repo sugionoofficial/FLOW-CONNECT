@@ -96,6 +96,12 @@ menjalankan uji asap pada aplikasi hasil build, lalu menerbitkan GitHub Release 
 Unduhan tetap: `releases/latest/download/FLOW-CONNECT-Desktop-Setup.exe` (dipakai tombol di Hub).
 Aplikasi belum ditandatangani (code signing), jadi Windows SmartScreen akan memberi peringatan saat instal.
 
+### Alat Kreatif & skill (v1.9.0+)
+- **Skill Character Sheet** — skill bawaan "Lembar karakter" ditingkatkan (hero + turnaround + ekspresi + palet, kunci konsistensi) dan skill admin **"Character Sheet Pro"** (migrasi `20261201000002_character_sheet_skill.sql`, muncul di Studio → Skill → "Dari admin", bisa diubah dari Admin → Skill).
+- **Upscale Gambar** (`lab/tools/upscale.js` + `upscale-core.js`) — perbesar 2x–4x (denoise + unsharp mask + kontras), ekspor PNG/JPG/WebP; opsional AI menulis prompt detail untuk buat ulang di Studio.
+- **Cek Metadata** (`lab/tools/metadata.js` + `metadata-core.js`, diport dari BLEA-AI) — pindai EXIF/XMP/IPTC/C2PA & penanda AI (Google/OpenAI/Midjourney/dsb.) pada PNG/JPG/WebP/GIF/MP4/MOV/WebM, hapus lossless, unduh hasil bersih; opsional cek visual dengan model vision.
+- **Gabung Video** (`lab/tools/join.js`) — sambungkan banyak klip: urutkan, potong per klip, samakan resolusi, fade antar klip, audio, ekspor MP4/WebM (rekam waktu-nyata via canvas).
+
 ### Lisensi & pembaruan otomatis (v1.1.0+)
 
 - **Lisensi** — pengguna membuat kunci `FC-XXXXX-…` di situs (`/app/lisensi`). Database hanya menyimpan hash SHA-256 kunci (`licenses`, `license_devices`, migrasi `20261127000001_desktop_licenses.sql`). Aplikasi memanggil RPC `activate_license` (anon) saat aktivasi, saat dibuka, dan tiap 6 jam; boleh offline hingga 7 hari. Kunci yang dicabut/kedaluwarsa langsung mengunci aplikasi. Default 3 PC per kunci, 5 kunci aktif per akun. Kunci disimpan terenkripsi (Windows DPAPI via `safeStorage`).
@@ -114,6 +120,15 @@ Aplikasi belum ditandatangani (code signing), jadi Windows SmartScreen akan memb
    - (Disarankan) Supabase → *Edge Functions → Secrets* → `GOOGLE_CLIENT_ID` = Client ID yang sama, agar token dari aplikasi lain ditolak.
 
 Tanpa Client ID, aplikasi tetap jalan dengan mode “Pakai email”.
+
+## Provider AI Arena (Asisten Prompt & pembaca halaman)
+Arena tersedia sebagai provider `openai_compat` (`arena`, base URL `https://api.arena.ai/v1`) — migrasi `20261201000001_arena_provider.sql` menambah provider + model router `coding-router-preview` (kategori chat, bisa baca gambar). Cara mengaktifkan:
+1. Buat API key di [platform.arena.ai/dashboard/keys](https://platform.arena.ai/dashboard/keys) (salin sekali, jangan commit ke repo).
+2. Situs → **Admin → Provider & Model → Arena → Kunci API** → tempel key → Simpan (tersimpan terenkripsi di Supabase Vault, hanya dipakai Edge Function `prompt-chat`).
+3. Klik **Ambil model** untuk menambah model langsung Arena (daftar dari `GET /v1/models`), lalu pilih model bawaan di kategori Chat prompt bila perlu.
+4. Uji di **Admin → Chat Prompt → Uji coba** dengan model Arena.
+
+Catatan: `coding-router-preview` disetel untuk tool coding; bila hasil Asisten Prompt kurang pas, pakai model langsung dari “Ambil model”. Biaya mengikuti saldo workspace Arena (lihat Usage di dasbor Arena).
 
 ## Database (`supabase/migrations`)
 - `20261125000001_init_schema.sql` — skema awal (profiles, dsb.).

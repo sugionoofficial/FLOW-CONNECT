@@ -40,7 +40,7 @@ const CATS: { id: Category; label: string; Icon: typeof Bot }[] = [
   { id: 'audio', label: 'Audio', Icon: AudioLines },
 ]
 const KINDS = [
-  ['openai_compat', 'OpenAI-compatible (OpenCode, OpenRouter, Groq, dll.)'],
+  ['openai_compat', 'OpenAI-compatible (OpenCode, OpenRouter, Groq, Arena, dll.)'],
   ['anthropic', 'Anthropic'],
   ['google', 'Google AI'],
   ['fal', 'fal.ai'],

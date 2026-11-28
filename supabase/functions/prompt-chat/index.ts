@@ -67,6 +67,110 @@ function cleanMessages(raw: unknown): Msg[] {
     .map((m) => ({ role: m.role, content: String(m.content).slice(0, MAX_CHARS) }))
 }
 
+// ───────────────────────── AI pembaca halaman ─────────────────────────
+// Instruksi tetap di server (bukan dari klien / admin chat). Jawaban: SATU objek JSON.
+const PAGE_SYSTEM = `You operate Google Flow (Google's AI video tool) in a browser on behalf of the signed-in user.
+Each turn you receive: the GOAL, previous steps, the page path/title, visible text, a numbered list of the ONLY elements you may click (with label, icon name, position, whether they are inside a dialog/card and whether they look disabled) and often a screenshot where the same numbers are drawn on the elements.
+Reply with ONLY one JSON object, no prose, no code fence:
+{"action":"click","id":<number>,"reason":"<short>"}  click that element
+{"action":"done","reason":"<short>"}                 the goal is already reached (e.g. an empty project editor is open and nothing covers it)
+{"action":"wait","reason":"<short>"}                 the page is still loading / changing
+{"action":"blocked","reason":"<the message shown>"}  Flow says it is not available for this account (country, age, admin, waitlist) or a step needs the human (sign in, verification, payment)
+Rules:
+- NEVER choose: sign out / log out / switch or add account, upgrade, subscribe, buy, purchase, add credits, Google AI Pro/Ultra offers, delete, share, settings, feedback, help, links that leave Flow (changelogs, terms pages, "View all", "Learn more").
+- A dialog / card / overlay that covers the page must be handled first. Welcome, terms, tour and "What's new" cards: tick the required agreement checkbox, use the NEXT arrow (unlabeled icon button such as arrow_forward on the right) until the last page, then press "Get started" / "Continue" / "Got it" / "I agree". A button that looks disabled becomes active later — do not press it yet.
+- To create a project press the button for a new project (e.g. "New project", "+ New project", or the same in another language). Press it at most once; if a previous step already pressed it, prefer "wait".
+- Do not repeat a click that changed nothing; choose another element or "wait".
+- Only use ids from the list.`
+const PAGE_MAX_CHARS = 14000
+// deno-lint-ignore no-explicit-any
+async function pageReader(admin: any, body: any, licenseId: string | null, userId: string | null, isAdmin: boolean) {
+  const text = typeof body.page === 'string' ? body.page.slice(0, PAGE_MAX_CHARS) : ''
+  if (!text.trim()) return json({ error: 'EMPTY_MESSAGE' }, 400)
+  let image: string | null = null
+  if (body.image != null) {
+    const img = String(body.image)
+    if (img.length > MAX_IMAGE || !IMAGE_RE.test(img)) return json({ error: 'INVALID_IMAGE' }, 400)
+    image = img
+  }
+  const { data: settings } = await admin.from('ai_settings').select('*').eq('id', 1).single()
+  if (settings && settings.page_reader_enabled === false) return json({ error: 'PAGE_READER_OFF' }, 503)
+  const limit = settings?.page_reader_daily_limit ?? 300
+  if (!isAdmin) {
+    const since = new Date()
+    since.setUTCHours(0, 0, 0, 0)
+    const { count } = await admin.from('ai_usage').select('id', { count: 'exact', head: true })
+      .eq('license_id', licenseId).eq('category', 'page').gte('created_at', since.toISOString())
+    if ((count ?? 0) >= limit) return json({ error: 'DAILY_LIMIT', limit }, 429)
+  }
+  // urutan model: pilihan admin → model lain yang bisa membaca gambar → model chat bawaan (tanpa gambar)
+  const { data: rows, error: mErr } = await admin.from('ai_models')
+    .select('id, model_id, label, config, is_default, sort, provider:ai_providers!inner(id, name, kind, base_url, enabled)')
+    .eq('category', 'chat').eq('enabled', true).eq('provider.enabled', true)
+    .order('is_default', { ascending: false }).order('sort')
+  if (mErr) return json({ error: 'CONFIG', detail: mErr.message }, 500)
+  // deno-lint-ignore no-explicit-any
+  const all: any[] = (rows ?? []).filter((m: any) => m.provider?.kind === 'openai_compat')
+  // deno-lint-ignore no-explicit-any
+  const vis = (m: any) => truthy(m?.config?.vision)
+  const chosen = all.find((m) => m.id === settings?.page_reader_model_id)
+  const chain = [chosen, ...all.filter((m) => m !== chosen && vis(m)).slice(0, 2), all.find((m) => m !== chosen && !vis(m))]
+    .filter((m, i, a) => m && a.indexOf(m) === i).slice(0, 4)
+  if (!chain.length) return json({ error: 'NO_MODEL' }, 503)
+  let lastErr: string | null = null
+  let status = 502
+  for (const model of chain) {
+    const provider = model.provider
+    const { data: secret } = await admin.rpc('ai_provider_secret', { p_provider: provider.id })
+    if (!secret) { lastErr = 'NO_API_KEY'; continue }
+    const withImage = !!image && (vis(model) || model === chosen)
+    const user = withImage
+      ? [{ type: 'text', text }, { type: 'image_url', image_url: { url: image } }]
+      : text
+    const payload = {
+      model: model.model_id,
+      messages: [{ role: 'system', content: PAGE_SYSTEM }, { role: 'user', content: user }],
+      max_tokens: 400, temperature: 0, stream: false,
+    }
+    let ok = false, reply = '', errText: string | null = null
+    let usage: { prompt_tokens?: number; completion_tokens?: number } = {}
+    try {
+      const base = apiBase(provider.base_url)
+      const res = await fetch(`${base}/chat/completions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json', ...extraHeaders(base) },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(45_000),
+      })
+      const out = await res.json().catch(() => null)
+      if (res.ok && out?.choices?.[0]) {
+        reply = String(out.choices[0].message?.content ?? '').trim()
+        usage = out.usage ?? {}
+        ok = /\{[\s\S]*"action"[\s\S]*\}/.test(reply)
+        if (!ok) errText = reply ? `NO_JSON: ${reply.slice(0, 120)}` : 'EMPTY_REPLY'
+      } else {
+        status = res.status === 429 ? 429 : 502
+        errText = `HTTP ${res.status}: ${String(out?.error?.message ?? out?.message ?? out?.errors?.[0]?.message ?? '').slice(0, 300)}`
+      }
+    } catch (e) {
+      errText = `NETWORK: ${(e as Error).message}`.slice(0, 300)
+    }
+    const cfg = model.config ?? {}
+    const inT = usage.prompt_tokens ?? null
+    const outT = usage.completion_tokens ?? null
+    const cost = inT != null && outT != null && (cfg.input_per_m != null || cfg.output_per_m != null)
+      ? (inT * Number(cfg.input_per_m ?? 0) + outT * Number(cfg.output_per_m ?? 0)) / 1e6
+      : null
+    await admin.from('ai_usage').insert({
+      license_id: licenseId, user_id: userId, provider_id: provider.id, model_id: model.model_id, category: 'page',
+      input_tokens: inT, output_tokens: outT, cost_usd: cost, ok, error: errText,
+    })
+    if (ok) return json({ reply, model: { id: model.id, label: model.label }, vision: withImage, usage: { input: inT, output: outT } })
+    lastErr = errText
+  }
+  return json({ error: lastErr === 'NO_API_KEY' ? 'NO_API_KEY' : 'PROVIDER_ERROR', detail: isAdmin ? lastErr : undefined }, status)
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405)
@@ -186,6 +290,9 @@ Deno.serve(async (req) => {
 
   // pengguna web biasa hanya boleh lewat aplikasi desktop (berlisensi); admin boleh uji coba dari web
   if (!licenseId && !isAdmin) return json({ error: 'LICENSE_REQUIRED' }, 403)
+
+  // ── AI pembaca halaman (aplikasi desktop: login Google Flow / membuat project) ──
+  if (body.mode === 'page') return pageReader(admin, body, licenseId, userId, isAdmin)
 
   const messages = cleanMessages(body.messages)
   if (!messages.length || messages[messages.length - 1].role !== 'user') return json({ error: 'EMPTY_MESSAGE' }, 400)

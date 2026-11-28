@@ -23,7 +23,10 @@ type Model = {
   id: string; provider_id: string; model_id: string; label: string; category: Category; enabled: boolean; is_default: boolean
   sort: number; price_note: string | null; config: Record<string, unknown>
 }
-type Settings = { chat_daily_limit: number; chat_max_tokens: number; chat_system_prompt: string }
+type Settings = {
+  chat_daily_limit: number; chat_max_tokens: number; chat_system_prompt: string
+  page_reader_enabled: boolean; page_reader_model_id: string | null; page_reader_daily_limit: number
+}
 type AdminLicense = {
   id: string; email: string | null; label: string; key_hint: string; max_devices: number; devices: number; expires_at: string | null
   revoked_at: string | null; last_used_at: string | null; created_at: string; chat_today: number
@@ -522,7 +525,7 @@ function ModelPicker({ provider, existing, onClose, onAdded }: { provider: Provi
 function ChatTab() {
   const toast = useToast()
   const [s, setS] = useState<Settings | null>(null)
-  const [models, setModels] = useState<{ id: string; label: string; is_default: boolean }[]>([])
+  const [models, setModels] = useState<{ id: string; label: string; is_default: boolean; config: Record<string, unknown> | null }[]>([])
   const [model, setModel] = useState('')
   const [busy, setBusy] = useState(false)
   const [msgs, setMsgs] = useState<{ role: 'user' | 'assistant'; content: string }[]>([])
@@ -530,11 +533,11 @@ function ChatTab() {
   const [sending, setSending] = useState(false)
 
   useEffect(() => {
-    supabase.from('ai_settings').select('chat_daily_limit,chat_max_tokens,chat_system_prompt').eq('id', 1).single().then(({ data, error }) => {
+    supabase.from('ai_settings').select('chat_daily_limit,chat_max_tokens,chat_system_prompt,page_reader_enabled,page_reader_model_id,page_reader_daily_limit').eq('id', 1).single().then(({ data, error }) => {
       if (error) toast(errMsg(error), 'error')
       else setS(data as Settings)
     })
-    supabase.from('ai_models').select('id,label,is_default').eq('category', 'chat').eq('enabled', true).order('sort').then(({ data }) => {
+    supabase.from('ai_models').select('id,label,is_default,config').eq('category', 'chat').eq('enabled', true).order('sort').then(({ data }) => {
       setModels(data ?? [])
       setModel((data ?? []).find((m) => m.is_default)?.id ?? '')
     })
@@ -579,6 +582,27 @@ function ChatTab() {
         <div className="mt-3 text-sm">
           <Field label="Instruksi sistem (system prompt)"><textarea className={clsx(input, 'min-h-56 font-mono text-xs leading-relaxed')} value={s.chat_system_prompt} onChange={(e) => setS({ ...s, chat_system_prompt: e.target.value })} /></Field>
         </div>
+        <div className="mt-4 flex justify-end"><Button onClick={save} disabled={busy}><Save className="size-4" /> Simpan</Button></div>
+      </section>
+
+      <section className="rounded-3xl p-6 glass lg:col-span-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-display text-xl font-semibold">AI pembaca halaman</h2>
+            <p className="mt-1 max-w-3xl text-sm text-white/55">Aplikasi PC mengirim isi halaman Google Flow (teks, daftar tombol bernomor, tangkapan layar) saat login &amp; membuat project; model ini memilih tombol yang ditekan. Instruksinya tetap di server dan tombol Keluar akun / langganan / beli tidak pernah ditawarkan. Pilih model yang bisa membaca gambar; bila gagal, server mencoba model gambar lain lalu model chat bawaan (tanpa gambar).</p>
+          </div>
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={s.page_reader_enabled} onChange={(e) => setS({ ...s, page_reader_enabled: e.target.checked })} /> Aktif</label>
+        </div>
+        <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
+          <Field label="Model">
+            <select className={input} value={s.page_reader_model_id ?? ''} onChange={(e) => setS({ ...s, page_reader_model_id: e.target.value || null })}>
+              <option value="" className="bg-ink-900">Otomatis (model pertama yang bisa membaca gambar)</option>
+              {models.map((m) => <option key={m.id} value={m.id} className="bg-ink-900">{m.label}{m.config && (m.config as Record<string, unknown>).vision ? ' · bisa baca gambar' : ''}</option>)}
+            </select>
+          </Field>
+          <Field label="Batas langkah per lisensi / hari"><input className={input} inputMode="numeric" value={s.page_reader_daily_limit} onChange={(e) => setS({ ...s, page_reader_daily_limit: Number(e.target.value) || 0 })} /></Field>
+        </div>
+        <p className="mt-3 text-xs text-white/45">Satu login biasanya memakai 2–8 langkah. Pemakaian tercatat sebagai kategori “page”.</p>
         <div className="mt-4 flex justify-end"><Button onClick={save} disabled={busy}><Save className="size-4" /> Simpan</Button></div>
       </section>
 

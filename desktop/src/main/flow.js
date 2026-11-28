@@ -13,11 +13,14 @@ const { NetWatch } = require('./netwatch');
 const { parsePrompt, sanitizeTags } = require('./refs');
 const { checkFrames } = require('./catalog');
 const { sanitizeStudio } = require('./store');
+const { formatPage, parseDecision, GOALS } = require('./pagereader');
 
 const DEFAULT_FLOW_URL = 'https://flow.google.com/';
 const IMAGE_EXT = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.heic': 'image/heic' };
 const MIME_EXT = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif', 'video/mp4': '.mp4', 'video/webm': '.webm' };
 
+// galat AI pembaca halaman yang tidak akan hilang bila dicoba lagi sebentar kemudian
+const AI_FATAL = new Set(['LICENSE_REQUIRED', 'INVALID_KEY', 'REVOKED', 'EXPIRED', 'INVALID_DEVICE', 'DAILY_LIMIT', 'NO_MODEL', 'NO_API_KEY', 'PAGE_READER_OFF', 'UNSUPPORTED_PROVIDER']);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const normText = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -108,6 +111,7 @@ class FlowSession extends EventEmitter {
     this.extraArgs = o.extraArgs || [];
     this.getMode = o.getMode || (() => 'normal');
     this.loginUrl = o.loginUrl || 'https://accounts.google.com/ServiceLogin?continue=' + encodeURIComponent(this.flowUrl.replace(/[?&]hl=[^&]*/, ''));
+    this.pageReader = o.pageReader || null; // async ({text, image}) → {reply, model} — AI pembaca halaman (opsional)
     this.getShowBounds = o.getShowBounds || (() => ({ x: 80, y: 60, width: 1280, height: 820 }));
     this.mode = null;      // mode browser yang sedang berjalan
     this.ua = null;        // UA bersih untuk mode tersembunyi
@@ -628,10 +632,13 @@ class FlowSession extends EventEmitter {
   }
 
   /**
-   * Klik tombol "New project" Flow (dan tombol "Create with Google Flow" di halaman sambutan bila perlu).
-   * Akun Google yang baru pertama kali memakai Flow: dialog sambutan / persetujuan ditutup dulu (setuju / lanjutkan /
-   * mengerti — tidak pernah Sign out, langganan, atau beli). Tombol tidak ketemu (bahasa akun lain) → beranda dibuka
-   * ulang dalam bahasa Inggris. Flow tidak tersedia untuk akun ini → FLOW_UNAVAILABLE dengan teks dari Flow.
+   * Buka project Flow baru yang kosong.
+   * Dengan AI pembaca halaman (pageReader): setiap langkah halaman dibaca (teks, daftar tombol bernomor, tangkapan layar)
+   * dan model AI memilih tombol — kartu sambutan / persetujuan / "What's new", bahasa akun apa pun. Pilihan AI diperiksa
+   * ulang (id ada di daftar, label sama, bukan Sign out / langganan / beli) dan "New project" tidak pernah ditekan dua kali
+   * sebelum klik pertama selesai diproses. AI tidak tersedia (tanpa lisensi, batas harian, jaringan) → cara biasa:
+   * pola tombol yang dikenal, dialog sambutan ditutup, beranda berbahasa Inggris bila tombol tidak terbaca.
+   * Flow tidak tersedia untuk akun ini → FLOW_UNAVAILABLE dengan teks dari Flow.
    */
   newProject({ timeoutMs = 25000 } = {}) {
     return this._exclusive(async () => {
@@ -640,23 +647,25 @@ class FlowSession extends EventEmitter {
         const st0 = await this.status();
         // dari dalam project: kembali ke beranda Flow dulu
         if (st0.projectId) await this.navigate(this.flowUrl);
+        const ai = this._aiState();
         const done = async (st) => {
           await this.ensurePage(); await this.waitReady();
           // kartu "What's new" / sambutan sering muncul sesaat SETELAH project terbuka → tunggu sebentar
-          await this._waitFor(() => this.call('onboardingTarget'), 3500, 400);
+          await this._waitFor(async () => (await this.call('onboardingTarget')) || (ai.on() && await this.call('overlayOpen')), 3500, 400);
+          if (ai.on()) await this._aiClear(ai);
           await this._dismissOnboarding();
-          return { projectId: st.projectId, projectTitle: st.projectTitle };
+          return { projectId: st.projectId, projectTitle: st.projectTitle, ...(ai.used ? { ai: { steps: ai.steps, model: ai.model } } : {}) };
         };
-        // tunggu project terbuka; dialog yang muncul setelah klik (sambutan / "Create") ikut ditangani
-        // status selalu diperiksa sekali lagi sebelum menyerah → tidak pernah membuat 2 project
-        const opened = async (ms) => {
+        // tunggu project terbuka; status selalu diperiksa sekali lagi sebelum menyerah → tidak pernah membuat 2 project.
+        // onb: dialog sambutan ditangani dengan pola (hanya bila AI tidak dipakai)
+        const opened = async (ms, onb = true) => {
           const end = Date.now() + ms;
           let lastOnb = Date.now();
           for (;;) {
             const x = await this.status().catch(() => ({}));
             if (x.projectId) return x;
             if (Date.now() >= end) return null;
-            if (Date.now() - lastOnb >= 3000) { // tidak di tengah navigasi sesaat setelah klik
+            if (onb && Date.now() - lastOnb >= 3000) { // tidak di tengah navigasi sesaat setelah klik
               lastOnb = Date.now();
               const o = await this.call('onboardingTarget', [], 5000).catch(() => null);
               if (o) { await this._click(o).catch(() => {}); await sleep(rand(800, 1200)); continue; }
@@ -664,10 +673,74 @@ class FlowSession extends EventEmitter {
             await sleep(500);
           }
         };
-        let clicked = false, english = false;
-        for (let attempt = 0; attempt < 6; attempt++) {
+        let clicked = false, english = false, heur = 0, blockedVotes = 0, lastClick = null;
+        for (let round = 0; round < 24 && heur < 6; round++) {
           // klik sebelumnya mungkin masih diproses (PC/jaringan lambat) → jangan sampai membuat 2 project
-          if (clicked) { const late = await opened(4000); if (late) return done(late); }
+          if (clicked) { const late = await opened(4000, !ai.on()); if (late) return done(late); }
+          // 1) AI membaca halaman dan memilih langkah berikutnya
+          if (ai.on()) {
+            const now = await this.status().catch(() => ({}));
+            if (now.projectId) return done(now);
+            const d = await this._aiDecide(GOALS.newProject, ai);
+            if (d) {
+              if (d.action === 'blocked') {
+                const b = await this.call('flowBlocked').catch(() => null);
+                if (b || ++blockedVotes >= 2) throw fail('FLOW_UNAVAILABLE', b ? b.text : d.reason);
+                ai.note(`you said "blocked" (${d.reason}); look again — answer "blocked" again only if Flow really shows that message`);
+                await sleep(1500);
+                continue;
+              }
+              blockedVotes = 0;
+              if (d.action === 'wait') { ai.note('waited'); await sleep(1800); await this.waitReady(6000); continue; }
+              if (d.action === 'done') {
+                const st = await this.status().catch(() => ({}));
+                if (st.projectId) return done(st);
+                ai.note('you said "done" but no project is open (the address has no /project/) — find the new project button');
+                continue;
+              }
+              const t = await this.call('navTarget', [d.id, d.el.label]).catch(() => null);
+              if (!t) { ai.note(`#${d.id} could not be clicked (the page changed); read the page again`); continue; }
+              if (t.kind === 'new' && clicked) { const late = await opened(timeoutMs, false); if (late) return done(late); }
+              // tombol yang sama dengan klik terakhir sementara halaman belum berubah sejak itu: klik pertama mungkin masih
+              // diproses (mis. tombol project baru berbahasa lain) → tunggu dulu, baca ulang halaman, baru boleh klik lagi
+              const key = `${d.el.role}|${d.el.label}|${d.el.icon}`;
+              if (lastClick && lastClick.key === key && !lastClick.waited) {
+                const cur = await this.call('pageSig').catch(() => null);
+                if (cur && cur === lastClick.sig) {
+                  lastClick.waited = true;
+                  const st = await this._waitFor(async () => {
+                    const x = await this.status().catch(() => ({}));
+                    if (x.projectId) return x;
+                    return (await this.call('pageSig').catch(() => cur)) !== cur ? { changed: true } : null;
+                  }, 8000, 500);
+                  if (st && st.projectId) return done(st);
+                  ai.note(`you chose #${d.id} again right after clicking it; waited for the page — read it again`);
+                  continue;
+                }
+              }
+              const before = await this.call('pageSig').catch(() => null);
+              await sleep(rand(250, 500));
+              await this._click(t);
+              const name = d.el.label ? `"${d.el.label}"` : `icon ${d.el.icon || '?'}`;
+              if (t.kind === 'new') {
+                clicked = true;
+                ai.note(`clicked #${d.id} ${name} (new project button) — do not press it again; wait for the project to open`);
+                const st = await opened(timeoutMs, false);
+                if (st) return done(st);
+                continue;
+              }
+              const st = await opened(2500, false);
+              if (st) return done(st);
+              await this.waitReady(6000);
+              const after = await this.call('pageSig').catch(() => null);
+              lastClick = { key, sig: after, waited: false };
+              ai.note(`clicked #${d.id} ${name} → ${before && before === after ? 'nothing visible changed' : 'the page changed'}`);
+              continue;
+            }
+            // jawaban AI tidak terpakai / AI tidak tersedia → langkah ini memakai cara biasa
+          }
+          // 2) cara biasa (tanpa AI): pola tombol yang dikenal
+          heur++;
           await this._dismissOnboarding();
           const blocked = await this.call('flowBlocked').catch(() => null);
           if (blocked) throw fail('FLOW_UNAVAILABLE', blocked.text);
@@ -689,12 +762,82 @@ class FlowSession extends EventEmitter {
           const st = await opened(timeoutMs);
           if (st) return done(st);
         }
+        if (clicked) { const late = await opened(4000); if (late) return done(late); }
         const fin = await this.status();
         if (!fin.signedIn) throw new Error('NOT_SIGNED_IN');
         const sum = await this.call('pageSummary').catch(() => null);
-        throw fail('NEW_PROJECT_NOT_FOUND', sum ? `halaman ${sum.path}${sum.heading ? ` "${sum.heading}"` : ''}${sum.buttons.length ? ` · tombol: ${sum.buttons.join(', ')}` : ''}` : null);
+        throw fail('NEW_PROJECT_NOT_FOUND', sum ? `halaman ${sum.path}${sum.heading ? ` "${sum.heading}"` : ''}${sum.buttons.length ? ` · tombol: ${sum.buttons.join(', ')}` : ''}` : null,
+          ai.lastError ? { aiError: ai.lastError } : undefined);
       } finally { await this.endWork(); }
     });
+  }
+
+  // ---------- AI pembaca halaman ----------
+  _aiState() {
+    const ai = {
+      steps: 0, fails: 0, history: [], used: false, model: null, lastError: null,
+      on: () => !!this.pageReader && ai.fails < 3 && ai.steps < 14 && !(this._aiOffUntil > Date.now()),
+      note: (h) => { ai.history.push(String(h).slice(0, 200)); }
+    };
+    return ai;
+  }
+
+  /** Baca halaman (daftar elemen + tangkapan layar bernomor) → keputusan AI yang sudah diperiksa, atau null. */
+  async _aiDecide(goal, ai) {
+    ai.steps++;
+    let map;
+    try { map = await this.call('pageMap', [], 10000); } catch { ai.fails++; return null; }
+    let image = null;
+    if (!this._noShot) {
+      try {
+        await this.call('navMarks', [true], 5000);
+        const page = await this.ensurePage();
+        const scale = Math.min(1, 1280 / Math.max(1, map.vw));
+        const shot = await page.send('Page.captureScreenshot', { format: 'jpeg', quality: 55, clip: { x: 0, y: 0, width: map.vw, height: map.vh, scale } }, 8000);
+        if (shot && shot.data && shot.data.length < 4000000) image = 'data:image/jpeg;base64,' + shot.data;
+      } catch { this._noShot = true; /* jendela diperkecil tidak selalu bisa difoto → cukup teks halaman */ }
+      finally { await this.call('navMarks', [false], 5000).catch(() => {}); }
+    }
+    let r;
+    try {
+      r = await this.pageReader({ text: formatPage(goal, ai.history, map), image });
+    } catch (e) {
+      ai.fails++;
+      ai.lastError = e.message;
+      // tidak ada lisensi / batas harian / dimatikan admin → jangan dicoba lagi selama 10 menit
+      if (AI_FATAL.has(e.message)) { ai.fails = 99; this._aiOffUntil = Date.now() + 10 * 60 * 1000; }
+      this.emit('ai', { error: e.message });
+      return null;
+    }
+    ai.used = true;
+    ai.model = (r && r.model && r.model.label) || ai.model;
+    const d = parseDecision(r && r.reply, map);
+    if (!d) {
+      ai.fails++;
+      ai.note('your previous answer could not be used — reply with ONE JSON object and only ids from the list');
+      return null;
+    }
+    ai.fails = 0;
+    this.emit('ai', { action: d.action, label: d.el ? (d.el.label || (d.el.icon ? `ikon ${d.el.icon}` : `#${d.id}`)) : '', reason: d.reason, model: ai.model });
+    return d;
+  }
+
+  /** Setelah project terbuka: AI menutup kartu / dialog yang menutupi editor (hanya elemen di dalam dialog). */
+  async _aiClear(ai) {
+    for (let i = 0; i < 8 && ai.on(); i++) {
+      if (!(await this.call('overlayOpen').catch(() => false))) return;
+      const d = await this._aiDecide(GOALS.clearProject, ai);
+      if (!d) continue;
+      if (d.action === 'done' || d.action === 'blocked') return;
+      if (d.action === 'wait') { await sleep(1200); continue; }
+      if (!d.el.dialog) { ai.note(`#${d.id} is not inside the card/dialog — only close the card`); continue; }
+      const t = await this.call('navTarget', [d.id, d.el.label]).catch(() => null);
+      if (!t || t.kind === 'new') { ai.note(`#${d.id} could not be clicked`); continue; }
+      await sleep(rand(200, 400));
+      await this._click(t);
+      await sleep(rand(800, 1100));
+      ai.note(`clicked #${d.id} ${d.el.label ? `"${d.el.label}"` : `icon ${d.el.icon || '?'}`}`);
+    }
   }
 
   /** Tutup dialog sambutan / persetujuan / kartu "What's new" Flow (maks. 16 langkah). Mengembalikan jumlah klik. */

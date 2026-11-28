@@ -798,3 +798,69 @@ test('Kartu "What\'s new" Flow setelah project baru (tak bisa ditutup Escape): p
   assert.deepStrictEqual(mock.state.onb, ['changelog']);
   assert.strictEqual(await s.call('overlayOpen'), false);
 });
+
+// "AI" tiruan yang hanya membaca teks halaman yang dikirim aplikasi (seperti model sungguhan): memeriksa jalur
+// pageMap → tangkapan layar bernomor → keputusan → navTarget → klik
+function fakePageAi(log) {
+  return async ({ text, image }) => {
+    log.push({ text, image });
+    const els = [...text.matchAll(/^#(\d+) (\S+) (?:"([^"]*)"|icon:(\S*))(.*?) @/gm)].map((m) => ({
+      id: +m[1], role: m[2], label: m[3] || '', icon: m[4] || '', dialog: /\[D\]/.test(m[5]), disabled: /looks disabled/.test(m[5]), checked: /\(checked\)/.test(m[5])
+    }));
+    const pagePath = /PAGE: (\S+)/.exec(text)[1];
+    const say = (o) => ({ reply: 'Baik.\n' + JSON.stringify(o), model: { id: 'm', label: 'AI Tiruan' } });
+    const e = els.find((x) => x.dialog && x.role === 'checkbox' && !x.checked)
+      || els.find((x) => x.dialog && !x.disabled && /arrow_forward/.test(x.icon))
+      || els.find((x) => x.dialog && !x.disabled && /^(continue|get started|got it|i agree)$/i.test(x.label));
+    if (e) return say({ action: 'click', id: e.id, reason: 'kartu di depan' });
+    if (pagePath.startsWith('/project/')) return say({ action: 'done', reason: 'project terbuka' });
+    const np = els.find((x) => /new project|proy[eè]k [eé]nggal/i.test(x.label));
+    if (np) return say({ action: 'click', id: np.id, reason: 'tombol project baru' });
+    return say({ action: 'wait', reason: 'memuat' });
+  };
+}
+
+test('AI pembaca halaman: syarat + sambutan + bahasa asing + kartu "What\'s new" dibaca AI, satu project, tombol terlarang tidak pernah ditawarkan', { skip: !CHROME && 'Chrome tidak ditemukan (set CHROME_PATH)', timeout: 180000 }, async (t) => {
+  const mock = await mockFlow();
+  Object.assign(mock.state, { firstRun: true, lang: 'su', homeOnly: true, changelog: 'icon' });
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fc-ai-'));
+  const base = `http://127.0.0.1:${mock.port}`;
+  const log = [], events = [];
+  let reader = fakePageAi(log);
+  const s = new FlowSession({ profileDir: path.join(tmp, 'profile'), getBrowser: () => ({ path: CHROME }), flowUrl: `${base}/`, agentCfg: { mediaHosts: ['127.0.0.1'], allowHttp: true }, extraArgs: EXTRA,
+    pageReader: (req) => reader(req) });
+  s.on('ai', (ev) => events.push(ev));
+  t.after(async () => { await Promise.race([s.closeBrowser().catch(() => {}), new Promise((r) => setTimeout(r, 15000))]); mock.server.closeAllConnections(); mock.server.close(); try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { /* Windows */ } });
+  await s.connect();
+  await s.navigate(`${base}/`);
+  await new Promise((r) => setTimeout(r, 600));
+  const np = await s.newProject();
+  assert.match(np.projectId, /^p-new-/);
+  assert.strictEqual(mock.state.projects, 1, 'tepat satu project');
+  assert.deepStrictEqual(mock.state.onb, ['terms', 'tour', 'changelog'], 'centang → Continue → Got it → panah → panah → Get started; tanpa Upgrade / changelog / kembali');
+  assert.ok(np.ai && np.ai.steps >= 6 && np.ai.model === 'AI Tiruan', JSON.stringify(np.ai));
+  assert.ok(log.every((x) => /^data:image\/jpeg;base64,/.test(x.image)), 'setiap langkah disertai tangkapan layar');
+  assert.ok(log.some((x) => /"Proyèk Énggal Pisan"/.test(x.text)), 'tombol berbahasa lain dibaca AI tanpa pindah ke bahasa Inggris');
+  assert.ok(log.some((x) => /I agree to the Google Terms of Service/.test(x.text)), 'kotak centang memakai teks labelnya');
+  for (const x of log) assert.doesNotMatch(x.text.split('ELEMENTS')[1], /Upgrade|changelogs/i, 'tombol terlarang tidak masuk daftar');
+  assert.strictEqual(await s.call('overlayOpen'), false);
+  assert.strictEqual(await s.call('navMarks', [false]), true);
+  assert.strictEqual(await s.call('pageMap').then(() => s.ensurePage()).then((p) => p.send('Runtime.evaluate', { expression: '!!document.getElementById("__fcMarks")', returnByValue: true })).then((r) => r.result.value), false, 'nomor penanda sudah dilepas');
+  assert.ok(events.some((e) => e.action === 'click' && e.label === 'ikon arrow_forward'));
+
+  // AI menjawab asal → tiga kali tidak terpakai → cara biasa tetap membuat project
+  Object.assign(mock.state, { lang: null, changelog: null });
+  reader = async () => ({ reply: 'Saya rasa tombol biru.', model: null });
+  const np2 = await s.newProject();
+  assert.match(np2.projectId, /^p-new-2$/);
+  assert.strictEqual(mock.state.projects, 2);
+
+  // batas harian AI → langsung cara biasa, AI tidak dipanggil lagi selama 10 menit
+  let n = 0;
+  reader = async () => { n++; throw new Error('DAILY_LIMIT'); };
+  const np3 = await s.newProject();
+  assert.match(np3.projectId, /^p-new-3$/);
+  await s.newProject();
+  assert.strictEqual(n, 1);
+  assert.ok(events.some((e) => e.error === 'DAILY_LIMIT'));
+});

@@ -11,7 +11,7 @@ const MAX_CHARS = 6000;
 
 // galat server → kode yang dikenali tampilan
 const KNOWN = new Set(['INVALID_IMAGE', 'INVALID_KEY', 'REVOKED', 'EXPIRED', 'INVALID_DEVICE', 'LICENSE_REQUIRED', 'DAILY_LIMIT', 'NO_MODEL', 'NO_API_KEY',
-  'PROVIDER_ERROR', 'UNSUPPORTED_PROVIDER', 'EMPTY_MESSAGE']);
+  'PROVIDER_ERROR', 'UNSUPPORTED_PROVIDER', 'EMPTY_MESSAGE', 'PAGE_READER_OFF']);
 
 class Assistant {
   /**
@@ -118,6 +118,36 @@ class Assistant {
       throw e;
     }
     return { reply: body.reply, model: body.model || null, prompts: extractPrompts(body.reply) };
+  }
+
+  /**
+   * AI pembaca halaman (login Google Flow / membuat project): teks halaman + tangkapan layar bernomor → jawaban JSON model.
+   * @param {{text:string, image?:string}} o
+   * @returns {Promise<{reply:string, model:{id:string,label:string}|null}>}
+   */
+  async readPage({ text, image } = {}) {
+    const key = this.license._key();
+    if (!key) throw new Error('LICENSE_REQUIRED');
+    if (typeof text !== 'string' || !text.trim()) throw new Error('EMPTY_MESSAGE');
+    let res;
+    try {
+      res = await this.fetch(`${this.url}/functions/v1/prompt-chat`, {
+        method: 'POST',
+        headers: { apikey: this.apiKey, 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({
+          license_key: key, device_id: this.license.deviceId, mode: 'page', page: text.slice(0, 14000),
+          image: typeof image === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(image) ? image : undefined
+        }),
+        signal: AbortSignal.timeout(60000)
+      });
+    } catch {
+      throw new Error('NETWORK');
+    }
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body || typeof body.reply !== 'string') {
+      throw new Error(body && KNOWN.has(body.error) ? body.error : res.status >= 500 ? 'PROVIDER_ERROR' : 'NETWORK');
+    }
+    return { reply: body.reply, model: body.model || null };
   }
 }
 

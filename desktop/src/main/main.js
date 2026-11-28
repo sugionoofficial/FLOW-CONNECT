@@ -143,8 +143,13 @@ function session(id) {
   if (!s) {
     s = new FlowSession({
       profileDir: profileDir(id), flowUrl: FLOW_URL, getBrowser: () => browser.resolveBrowser(store.data.browser),
-      getMode: () => desiredMode(id), getShowBounds: showBounds, uploads: uploadSet, known: knownResults()
+      getMode: () => desiredMode(id), getShowBounds: showBounds, uploads: uploadSet, known: knownResults(),
+      pageReader: (req) => {
+        if (store.data.aiPageReader === false || !assistant) return Promise.reject(new Error('PAGE_READER_OFF'));
+        return assistant.readPage(req);
+      }
     });
+    s.on('ai', (ev) => send('activity', aiNote(ev)));
     s.on('results', (projectId, list) => {
       const all = { ...(store.data.results || {}) };
       delete all[projectId];
@@ -234,6 +239,14 @@ async function createProject(id) {
     return r;
   }
 }
+// catatan aktivitas AI pembaca halaman
+const AI_ACT = { click: 'klik', done: 'selesai', wait: 'menunggu halaman', blocked: 'Flow tidak tersedia' };
+const AI_ERR = { LICENSE_REQUIRED: 'butuh lisensi', DAILY_LIMIT: 'batas harian tercapai', NETWORK: 'tidak ada koneksi', PAGE_READER_OFF: 'dimatikan',
+  NO_MODEL: 'model belum diatur admin', NO_API_KEY: 'kunci API belum diatur admin', PROVIDER_ERROR: 'model AI sedang bermasalah' };
+function aiNote(ev) {
+  if (ev.error) return `AI pembaca halaman tidak dipakai (${AI_ERR[ev.error] || ev.error}) — memakai cara biasa.`;
+  return `AI membaca halaman${ev.model ? ` (${ev.model})` : ''}: ${AI_ACT[ev.action] || ev.action}${ev.label ? ` "${ev.label}"` : ''}${ev.reason ? ` — ${ev.reason}` : ''}`;
+}
 const projectNote = (e) => 'Project baru belum dibuat: ' + e.message + (e.detail ? ` (${e.detail})` : '');
 
 async function refreshStatus(id) {
@@ -258,7 +271,7 @@ function publicSettings() {
   const d = store.data;
   return {
     accounts: d.accounts, activeAccountId: d.activeAccountId, theme: d.theme, browser: d.browser, browserWindow: d.browserWindow,
-    autoProject: d.autoProject, studio: d.studio,
+    autoProject: d.autoProject, aiPageReader: d.aiPageReader !== false, studio: d.studio,
     downloadDir: d.downloadDir, mode: d.mode, autoAck: d.autoAck, auto: d.auto, downloads: d.downloads.slice(0, 300)
   };
 }

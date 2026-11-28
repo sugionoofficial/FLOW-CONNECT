@@ -164,7 +164,9 @@ $('chgo').addEventListener('click',function(e){if(!e.isTrusted)return;if(p<N-1){
 })();</script>`;
   };
   const page = (signedIn, ce) => `<!doctype html><html lang="id"><head><title>Film Saya - Google Flow</title></head><body>
-<script>window.WIZ_global_data=${JSON.stringify(signedIn ? { SNlM0e: 'AT_TOKEN', oPEP7c: 'kreator@gmail.com', cfb2h: 'bl1', FdrFJe: 'sid' } : {})};window.__rpc=${state.rpc};window.__terms=${state.terms};window.__editAfterUpload=${!!state.editAfterUpload};window.__agentOn=${!!state.agentOn};window.__assets=${state.persistAssets ? JSON.stringify(state.assets.map((a) => ({ id: a.id, title: a.name }))) : '[]'};</script>
+<script>window.WIZ_global_data=${JSON.stringify(signedIn ? { SNlM0e: 'AT_TOKEN', oPEP7c: 'kreator@gmail.com', cfb2h: 'bl1', FdrFJe: 'sid' } : {})};window.__rpc=${state.rpc};window.__terms=${state.terms};window.__editAfterUpload=${!!state.editAfterUpload};window.__agentOn=${!!state.agentOn};window.__assets=${state.persistAssets ? JSON.stringify(state.assets.map((a) => ({ id: a.id, title: a.name }))) : '[]'};
+// Flow asli (Angular) menggambar tombol "+" & kotak prompt beberapa detik SETELAH halaman selesai dimuat
+if(${state.late || 0}){document.documentElement.style.visibility='hidden';setTimeout(function(){document.documentElement.style.visibility=''},${state.late || 0})}</script>
 <header><button aria-label="Setelan"><i>settings</i></button><button aria-label="Tambah media" id="add"><i>add</i></button><button aria-label="Flow Agent" id="agentbtn" aria-pressed="${!!state.agentOn}"><i>auto_awesome</i></button></header>
 <div class="cdk-overlay-pane" id="addmenu" role="menu" style="display:none;position:fixed;left:20px;top:50px;background:#fff;border:1px solid #ccc"><button role="menuitem" id="upitem"><i>upload</i>Upload media</button><button role="menuitem"><i>photo_library</i>Library</button></div>
 <flow-add-menu-popover-content id="fpop" style="display:none;position:fixed;left:20px;bottom:200px;background:#fff;border:1px solid #ccc"><input type="text" id="fq" aria-label="Search assets"><div id="flist"></div></flow-add-menu-popover-content>
@@ -991,4 +993,25 @@ test('Generate biasa, BUKAN edit: foto unggahan yang terbuka di tampilan edit, t
   s.prepareComposer = prep0;
   assert.strictEqual(mock.generated.length, n0, 'tidak menekan Generate di tampilan edit');
   assert.strictEqual((await s.call('viewState')).sub, null, 'sudah kembali ke grid');
+
+  // 5) kembali dari tampilan edit, lalu halaman Flow lambat menggambar tombol "+" → tunggu, jangan UPLOAD_BUTTON_NOT_FOUND
+  mock.state.late = 4000;
+  await s.navigate(`${base}/project/p-test-1/edit/${r1.items[0].mediaId}?ce=1`);
+  await new Promise((r) => setTimeout(r, 4500));
+  const pantai = path.join(tmp, 'pantai.png');
+  fs.writeFileSync(pantai, makePng(48, 48, [30, 160, 220]));
+  const up1 = mock.state.uploads.length;
+  const r5 = await s.generate({ prompt: 'Selfie @pantai', images: [pantai], tags: ['pantai'], reuseRefs: true, options: { kind: 'image', count: 1 } }, { timeoutMs: 90000 });
+  const g5 = mock.generated[mock.generated.length - 1];
+  assert.strictEqual(mock.state.uploads.length, up1 + 1, 'foto baru terunggah setelah tombol "+" tampil');
+  assert.strictEqual(g5.path, '/project/p-test-1');
+  assert.deepStrictEqual(g5.refs, r5.refs.map((r) => r.mediaId));
+
+  // 6) project baru saja dibuka (kotak prompt belum tergambar) → generate menunggu, tidak gagal
+  await s.navigate(`${base}/project/p-test-1?ce=1`);
+  const kota = path.join(tmp, 'kota.png');
+  fs.writeFileSync(kota, makePng(40, 40, [90, 90, 90]));
+  await s.generate({ prompt: 'Selfie @kota', images: [kota], tags: ['kota'], reuseRefs: true, options: { kind: 'image', count: 1 } }, { timeoutMs: 90000 });
+  assert.strictEqual(mock.state.uploads.length, up1 + 2);
+  mock.state.late = 0;
 });

@@ -4,7 +4,7 @@
 // ambil file media, mencari kolom prompt / input file / tombol Generate.
 // Tidak pernah membuat token reCAPTCHA — Generate selalu lewat tombol UI Flow sendiri.
 
-const AGENT_VERSION = 16;
+const AGENT_VERSION = 17;
 
 /* eslint-disable */
 function fcAgent(V, cfg) {
@@ -781,7 +781,8 @@ function fcAgent(V, cfg) {
       else if (!clearSel && /^(clear selection|deselect all|unselect all|batalkan pilihan|hapus pilihan|batal pilih)$/i.test(lab)) clearSel = box(el);
       else if (!back && sub && (/^(back|kembali|back button to go to previous page|go back|close|tutup)$/i.test(lab) || hasLig(el, 'arrow_back'))) back = box(el);
     }
-    return { sub: sub, path: location.pathname, selected: selected, agent: agent, clearSel: clearSel, back: back };
+    var add = toolbarAdd();
+    return { sub: sub, path: location.pathname, selected: selected, agent: agent, clearSel: clearSel, back: back, composer: !!editor(), add: !!add };
   }
   // tombol "+" untuk menambah media: toolbar Flow (di luar kotak prompt) lebih dulu, lalu "+" di kotak prompt
   function toolbarAdd() {

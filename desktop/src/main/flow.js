@@ -640,14 +640,21 @@ class FlowSession extends EventEmitter {
         if (st0.projectId) await this.navigate(this.flowUrl);
         const done = async (st) => { await this.ensurePage(); await this.waitReady(); await this._dismissOnboarding(); return { projectId: st.projectId, projectTitle: st.projectTitle }; };
         // tunggu project terbuka; dialog yang muncul setelah klik (sambutan / "Create") ikut ditangani
+        // status selalu diperiksa sekali lagi sebelum menyerah → tidak pernah membuat 2 project
         const opened = async (ms) => {
-          for (const end = Date.now() + ms; Date.now() < end;) {
-            const x = await this.status();
+          const end = Date.now() + ms;
+          let lastOnb = Date.now();
+          for (;;) {
+            const x = await this.status().catch(() => ({}));
             if (x.projectId) return x;
-            const o = await this.call('onboardingTarget').catch(() => null);
-            if (o) { await this._click(o); await sleep(rand(800, 1200)); } else await sleep(500);
+            if (Date.now() >= end) return null;
+            if (Date.now() - lastOnb >= 3000) { // tidak di tengah navigasi sesaat setelah klik
+              lastOnb = Date.now();
+              const o = await this.call('onboardingTarget', [], 5000).catch(() => null);
+              if (o) { await this._click(o).catch(() => {}); await sleep(rand(800, 1200)); continue; }
+            }
+            await sleep(500);
           }
-          return null;
         };
         let clicked = false, english = false;
         for (let attempt = 0; attempt < 6; attempt++) {

@@ -118,6 +118,7 @@ const MOCK = `(() => {
     'skills:mine': () => window.__mine || [],
     'skills:save': (sk) => { window.__mine = [Object.assign({}, sk, { id: sk.id || 'my-1' })].concat((window.__mine || []).filter((x) => x.id !== sk.id)); return window.__mine; },
     'queue:add': (o) => { window.__queued = o; return queue; },
+    'lab:launch': (id) => { (window.__labs = window.__labs || []).push(id); return { reused: false }; },
     'flow:openTool': (id, url, o) => { (window.__tools = window.__tools || []).push([url, o]); window.__tool = url; return { how: o && o.browser ? 'browser' : 'app' }; },
     'tools:pick': () => ['/foto/produk.png'],
     'tools:read': async (p) => {
@@ -453,14 +454,32 @@ test('tampilan aplikasi: semua halaman tanpa error', { skip: !CHROME && 'Chrome 
   await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: '2', altKey: true, bubbles: true }))`);
   await sleep(250);
   assert.strictEqual(await ev('document.querySelector(".subtab.on").textContent'), 'Alat', 'Alt+2 → Alat');
-  assert.strictEqual(await ev('document.querySelectorAll(".tool-card").length'), 19, 'Bulk + 6 alat lokal + 12 alat Flow');
+  assert.strictEqual(await ev('document.querySelectorAll(".tool-card").length'), 31, 'Bulk + 12 Alat Kreatif + 6 alat lokal + 12 alat Flow');
+  assert.strictEqual(await ev('document.querySelectorAll(".tool-card.lab[data-act=labOpen]").length'), 12, '12 Alat Kreatif offline');
+  assert.ok(await ev('!document.querySelector("details.flow-fallback").open'), 'alat Flow asli disembunyikan sebagai cadangan');
+  await ev(`document.querySelector('[data-act=labOpen][data-id=storyboard]').click()`);
+  await sleep(150);
+  assert.deepStrictEqual(await ev('window.__labs'), ['storyboard'], 'Alat Kreatif dibuka lewat lab:launch');
+  // kiriman dari jendela Alat Kreatif → Studio (2 gambar video = Frame) dan → Bulk
+  await ev(`void window.__ev.lab({ type: 'studio', prompt: 'Kabut di kebun kopi', images: ['C:/x/Alat/a.png', 'C:/x/Alat/b.png'], kind: 'video' })`);
+  await sleep(300);
+  assert.strictEqual(await ev('document.querySelector(".subtab.on").textContent'), 'Buat', 'pindah ke Studio → Buat');
+  assert.ok(await ev('[...document.querySelectorAll("textarea")].some((t) => t.value === "Kabut di kebun kopi")'), 'prompt dari alat terpasang');
+  assert.ok(await ev('[...document.querySelectorAll(".toast")].some((t) => t.textContent.includes("Dari Alat Kreatif"))'));
+  await ev(`void window.__ev.lab({ type: 'bulk', prompts: ['Adegan satu', 'Adegan dua'], kind: 'video' })`);
+  await sleep(300);
+  assert.strictEqual(await ev('document.querySelector(".subtab.on").textContent'), 'Bulk', 'pindah ke Bulk');
+  assert.ok(await ev('document.querySelector("#bulk-prompts").value.endsWith("Adegan satu\\nAdegan dua")'), 'prompt alat masuk Bulk');
+  await ev(`document.querySelector('#bulk-prompts').value = ''; document.querySelector('#bulk-prompts').dispatchEvent(new Event('input', { bubbles: true }))`);
+  await ev(`document.querySelector('[data-tab="alat"]').click()`);
+  await sleep(250);
   assert.ok(await ev('!!document.querySelector(".tool-card.bulk-card[data-tab=bulk]")'), 'kartu Bulk Generate di Alat');
   await ev(`document.querySelector('[data-act=flowTool]').click()`);
   await sleep(200);
   assert.ok(await ev('/flow[.]google[.]com[/]shared[/]tool[/]/.test(window.__tool)'), 'alat Flow dibuka di Flow');
   assert.deepStrictEqual(await ev('window.__tools[0][1]'), { name: 'Teks Animasi' }, 'bawaan: jendela aplikasi (browser tetap tersembunyi)');
   assert.ok(await ev('[...document.querySelectorAll(".toast")].some((t) => t.textContent.includes("dibuka di jendela aplikasi"))'));
-  assert.ok(await ev('[...document.querySelectorAll(".sec-head")].some((h) => h.textContent.includes("browser Google Flow tetap tersembunyi"))'));
+  assert.ok(await ev('document.querySelector("details.flow-fallback summary").textContent.includes("Versi asli di Google Flow")'));
   // jendela alat meminta masuk Google → tawarkan browser (cara lama) atas persetujuan pengguna
   await ev(`void window.__ev.tool({ state: 'signin', id: 'a1', url: window.__tool, name: 'Teks Animasi' })`);
   await sleep(200);

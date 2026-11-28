@@ -765,6 +765,13 @@ button.tool-card:active { transform: scale(0.99); }
 .tool-ic { flex: none; width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
 .tool-card.flow .tool-ic { background: color-mix(in srgb, var(--accent-2) 14%, transparent); color: var(--accent-2); }
 .tool-t { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.tool-card.lab .tool-ic { background: var(--grad); color: #fff; box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 30%, transparent); }
+.tool-card.lab .accent-text { color: var(--accent); display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; }
+.tool-card.lab .accent-text .ic { width: 13px; height: 13px; }
+.flow-fallback { margin-top: 18px; border: 1px dashed var(--stroke-2, var(--stroke)); border-radius: var(--radius-lg); padding: 10px 14px; background: color-mix(in srgb, var(--card) 60%, transparent); }
+.flow-fallback > summary { cursor: default; display: flex; align-items: center; gap: 8px; list-style: none; padding: 2px 0; }
+.flow-fallback > summary::-webkit-details-marker { display: none; }
+.flow-fallback[open] > summary { margin-bottom: 12px; }
 .tool-panel { margin-top: 12px; }
 .tool-panel .card-head h3 { margin: 0; font: 600 15px/20px var(--font); }
 .tool-body { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(280px, 1fr); gap: 16px; align-items: start; }

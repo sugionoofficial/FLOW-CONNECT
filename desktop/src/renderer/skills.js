@@ -25,6 +25,26 @@ export const FLOW_TOOLS = [
   ['Scout360', 'Tangkap lingkungan 360 derajat dari sebuah gambar', 'PJ Ace', 'orbit', '2102cb9f-a06e-4590-8a53-aa34bdcb0dff']
 ].map(([name, desc, author, icon, id]) => ({ id, name, desc, author, icon, url: TOOL_BASE + id }));
 
+/**
+ * Alat Kreatif: versi offline (di PC ini) dari 12 alat Google Flow — dibuka di jendela aplikasi sendiri (src/lab),
+ * tanpa memuat halaman Google. Fitur "AI" memakai model chat yang terdaftar di admin (fungsi prompt-chat).
+ * flow = id alat Google Flow padanannya (cadangan: tetap bisa dibuka versi aslinya).
+ */
+export const LAB_TOOLS = [
+  ['textanim', 'Teks Animasi', 'Teks bergerak di atas video, gambar, atau latar warna — 11 gaya animasi, ekspor video.', 'type', 'AI menulis judul & caption', '075ead65-520a-4f5e-88bd-f150caa24dc4'],
+  ['resize', 'Ubah Ukuran Video', 'Ubah video ke 9:16, 16:9, 1:1, 4:5… dengan potong pintar, latar blur, atau warna. Bisa banyak video.', 'scaling', 'AI mencari subjek untuk titik fokus', 'b78766c3-4cd7-4c1e-b597-769d4cfcf37a'],
+  ['editor', 'Editor Gambar', 'Layer gambar, teks, bentuk & kuas — geser, putar, skala, filter, hapus latar, urungkan.', 'layers', 'AI menyarankan koreksi warna & teks', '1b12bbd4-51d7-4c76-8b62-24ac2473e07e'],
+  ['storyboard', 'Studio Storyboard', 'Tulis naskah, susun pemeran, dan visualisasikan adegan — kirim prompt ke Studio / Bulk.', 'layout-panel-top', 'AI menulis naskah, pemeran & prompt per adegan', '79c9d2e6-4ad6-4636-ad05-22022f8a5a74'],
+  ['shader', 'Efek Shader', '20+ filter WebGL yang bisa diatur & ditumpuk untuk gambar dan video (VHS, glitch, CRT, film…).', 'sparkles', 'AI menulis shader baru dari deskripsi', '63ca3af5-0058-4c7f-b104-dfc417db2e22'],
+  ['mockup', 'Mockup', 'Tempatkan desain ke ponsel, laptop, browser, poster, billboard, atau fotomu sendiri (4 sudut).', 'frame', 'AI menyarankan latar & teks pemasaran', '611fa902-797c-457d-92de-71a3dc714894'],
+  ['beat', 'Ribbit', 'Potong klip mengikuti ketukan musik secara otomatis, atau mainkan live dengan tombol 1–9.', 'audio-waveform', 'Deteksi ketukan offline', '46270263-54a1-46fb-a68c-dae111f650fb'],
+  ['converge', 'Converge', 'Gambar sketsa kasar, lalu jadikan render lewat Nano Banana di Studio.', 'pen-tool', 'AI membaca sketsa & menulis prompt render', 'f260ed2b-2a14-4ece-a8d3-88b8cf6e660f'],
+  ['character', 'Character X-ray', 'Bedah karakter dari gambar: palet, siluet, garis — lalu kembangkan profil & latar ceritanya.', 'user-round-search', 'AI membuat lembar karakter & prompt konsisten', '32f2b8f8-a1a9-43ed-899f-c0fbff2e9599'],
+  ['pixel', 'pixelBento', 'Pixel art, lo-fi & glitch untuk gambar/video, plus kolase bento grid.', 'tv', 'AI membuat palet dari suasana', '44b73cc0-ad82-49a6-b118-86c31ec49a71'],
+  ['gridarch', 'Grid Architect', 'Buat prompt grid (sudut kamera, ekspresi, pose), ekstrak sel dari gambar grid, atau susun grid.', 'grid-3x3', 'AI menulis prompt grid konsisten', '52da09f1-1da1-4a40-96c6-41d36b3b2392'],
+  ['scout', 'Scout360', 'Jelajahi panorama 360°, ambil bidikan, buat video tur, atau buat 360 dari satu gambar.', 'orbit', 'AI mencari bidikan & menulis prompt video', '2102cb9f-a06e-4590-8a53-aa34bdcb0dff']
+].map(([id, name, desc, icon, ai, flow]) => ({ id, name, desc, icon, ai, flow }));
+
 /** Alat lokal (gratis, offline, diproses di PC ini). */
 export const LOCAL_TOOLS = [
   { id: 'frame', name: 'Frame dari video', desc: 'Ambil gambar dari detik awal, akhir, atau detik tertentu — langsung jadi foto awal/akhir mode Frame.', icon: 'film' },

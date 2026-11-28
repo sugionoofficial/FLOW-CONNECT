@@ -76,6 +76,63 @@ test('alat: simpan hasil hanya format gambar yang valid', () => {
   assert.throws(() => tools.saveOutput(dir, { name: 'x', data: new Uint8Array(png), format: 'exe' }), /INVALID_OUTPUT/);
 });
 
+test('Alat Kreatif: 12 pengganti alat Flow, ikon & modul tersedia', async () => {
+  const { LAB_TOOLS, FLOW_TOOLS } = await esm('skills');
+  const { ICONS } = await esm('icons');
+  const { LAB_IDS } = require('../src/main/labwin');
+  assert.strictEqual(LAB_TOOLS.length, 12);
+  assert.deepStrictEqual(LAB_TOOLS.map((t) => t.id), LAB_IDS, 'id sama dengan jendela lab');
+  const flowIds = FLOW_TOOLS.map((t) => t.id);
+  assert.deepStrictEqual(LAB_TOOLS.map((t) => t.flow).sort(), [...flowIds].sort(), 'setiap alat Flow punya pengganti');
+  const dir = path.join(__dirname, '..', 'src', 'lab');
+  for (const t of LAB_TOOLS) {
+    assert.ok(ICONS[t.icon], `ikon ${t.icon} (${t.name})`);
+    assert.ok(t.ai && t.desc, t.id);
+    const src = fs.readFileSync(path.join(dir, 'tools', t.id + '.js'), 'utf8');
+    assert.match(src, /export async function mount\(ctx\)/, 'mount() di ' + t.id);
+    // ikon yang dipakai modul juga harus ada (ikon hilang = kotak kosong)
+    for (const m of src.matchAll(/(?:icon: |ic\(|emptyStage\(|section\('[^']*', )'([a-z0-9-]+)'/g)) assert.ok(ICONS[m[1]], `ikon ${m[1]} di ${t.id}`);
+  }
+});
+
+test('Alat Kreatif: deteksi ketukan offline menemukan tempo & fase', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fc-beat-'));
+  fs.copyFileSync(path.join(__dirname, '..', 'src', 'lab', 'beat.js'), path.join(tmp, 'beat.mjs'));
+  const { analyze, manualGrid } = await import(pathToFileURL(path.join(tmp, 'beat.mjs')).href);
+  for (const [bpm, first] of [[120, 0.25], [95, 0.1], [140, 0.4]]) {
+    const sr = 22050, n = sr * 12, x = new Float32Array(n), p = 60 / bpm;
+    for (let i = 0; i < n; i++) {
+      const t = i / sr, ph = (t - first) % p, s = ph < 0 ? 9 : ph;
+      x[i] = (s < 0.12 ? Math.sin(2 * Math.PI * (60 + 90 * Math.exp(-s * 30)) * s) * Math.exp(-s * 25) : 0) + Math.sin(2 * Math.PI * 220 * t) * 0.03;
+    }
+    const r = analyze(x, sr);
+    assert.ok(Math.abs(r.bpm - bpm) < 1.5, `tempo ${bpm}: ${r.bpm}`);
+    const err = Math.min(Math.abs(r.beats[0] - first), Math.abs(r.beats[0] + p - first), Math.abs(r.beats[0] - p - first));
+    assert.ok(err < 0.03, `fase ${bpm}: ketukan pertama ${r.beats[0]} vs ${first}`);
+  }
+  assert.deepStrictEqual(manualGrid(120, 0.25, 2).map((v) => +v.toFixed(2)), [0.25, 0.75, 1.25, 1.75]);
+});
+
+test('alat: simpan video/teks Alat Kreatif & baca audio', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fc-lab-'));
+  const webm = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3, 4]);
+  assert.strictEqual(path.extname(tools.saveOutput(dir, { name: 'Tur', data: webm, format: 'webm' })), '.webm');
+  const mp4 = new Uint8Array([0, 0, 0, 24, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0]);
+  assert.strictEqual(path.extname(tools.saveOutput(dir, { name: 'Ribbit', data: mp4, format: 'mp4' })), '.mp4');
+  assert.throws(() => tools.saveOutput(dir, { name: 'x', data: webm, format: 'mp4' }), /INVALID_OUTPUT/, 'magic mp4 salah');
+  const txt = tools.saveOutput(dir, { name: 'Naskah Kopi', data: 'Adegan 1 — kebun ☕', format: 'txt' });
+  assert.strictEqual(fs.readFileSync(txt, 'utf8'), 'Adegan 1 — kebun ☕');
+  assert.ok(tools.saveOutput(dir, { name: 'Proyek', data: '{"a":1}', format: 'json' }).endsWith('.json'));
+  assert.throws(() => tools.saveOutput(dir, { name: 'x', data: 'teks', format: 'png' }), /INVALID_OUTPUT/, 'teks bukan gambar');
+  assert.throws(() => tools.saveOutput(dir, { name: 'x', data: new Uint8Array([0x61, 0, 0x62]), format: 'txt' }), /INVALID_OUTPUT/, 'biner bukan teks');
+  assert.throws(() => tools.saveOutput(dir, { name: 'x', data: 'x'.repeat(2 * 1024 * 1024 + 1), format: 'txt' }), /FILE_TOO_LARGE/);
+  const wav = path.join(dir, 'musik.wav'); fs.writeFileSync(wav, 'RIFF');
+  assert.strictEqual(tools.checkAudio(wav), true);
+  assert.strictEqual(tools.checkAudio(path.join(dir, 'Tur.webm')), false, 'bukan ekstensi audio');
+  assert.strictEqual(tools.checkAudio('musik.wav'), false, 'harus path absolut');
+  assert.strictEqual(tools.checkAudio(path.join(dir, 'tidak-ada.mp3')), false);
+});
+
 test('alat: ganti nama massal', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fc-ren-'));
   const at = new Date(2026, 10, 25, 9, 5).getTime();

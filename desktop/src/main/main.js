@@ -17,6 +17,7 @@ const { Updater } = require('./updater');
 const tools = require('./tools');
 const skillstore = require('./skillstore');
 const { createToolWindows } = require('./toolwin');
+const { createLabWindows } = require('./labwin');
 
 const WEB_URL = 'https://flow-connect-2qu.pages.dev';
 const FLOW_URL = 'https://flow.google.com/?hl=en'; // label UI Flow berbahasa Inggris → otomasi setelan lebih andal
@@ -42,10 +43,12 @@ let license = null;
 let assistant = null;
 let updater = null;
 let toolWins = null; // Alat Google Flow di jendela aplikasi (browser tetap tersembunyi)
+let labWins = null; // Alat Kreatif offline (pengganti alat Google Flow) — jendela src/lab
 const sessions = new Map();     // accountId → FlowSession
 const statuses = new Map();     // accountId → status terakhir
 const allowedFiles = new Set(); // gambar yang dipilih pengguna (dialog / seret)
 const allowedVideos = new Set(); // video yang dipilih pengguna (Alat → Frame dari video)
+const allowedAudios = new Set(); // musik yang dipilih pengguna (Alat Kreatif → Ribbit)
 const logins = new Map();       // accountId → { stop } kartu login yang sedang terbuka
 const flowOptions = new Map();  // accountId → pilihan model/rasio yang dibaca dari Flow
 
@@ -331,7 +334,109 @@ function handle(channel, fn) {
   });
 }
 
+// Jendela Alat Kreatif (src/lab) memakai saluran sendiri "lab:*" — hanya dari jendela alat milik aplikasi.
+const LAB_UNGATED = new Set(['lab:info']);
+const DATA_IMAGE_RE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
+function handleLab(channel, fn) {
+  ipcMain.handle(channel, async (e, ...args) => {
+    const tool = labWins && labWins.toolOf(e.sender);
+    if (!tool) throw new Error('FORBIDDEN');
+    try {
+      if (!LAB_UNGATED.has(channel) && !license.licensed) throw new Error('LICENSE_REQUIRED');
+      return { ok: true, data: await fn(tool, e.sender, ...args) };
+    } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err), detail: err && err.detail ? String(err.detail).slice(0, 300) : undefined }; }
+  });
+}
+function registerLabFiles(paths) {
+  const list = Array.isArray(paths) ? paths.filter((p) => typeof p === 'string') : [];
+  return {
+    images: registerToolFiles(list, 'image').slice(0, 60),
+    videos: registerToolFiles(list, 'video').slice(0, 30),
+    audios: list.filter(tools.checkAudio).slice(0, 4).map((p) => (allowedAudios.add(p), p))
+  };
+}
+function readToolFile(p) {
+  const ext = path.extname(String(p)).toLowerCase();
+  if (tools.AUDIO_EXT[ext]) {
+    if (!tools.checkAudio(p) || !(allowedAudios.has(p) || insideDownloads(p))) throw new Error('INVALID_FILE');
+    return { name: path.basename(p), mime: tools.AUDIO_EXT[ext], data: fs.readFileSync(p) };
+  }
+  const isVideo = !!tools.VIDEO_EXT[ext];
+  const ok = isVideo ? tools.checkVideo(p) && (allowedVideos.has(p) || insideDownloads(p)) : checkImage(p) && ext !== '.heic' && (allowedFiles.has(p) || insideDownloads(p));
+  if (!ok) throw new Error(ext === '.heic' ? 'UNSUPPORTED_FORMAT' : 'INVALID_FILE');
+  if (!isVideo && fs.statSync(p).size > tools.MAX_IMAGE_READ) throw new Error('FILE_TOO_LARGE');
+  return { name: path.basename(p), mime: isVideo ? tools.VIDEO_EXT[ext] : IMAGE_EXT[ext], data: fs.readFileSync(p) };
+}
+const LAB_PICK = {
+  image: { title: 'Pilih gambar', filters: [{ name: 'Gambar', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }] },
+  video: { title: 'Pilih video', filters: [{ name: 'Video', extensions: ['mp4', 'webm', 'mov', 'm4v'] }] },
+  audio: { title: 'Pilih musik', filters: [{ name: 'Audio', extensions: ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'oga', 'opus', 'flac', 'weba'] }] },
+  media: { title: 'Pilih gambar / video', filters: [{ name: 'Gambar & video', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'mp4', 'webm', 'mov', 'm4v'] }] }
+};
+
+function registerLabIpc() {
+  handleLab('lab:info', (tool) => ({
+    tool, version: app.getVersion(), platform: process.platform, accent: accent(), dark: nativeTheme.shouldUseDarkColors,
+    licensed: license.licensed, alatDir: path.join(store.data.downloadDir, 'Alat')
+  }));
+  handleLab('lab:pick', async (tool, sender, kind, multi) => {
+    const k = LAB_PICK[kind] ? kind : 'image';
+    const r = await dialog.showOpenDialog(labWins.windowOf(sender) || win, {
+      title: LAB_PICK[k].title, defaultPath: store.data.downloadDir, filters: LAB_PICK[k].filters,
+      properties: ['openFile', ...(multi ? ['multiSelections'] : [])]
+    });
+    if (r.canceled) return { images: [], videos: [], audios: [] };
+    return registerLabFiles(r.filePaths);
+  });
+  handleLab('lab:register', (tool, sender, paths) => registerLabFiles(paths));
+  handleLab('lab:read', (tool, sender, p) => readToolFile(p));
+  handleLab('lab:save', (tool, sender, o) => {
+    const file = tools.saveOutput(path.join(store.data.downloadDir, 'Alat'), o || {});
+    if (/\.(png|jpe?g|webp)$/i.test(file)) allowedFiles.add(file);
+    if (/\.(webm|mp4)$/i.test(file)) allowedVideos.add(file);
+    send('tool', { state: 'saved', name: path.basename(file), path: file, quiet: true });
+    return file;
+  });
+  // Bantuan AI: model chat yang terdaftar di admin (fungsi prompt-chat) — teks + gambar opsional (data URL / berkas pilihan)
+  handleLab('lab:ai', (tool, sender, req) => {
+    const o = req && typeof req === 'object' ? req : {};
+    const prompt = typeof o.prompt === 'string' ? o.prompt.trim().slice(0, 5800) : '';
+    if (!prompt) throw new Error('EMPTY_MESSAGE');
+    const history = (Array.isArray(o.history) ? o.history : []).slice(-8)
+      .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+      .map((m) => ({ role: m.role, content: m.content.slice(0, 5800) }));
+    let image;
+    if (typeof o.image === 'string') {
+      if (o.image.length > 4000000 || !DATA_IMAGE_RE.test(o.image)) throw new Error('INVALID_IMAGE');
+      image = o.image;
+    } else if (typeof o.imagePath === 'string') image = chatRequest({ imagePath: o.imagePath }).image;
+    return assistant.chat({ messages: [...history, { role: 'user', content: prompt }], model: typeof o.model === 'string' ? o.model : undefined, mode: o.mode, image });
+  });
+  // Hasil alat → Studio (prompt + gambar referensi) / Bulk (daftar prompt) di jendela utama
+  handleLab('lab:toStudio', (tool, sender, o) => {
+    const x = o && typeof o === 'object' ? o : {};
+    const images = (Array.isArray(x.images) ? x.images : []).filter((p) => typeof p === 'string' && allowedFiles.has(p) && checkImage(p)).slice(0, 10);
+    const kind = x.kind === 'video' ? 'video' : x.kind === 'image' ? 'image' : null;
+    send('lab', { type: 'studio', prompt: typeof x.prompt === 'string' ? x.prompt.slice(0, 8000) : '', images, kind });
+    if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
+    return { images: images.length };
+  });
+  handleLab('lab:toBulk', (tool, sender, o) => {
+    const prompts = (Array.isArray(o && o.prompts) ? o.prompts : []).filter((p) => typeof p === 'string' && p.trim()).map((p) => p.replace(/\s+/g, ' ').trim().slice(0, 2000)).slice(0, 300);
+    if (!prompts.length) throw new Error('EMPTY_MESSAGE');
+    send('lab', { type: 'bulk', prompts, kind: o.kind === 'video' ? 'video' : o.kind === 'image' ? 'image' : null });
+    if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
+    return { prompts: prompts.length };
+  });
+  handleLab('lab:show', (tool, sender, p) => {
+    if (typeof p !== 'string' || !insideDownloads(p) || !fs.existsSync(p)) throw new Error('INVALID_FILE');
+    shell.showItemInFolder(p);
+    return true;
+  });
+}
+
 function registerIpc() {
+  registerLabIpc();
   handle('app:info', () => ({
     version: app.getVersion(), platform: process.platform, accent: accent(), browsers: browser.findBrowsers(),
     settings: publicSettings(), statuses: Object.fromEntries(statuses), queue: queue.state(), bulk: bulk.state(), webUrl: WEB_URL,
@@ -403,6 +508,8 @@ function registerIpc() {
     const name = typeof o.name === 'string' ? o.name.slice(0, 60) : '';
     return toolWins.openTool(id, url, name, s.flowHost);
   });
+  // Alat Kreatif (offline + bantuan AI) — pengganti alat Google Flow yang sering macet dimuat
+  handle('lab:launch', (id) => labWins.openLab(String(id || '')));
   handle('tools:pick', async (kind) => {
     const video = kind === 'video';
     const r = await dialog.showOpenDialog(win, {
@@ -418,12 +525,8 @@ function registerIpc() {
     videos: registerToolFiles(paths, 'video').slice(0, 1)
   }));
   handle('tools:read', (p) => {
-    const ext = path.extname(String(p)).toLowerCase();
-    const isVideo = !!tools.VIDEO_EXT[ext];
-    const ok = isVideo ? tools.checkVideo(p) && (allowedVideos.has(p) || insideDownloads(p)) : checkImage(p) && ext !== '.heic' && (allowedFiles.has(p) || insideDownloads(p));
-    if (!ok) throw new Error(ext === '.heic' ? 'UNSUPPORTED_FORMAT' : 'INVALID_FILE');
-    if (!isVideo && fs.statSync(p).size > tools.MAX_IMAGE_READ) throw new Error('FILE_TOO_LARGE');
-    return { name: path.basename(p), mime: isVideo ? tools.VIDEO_EXT[ext] : IMAGE_EXT[ext], data: fs.readFileSync(p) };
+    if (tools.AUDIO_EXT[path.extname(String(p)).toLowerCase()]) throw new Error('INVALID_FILE');
+    return readToolFile(p);
   });
   handle('tools:save', (o) => {
     const file = tools.saveOutput(path.join(store.data.downloadDir, 'Alat'), o || {});
@@ -892,7 +995,8 @@ function createWindow() {
     if (EXTERNAL_OK.some((ok) => url === ok || url.startsWith(ok + '/'))) shell.openExternal(url);
     return { action: 'deny' };
   });
-  win.on('closed', () => { win = null; if (toolWins) toolWins.closeAll(); });
+  win.on('closed', () => { win = null; if (toolWins) toolWins.closeAll(); if (labWins) labWins.closeAll(); });
+  labWins = createLabWindows({ electron: require('electron'), icon: path.join(__dirname, '..', 'renderer', 'icon.png'), dark: () => nativeTheme.shouldUseDarkColors });
   toolWins = createToolWindows({
     electron: require('electron'),
     getSession: (id) => connectAccount(id),

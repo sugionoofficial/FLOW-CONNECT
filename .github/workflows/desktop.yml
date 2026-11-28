@@ -111,7 +111,7 @@ jobs:
             - `FLOW-CONNECT-Desktop-Setup.exe` — installer (disarankan)
             - `FLOW-CONNECT-Desktop-Portable.exe` — tanpa instal
 
-            **Baru di versi ini (v1.7.0):** **AI pembaca halaman** — saat login & membuat project, AI membaca halaman Google Flow (teks, daftar tombol bernomor, dan tangkapan layar) lalu memilih tombol yang benar: kartu sambutan, persetujuan syarat, \"What's new\", dan tombol \"New project\" dalam bahasa apa pun. Pilihan AI selalu diperiksa ulang (tombol Keluar akun, langganan, beli, dan tautan keluar Flow tidak pernah ditawarkan; \"New project\" tidak ditekan dua kali). Bisa dimatikan di Pengaturan; bila AI tidak tersedia aplikasi memakai cara biasa. Juga dari v1.6.4: kartu \"What's new\" yang tidak bisa ditutup dilewati otomatis.
+            **Baru di versi ini (v1.7.1):** **Bulk Generate lebih andal** — tugas yang gagal diulang otomatis hingga 3×; bila tetap gagal, tugas dibiarkan berstatus gagal dan dibuat **tugas pengganti baru** agar jumlah hasil tetap genap sesuai permintaan (mis. minta 20, 12 berhasil → 8 dibuat ulang; hasil sebagian juga digenapi). Akun tidak lagi dilewati setelah 3× gagal beruntun (cukup jeda lebih lama), dan pesan galat lama yang masih tampil di Flow tidak lagi menggagalkan tugas berikutnya. Runtime kini **satu proses** untuk seluruh batch (termasuk ulangan, pengganti, dan Lanjutkan sisa), dengan ringkasan total durasi dan rata-rata per gambar/video. Dari v1.7.0: AI pembaca halaman untuk login & project baru.
 
             Butuh Google Chrome atau Microsoft Edge di PC. Windows mungkin menampilkan "Windows melindungi PC Anda" karena aplikasi belum ditandatangani: klik **Info selengkapnya → Tetap jalankan**.
 

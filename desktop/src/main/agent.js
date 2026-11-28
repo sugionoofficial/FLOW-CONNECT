@@ -4,7 +4,7 @@
 // ambil file media, mencari kolom prompt / input file / tombol Generate.
 // Tidak pernah membuat token reCAPTCHA — Generate selalu lewat tombol UI Flow sendiri.
 
-const AGENT_VERSION = 14;
+const AGENT_VERSION = 15;
 
 /* eslint-disable */
 function fcAgent(V, cfg) {
@@ -723,16 +723,23 @@ function fcAgent(V, cfg) {
   }
   var SUSPECT = /unusual (traffic|activity)|re-?captcha|captcha|not a robot|verify (it.s you|you are human|that you)|automated (queries|requests)|aktivitas tidak biasa|bukan robot|something went wrong|try again later|terjadi kesalahan|coba lagi nanti/i;
   var FAIL = /fail|error|couldn.t|could not|unable|violat|policy|quota|limit reached|out of credits|insufficient|gagal|tidak dapat|kuota|kredit tidak cukup|melanggar/i;
-  function pageError() {
+  // "unusual activity"/captcha sungguhan (akun perlu istirahat) vs "something went wrong" biasa (cukup diulang)
+  var UNUSUAL = /unusual (traffic|activity)|re-?captcha|captcha|not a robot|verify (it.s you|you are human|that you)|automated (queries|requests)|aktivitas tidak biasa|bukan robot/i;
+  // semua pesan galat yang terlihat → [{text, suspect, unusual}] (dipakai Generate untuk mengabaikan pesan lama)
+  function pageErrors() {
+    var out = [];
     var els = document.querySelectorAll('[role="alert"], [role="alertdialog"], [aria-live="assertive"], [aria-live="polite"], [role="status"], .snackbar, [class*="snackbar" i], [class*="toast" i]');
-    for (var i = 0; i < els.length; i++) {
+    for (var i = 0; i < els.length && out.length < 10; i++) {
       if (!visible(els[i])) continue;
       var t = (els[i].innerText || '').replace(/\s+/g, ' ').trim();
       if (!t || t.length > 300) continue;
-      if (SUSPECT.test(t)) return { suspect: true, text: t.slice(0, 200) };
-      if (FAIL.test(t)) return { suspect: false, text: t.slice(0, 200) };
+      var e = SUSPECT.test(t) ? { suspect: true, unusual: UNUSUAL.test(t), text: t.slice(0, 200) } : FAIL.test(t) ? { suspect: false, unusual: false, text: t.slice(0, 200) } : null;
+      if (e && !out.some(function (x) { return x.text === e.text; })) out.push(e);
     }
-    return null;
+    return out;
+  }
+  function pageError() {
+    return pageErrors()[0] || null;
   }
 
   // ---------- Referensi gambar: unggah, pemilih "@", chip, slot frame ----------
@@ -989,7 +996,7 @@ function fcAgent(V, cfg) {
     findGenerate: findGenerate, find: find, newProjectTarget: newProjectTarget, settingsTrigger: settingsTrigger,
     onboardingTarget: onboardingTarget, flowBlocked: flowBlocked, pageSummary: pageSummary, pageMap: pageMap, pageSig: pageSig, navTarget: navTarget, navMarks: navMarks,
     legacyModeTrigger: legacyModeTrigger, modelTrigger: modelTrigger, overlayOpen: overlayOpen, optionLabels: optionLabels,
-    pageError: pageError, toolbarAdd: toolbarAdd, uploadMenuItem: uploadMenuItem, dialogCount: dialogCount,
+    pageError: pageError, pageErrors: pageErrors, toolbarAdd: toolbarAdd, uploadMenuItem: uploadMenuItem, dialogCount: dialogCount,
     mentionOptions: mentionOptions, mentionChips: mentionChips, caretToEnd: caretToEnd, emptyFrameChip: emptyFrameChip,
     boundFrames: boundFrames, picker: picker, focusPickerSearch: focusPickerSearch, creditsWarning: creditsWarning,
     failedTiles: failedTiles, cookieReject: cookieReject, durationSlider: durationSlider, focusDurationSlider: focusDurationSlider

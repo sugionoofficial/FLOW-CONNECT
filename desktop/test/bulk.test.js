@@ -2,7 +2,7 @@
 // Bulk Generate: rencana kredit per akun, antre lintas akun, batas 300, perpindahan saat kredit habis, timer batch.
 const test = require('node:test');
 const assert = require('node:assert');
-const { BulkRunner, planBulk, bulkUnits, jobImages, fmtDuration, MAX_BULK } = require('../src/main/bulk');
+const { BulkRunner, planBulk, bulkUnits, jobImages, fmtDuration, bulkSummary, resumableJobs, MAX_BULK, MAX_ATTEMPTS, MAX_REPLACE } = require('../src/main/bulk');
 const { creditCost, FREE_DAILY_CREDITS } = require('../src/main/catalog');
 
 const ACCS = [1, 2, 3, 4, 5].map((i) => ({ id: 'a' + i, label: 'Akun ' + i }));
@@ -21,7 +21,8 @@ function fakeSessions(fail = () => null, log = []) {
         calls[id] = (calls[id] || 0) + 1;
         log.push(['gen', id, job.prompt, job.options.count]);
         await new Promise((r) => setTimeout(r, 3));
-        const code = fail(id, calls[id]);
+        const code = fail(id, calls[id], job);
+        if (code && typeof code === 'object') return { items: Array.from({ length: code.items }, () => ({ mediaId: 'm' + ++n })), projectId: 'p-' + id };
         if (code) throw new Error(code);
         return { items: Array.from({ length: job.options.count || 1 }, () => ({ mediaId: 'm' + ++n })), projectId: 'p-' + id };
       }
@@ -116,7 +117,7 @@ test('Bulk berurutan: satu Generate pada satu waktu, akun bergiliran; akun yang 
   assert.ok(base.log.filter((x) => x[0] === 'project' && x[1] === 'a1').length === 1);
 });
 
-test('Bulk gambar: jumlah per Generate terakhir disesuaikan (10 hasil, 4 per Generate → 4+4+2); galat kebijakan tidak diulang', async () => {
+test('Bulk gambar: jumlah per Generate terakhir disesuaikan (10 hasil, 4 per Generate → 4+4+2); masukan tidak valid tidak diulang', async () => {
   const store = mkStore(ACCS.slice(0, 1));
   const fs = fakeSessions();
   const r = new BulkRunner({ store, getSession: fs.get, unitMs: 1 });
@@ -126,13 +127,14 @@ test('Bulk gambar: jumlah per Generate terakhir disesuaikan (10 hasil, 4 per Gen
   assert.deepStrictEqual(fs.log.filter((x) => x[0] === 'gen').map((x) => x[3]), [4, 4, 2]);
 
   const store2 = mkStore(ACCS.slice(0, 1));
-  const fs2 = fakeSessions((id, n) => (n === 1 ? 'FLOW_CONTENT_POLICY' : n === 2 ? 'GENERATE_FAILED' : null));
+  const fs2 = fakeSessions((id, n) => (n === 1 ? 'INVALID_PROMPT' : n === 2 ? 'GENERATE_FAILED' : null));
   const r2 = new BulkRunner({ store: store2, getSession: fs2.get, unitMs: 1 });
   r2.start({ prompts: ['p1', 'p2'], options: { kind: 'image', count: 1 }, accounts: [{ id: 'a1' }], minDelay: 3, maxDelay: 3 });
   const res2 = await done(r2);
-  assert.strictEqual(res2.failed, 1); // kebijakan → gagal permanen
+  assert.strictEqual(res2.failed, 1); // masukan tidak valid → gagal permanen, tanpa pengganti
   assert.strictEqual(res2.done, 1); // GENERATE_FAILED → diulang lalu berhasil
-  assert.strictEqual(store2.data.bulk.jobs.find((j) => j.status === 'failed').error, 'FLOW_CONTENT_POLICY');
+  assert.strictEqual(store2.data.bulk.jobs.find((j) => j.status === 'failed').error, 'INVALID_PROMPT');
+  assert.strictEqual(store2.data.bulk.jobs.length, 2);
 });
 
 test('Bulk: wajib Mode Otomatis, akun & kredit; berhenti → tugas "dihentikan"; lanjutkan memakai sisa', async () => {
@@ -153,7 +155,10 @@ test('Bulk: wajib Mode Otomatis, akun & kredit; berhenti → tugas "dihentikan";
   const b = store.data.bulk;
   assert.ok(b.jobs.some((j) => j.status === 'stopped'));
   const before = b.jobs.filter((j) => j.status === 'done').length;
+  const ran1 = b.finishedAt - b.startedAt;
+  await new Promise((res) => setTimeout(res, 120)); // jeda saat aplikasi diam: tidak ikut dihitung
   r.resume();
+  assert.ok(Date.now() - b.startedAt >= ran1 && Date.now() - b.startedAt < ran1 + 100, 'satu runtime: timer diteruskan, bukan mulai dari nol');
   b.minDelay = b.maxDelay = 3;
   await done(r);
   assert.strictEqual(store.data.bulk.jobs.filter((j) => j.status === 'done').length, 50);
@@ -214,4 +219,72 @@ test('Gambar referensi Bulk: "sama untuk semua" (maks. 10) vs "satu per prompt" 
   await done(r);
   assert.strictEqual(seen.length, 3);
   assert.ok(seen.every((x) => x[2].length === 2));
+});
+
+test('Bulk 20 gambar, 1 akun: gagal diulang 3×, tetap gagal → dibiarkan gagal + tugas baru menggenapi 20; satu runtime', async () => {
+  assert.strictEqual(MAX_ATTEMPTS, 4);
+  const store = mkStore(ACCS.slice(0, 1));
+  const prompts = Array.from({ length: 20 }, (_, i) => 'p' + (i + 1));
+  const tries = {};
+  // prompt p13–p20 gagal pada 4 percobaan pertama (tugas asli), lalu berhasil di tugas pengganti
+  const fs = fakeSessions((id, n, job) => {
+    tries[job.prompt] = (tries[job.prompt] || 0) + 1;
+    return Number(job.prompt.slice(1)) > 12 && tries[job.prompt] <= 4 ? (tries[job.prompt] % 2 ? 'GENERATE_FAILED' : 'FLOW_CONTENT_POLICY') : null;
+  });
+  const r = new BulkRunner({ store, getSession: fs.get, unitMs: 1 });
+  const logs = [];
+  r.on('activity', (t) => logs.push(t));
+  r.start({ prompts, options: { kind: 'image', count: 1 }, accounts: [{ id: 'a1' }], minDelay: 3, maxDelay: 3 });
+  const res = await done(r);
+  const b = store.data.bulk;
+  assert.strictEqual(res.items, 20, 'permintaan 20 gambar tetap genap');
+  assert.strictEqual(res.target, 20);
+  assert.strictEqual(res.failed, 8, 'tugas yang tetap gagal dibiarkan gagal');
+  assert.strictEqual(res.replaced, 8);
+  assert.strictEqual(res.skipped, 0, 'akun tidak lagi dimatikan setelah 3× gagal beruntun');
+  assert.strictEqual(b.jobs.length, 28);
+  const failed = b.jobs.filter((j) => j.status === 'failed');
+  assert.ok(failed.every((j) => j.attempts === 4 && j.replacedBy), '1 percobaan + 3× ulang');
+  const extra = b.jobs.filter((j) => j.replaces);
+  assert.deepStrictEqual(extra.map((j) => b.prompts[j.p]).sort(), failed.map((j) => b.prompts[j.p]).sort(), 'pengganti memakai prompt yang sama');
+  assert.ok(extra.every((j) => j.status === 'done' && j.gen === 1 && j.n > 20));
+  assert.strictEqual(fs.log.filter((x) => x[0] === 'gen').length, 12 + 8 * 4 + 8);
+  assert.strictEqual(res.retries, 8 * 3);
+  assert.strictEqual(b.accounts[0].status, 'done');
+  // satu runtime untuk seluruh proses + rata-rata per gambar
+  assert.strictEqual(res.ms, b.finishedAt - b.startedAt);
+  assert.strictEqual(res.perItemMs, Math.round(res.ms / 20));
+  assert.strictEqual(b.runs, 1);
+  assert.ok(logs.some((t) => /Bulk selesai: 20\/20 gambar .*8 gagal \(8 diganti tugas baru\).*total durasi .*rata-rata .* per gambar/.test(t)), logs.slice(-1)[0]);
+  assert.ok(logs.some((t) => /diulang ke-3 dari 3/.test(t)));
+  assert.strictEqual(resumableJobs(b).length, 0, 'gagal yang sudah diganti tidak diulang lagi oleh "Lanjutkan sisa"');
+  const sum = bulkSummary(b);
+  assert.strictEqual(sum.items, 20);
+});
+
+test('Bulk: hasil sebagian digenapi; pengganti dibatasi per slot; galat lama di halaman diabaikan Flow', async () => {
+  // 4 per Generate, Generate pertama hanya memberi 3 → tugas baru 1 gambar
+  const store = mkStore(ACCS.slice(0, 1));
+  const fs = fakeSessions((id, n) => (n === 1 ? { items: 3 } : null));
+  const r = new BulkRunner({ store, getSession: fs.get, unitMs: 1 });
+  r.start({ prompts: ['x'], count: 8, options: { kind: 'image', count: 4 }, accounts: [{ id: 'a1' }], minDelay: 3, maxDelay: 3 });
+  const res = await done(r);
+  assert.strictEqual(res.items, 8);
+  assert.deepStrictEqual(fs.log.filter((x) => x[0] === 'gen').map((x) => x[3]), [4, 4, 1]);
+
+  // prompt yang selalu gagal: 1 tugas asli + maks. MAX_REPLACE pengganti, masing-masing 4 percobaan → berhenti
+  const store2 = mkStore(ACCS.slice(0, 1));
+  const fs2 = fakeSessions((id, n, job) => (job.prompt === 'buruk' ? 'FLOW_CONTENT_POLICY' : null));
+  const r2 = new BulkRunner({ store: store2, getSession: fs2.get, unitMs: 1 });
+  const logs = [];
+  r2.on('activity', (t) => logs.push(t));
+  r2.start({ prompts: ['baik', 'buruk'], options: { kind: 'image', count: 1 }, accounts: [{ id: 'a1' }], minDelay: 3, maxDelay: 3 });
+  const res2 = await done(r2);
+  const b2 = store2.data.bulk;
+  assert.strictEqual(res2.items, 1);
+  assert.strictEqual(res2.failed, 1 + MAX_REPLACE);
+  assert.strictEqual(fs2.log.filter((x) => x[0] === 'gen' && x[2] === 'buruk').length, (1 + MAX_REPLACE) * 4);
+  assert.ok(logs.some((t) => /batas 3 tugas pengganti/.test(t)));
+  assert.strictEqual(resumableJobs(b2).length, 1, 'hanya pengganti terakhir yang bisa dilanjutkan');
+  assert.strictEqual(b2.accounts[0].status, 'done', 'akun tetap dipakai sampai akhir');
 });

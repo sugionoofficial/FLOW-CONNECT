@@ -720,8 +720,12 @@ test('Skill Foto: unggah referensi ke Flow → @ chip → generate gambar → ha
   const bulkJob = (prompt) => ({ prompt, images: [kucing], tags: ['kucing-oren'], reuseRefs: true, options: { kind: 'image', model: 'Nano Banana Pro', ratio: '1:1', count: 1 } });
   await s.generate(bulkJob('Foto @kucing-oren di taman'), { timeoutMs: 60000 });
   assert.strictEqual(mock.state.uploads.length, up0 + 1, 'unggahan pertama');
+  // pesan galat lama yang masih tampil (sisa tugas sebelumnya) tidak boleh menggagalkan tugas berikutnya
+  const evalPage = async (expression) => (await s.ensurePage()).send('Runtime.evaluate', { expression });
+  await evalPage(`document.getElementById('alerts').insertAdjacentHTML('beforeend', '<div role="alert" id="stale">Something went wrong. Generation failed.</div>')`);
   const logs2 = [];
   await s.generate(bulkJob('Foto @kucing-oren di pantai'), { onLog: (x) => logs2.push(x), timeoutMs: 60000 });
+  await evalPage(`document.getElementById('stale').remove()`);
   assert.strictEqual(mock.state.uploads.length, up0 + 1, 'tidak diunggah ulang');
   assert.ok(logs2.some((l) => /Memakai gambar @kucing-oren/.test(l)), logs2.join(' | '));
   const gb = mock.generated[mock.generated.length - 1];

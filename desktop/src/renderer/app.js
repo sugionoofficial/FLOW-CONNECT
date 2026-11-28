@@ -694,39 +694,43 @@ function bulkRunView(b) {
   const running = B.st.running;
   const video = b.kind === 'video';
   const count = (st0) => b.jobs.filter((j) => j.status === st0).length;
-  const done = count('done'), failed = count('failed'), skipped = count('skipped'), stopped = count('stopped'), pending = count('pending') + count('running');
+  const failed = count('failed'), skipped = count('skipped'), pending = count('pending') + count('running');
   const fin = b.jobs.length - pending;
   const items = b.jobs.filter((j) => j.status === 'done').reduce((s, j) => s + (j.results.length || j.count), 0);
   const elapsed = (b.finishedAt || Date.now()) - b.startedAt;
   const eta = running && fin && pending ? (elapsed / fin) * pending : 0;
-  const avg = done ? b.jobs.filter((j) => j.status === 'done' && j.finishedAt && j.startedAt).reduce((s, j) => s + (j.finishedAt - j.startedAt), 0) / done : 0;
+  const perItem = items ? elapsed / items : 0; // satu runtime ÷ hasil = rata-rata per gambar/video (termasuk ulangan & jeda)
+  const replaced = b.jobs.filter((j) => j.replacedBy).length;
+  const unit = video ? 'video' : 'gambar';
   const status = running ? `<span class="badge accent">${icon('loader-circle', 'spin')} Berjalan</span>` : b.stopped ? '<span class="badge warn">Dihentikan</span>' : '<span class="badge ok">Selesai</span>';
   const pct = b.jobs.length ? Math.round((fin / b.jobs.length) * 100) : 0;
   const accName = (id) => esc((b.accounts.find((a) => a.id === id) || {}).label || '—');
   const list = B.showAll ? b.jobs : b.jobs.slice(0, 60);
-  const resumable = !running && (failed + skipped + stopped) > 0;
+  const leftover = b.jobs.filter((j) => j.status === 'stopped' || j.status === 'skipped' || (j.status === 'failed' && !j.replacedBy)).length;
+  const resumable = !running && leftover > 0;
   const firstFile = b.jobs.find((j) => j.results.length && /[\\/]/.test(j.results[0]));
   return `
     <div class="card bulk-run">
       <div class="bulk-run-head">
         <div class="bulk-title">${icon('layers', 'lg')}<div><h3>Bulk ${video ? 'video' : 'gambar'} ${status}</h3>
-          <div class="muted small">${esc(b.model)}${b.duration ? ` · ${b.duration} dtk` : ''} · ${esc(b.options.ratio)}${video ? ` · ${b.cost} kredit/video` : b.perJob > 1 ? ` · ${b.perJob} per Generate` : ''} · ${b.accounts.length} akun · ${b.parallel ? 'bersamaan' : 'bergiliran'} · mulai ${fmtTime(b.startedAt)}</div></div></div>
+          <div class="muted small">${esc(b.model)}${b.duration ? ` · ${b.duration} dtk` : ''} · ${esc(b.options.ratio)}${video ? ` · ${b.cost} kredit/video` : b.perJob > 1 ? ` · ${b.perJob} per Generate` : ''} · ${b.accounts.length} akun · ${b.parallel ? 'bersamaan' : 'bergiliran'} · mulai ${fmtTime(b.createdAt || b.startedAt)}</div></div></div>
         <div class="bulk-clock" title="${running ? 'Waktu berjalan sejak Bulk dimulai' : 'Total durasi batch'}">${icon('timer')}<div><div class="faint small">${running ? 'Runtime' : 'Total durasi'}</div>${runtimeEl(b.startedAt, running ? null : b.finishedAt, 'big')}</div></div>
       </div>
       <div class="progress bulk-progress"><i data-w="${pct}"></i></div>
       <div class="bulk-stats">
         <div><b>${items}</b><span class="faint small">/${b.target} ${video ? 'video' : 'gambar'}</span></div>
         <div><b>${fin}</b><span class="faint small">/${b.jobs.length} tugas</span></div>
-        ${failed ? `<div><b class="err-text">${failed}</b><span class="faint small"> gagal</span></div>` : ''}
+        ${failed ? `<div><b class="err-text">${failed}</b><span class="faint small"> gagal${replaced ? ` · ${replaced} diganti tugas baru` : ''}</span></div>` : ''}
         ${skipped ? `<div><b class="warn-text">${skipped}</b><span class="faint small"> terlewat</span></div>` : ''}
-        ${avg ? `<div><b>${fmtDur(avg)}</b><span class="faint small"> rata-rata/tugas</span></div>` : ''}
+        ${perItem ? `<div><b>${fmtDurLong(perItem)}</b><span class="faint small"> rata-rata/${unit}</span></div>` : ''}
         ${eta ? `<div><b>±${fmtDurLong(eta)}</b><span class="faint small"> lagi</span></div>` : ''}
         ${video ? `<div><b>${b.accounts.reduce((s, a) => s + (a.used || 0), 0)}</b><span class="faint small"> kredit terpakai</span></div>` : ''}
       </div>
+      ${!running && items ? `<div class="bulk-sum">${icon('timer')}<span><b>${items} ${unit}</b> selesai dalam <b>${fmtDurLong(elapsed)}</b> (satu proses${b.retries ? `, ${b.retries}× diulang` : ''}${replaced ? `, ${replaced} tugas pengganti` : ''}) · rata-rata ${fmtDurLong(perItem)} per ${unit}</span></div>` : ''}
       ${running || B.st.activity ? `<div class="activity">${running ? icon('loader-circle', 'spin') : icon('info')}<span id="bulk-act">${esc(B.st.activity)}</span></div>` : ''}
       <div class="actionbar">
         ${running ? btn('bulkStop', 'Hentikan', { ic: 'square' }) : ''}
-        ${resumable ? btn('bulkResume', `Lanjutkan sisa (${failed + skipped + stopped})`, { ic: 'rotate-ccw', cls: 'primary', disabled: !isAuto() }) : ''}
+        ${resumable ? btn('bulkResume', `Lanjutkan sisa (${leftover})`, { ic: 'rotate-ccw', cls: 'primary', disabled: !isAuto() }) : ''}
         ${!running ? btn('bulkView', 'Batch baru', { ic: 'plus', cls: resumable ? '' : 'primary', data: 'data-v="form"' }) : ''}
         ${firstFile ? btn('showFile', 'Buka folder hasil', { ic: 'folder-open', cls: 'subtle', data: `data-path="${esc(firstFile.results[0])}"` }) : ''}
         ${!running ? btn('bulkClear', 'Hapus riwayat batch', { ic: 'trash-2', cls: 'subtle' }) : ''}
@@ -741,7 +745,7 @@ function bulkRunView(b) {
     <table class="table bulk-jobs"><thead><tr><th class="num">#</th><th>Prompt</th><th>Akun</th><th>Status</th><th>Durasi</th><th>Hasil</th></tr></thead><tbody>
       ${list.map((j) => `<tr>
         <td class="num">${j.n}</td>
-        <td class="prompt"><div class="ellipsis" title="${esc(b.prompts[j.p])}">${esc(b.prompts[j.p] || '(tanpa prompt)')}</div>${j.error && j.status !== 'pending' ? `<div class="small err-text">${esc(msg({ message: j.error, detail: j.detail }))}</div>` : ''}</td>
+        <td class="prompt"><div class="ellipsis" title="${esc(b.prompts[j.p])}">${esc(b.prompts[j.p] || '(tanpa prompt)')}</div>${j.replaces ? `<div class="small faint">Pengganti #${j.replaces}</div>` : ''}${j.error && j.status !== 'pending' ? `<div class="small err-text">${esc(msg({ message: j.error, detail: j.detail }))}${j.attempts > 1 ? ` · ${j.attempts}× dicoba` : ''}${j.replacedBy ? ` · diganti #${j.replacedBy}` : ''}</div>` : ''}${j.status === 'pending' && j.attempts ? `<div class="small warn-text">Diulang ke-${j.attempts} dari 3 (${esc(j.error || '')})</div>` : ''}</td>
         <td class="ellipsis">${j.accountId ? accName(j.accountId) : '—'}</td>
         <td>${JOB_BADGE[j.status] || esc(j.status)}</td>
         <td class="small">${j.status === 'running' && j.startedAt ? runtimeEl(j.startedAt) : j.finishedAt && j.startedAt ? fmtDur(j.finishedAt - j.startedAt) : '—'}</td>
@@ -2909,7 +2913,11 @@ async function init() {
     S.bulk.st = b;
     if (b.batch && b.batch.jobs.filter((j) => j.status === 'done').length > doneBefore) galleryRefreshSoon();
     if (!changed) return;
-    if (before.running && !b.running && b.batch) toast(`${b.batch.stopped ? 'Bulk dihentikan' : 'Bulk selesai'} · durasi ${fmtDurLong(b.batch.finishedAt - b.batch.startedAt)}.`, b.batch.stopped ? 'info' : 'ok');
+    if (before.running && !b.running && b.batch) {
+      const x = b.batch, ms = x.finishedAt - x.startedAt, unit = x.kind === 'video' ? 'video' : 'gambar';
+      const n = x.jobs.filter((j) => j.status === 'done').reduce((s0, j) => s0 + (j.results.length || j.count), 0);
+      toast(`${x.stopped ? 'Bulk dihentikan' : 'Bulk selesai'} · ${n}/${x.target} ${unit} · total ${fmtDurLong(ms)}${n ? ` · rata-rata ${fmtDurLong(ms / n)}/${unit}` : ''}.`, x.stopped ? 'info' : 'ok');
+    }
     if (S.page === 'studio') render();
   });
   fc.on('bulk-activity', (t) => { S.bulk.st.activity = t; const el = $('#bulk-act'); if (el) el.textContent = t; });

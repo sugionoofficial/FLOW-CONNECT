@@ -8,7 +8,11 @@
 // • Gambar referensi: "shared" = gambar yang sama di semua tugas (maks. 10; Frame = 2 foto), atau
 //   "each" = satu gambar per prompt (gambar ke-i ↔ prompt ke-i, bergiliran; Frame = berpasangan awal+akhir), maks. 300.
 //   Gambar yang sama diunggah sekali per project lalu dipakai ulang (lihat FlowSession.prepareComposer reuseRefs).
-// • Batch menyimpan startedAt/finishedAt → timer runtime di Studio.
+// • Tugas gagal diulang maks. 3× (4 percobaan). Tetap gagal → dibiarkan "gagal", lalu dibuat TUGAS PENGGANTI baru
+//   (prompt/gambar sama) agar jumlah hasil tetap genap sesuai permintaan — mis. minta 20, 12 berhasil → 8 tugas baru.
+//   Hasil sebagian (mis. 3 dari 4) juga digenapi. Pengganti dibatasi (MAX_REPLACE per slot) agar tidak berulang tanpa akhir.
+// • Batch menyimpan startedAt/finishedAt → SATU timer runtime untuk seluruh proses (termasuk ulangan & pengganti;
+//   "Lanjutkan sisa" meneruskan timer yang sama, bukan mulai dari nol).
 const path = require('path');
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
@@ -23,11 +27,17 @@ const MAX_SHARED_IMAGES = 10;
 const MAX_EACH_IMAGES = 300;
 const PROJECT_EVERY = 100;     // project Flow baru tiap 100 tugas per akun (project terlalu penuh → Flow melambat)
 const DELAY = { image: [8, 20], video: [15, 40] }; // jeda bawaan (detik) antar tugas di akun yang sama
-const MAX_BACKOFF = 8;
+const MAX_BACKOFF = 4;          // jeda antar tugas maks. 4× lipat setelah gagal beruntun
+const MAX_ATTEMPTS = 4;         // 1 percobaan + 3× ulang
+const RETRY_DELAY = 10;         // detik × nomor percobaan (10, 20, 30) sebelum diulang
+const MAX_REPLACE = 3;          // tugas pengganti maks. per slot (slot = tugas asli)
+const COOL_EVERY = 5;           // tiap 5× gagal beruntun → akun istirahat sebentar (bukan dimatikan seperti dulu)
+const COOL_DELAY = 60;          // detik
 
-// galat yang membuat TUGAS gagal permanen (mengulang tidak akan membantu)
-const JOB_FATAL = new Set(['FLOW_CONTENT_POLICY', 'INVALID_PROMPT', 'INVALID_IMAGE', 'FRAMES_REQUIRED', 'UPLOAD_REJECTED',
-  'UPLOAD_TERMS', 'REFERENCE_NOT_ATTACHED', 'REFERENCE_LOST', 'FRAME_NOT_ATTACHED', 'FRAME_SLOT_NOT_FOUND', 'NOTHING_TO_SEND']);
+// galat yang membuat TUGAS gagal permanen TANPA diulang/diganti: masukan/berkas tidak valid (mengulang pasti sama)
+const JOB_FATAL = new Set(['INVALID_PROMPT', 'INVALID_IMAGE', 'FRAMES_REQUIRED', 'UPLOAD_REJECTED', 'UPLOAD_TERMS', 'NOTHING_TO_SEND']);
+// FLOW_CONTENT_POLICY, GENERATE_FAILED ("tidak ada gambar" / filter keamanan), REFERENCE_NOT_ATTACHED, GENERATE_TIMEOUT, dst.
+// sering berhasil bila diulang → diulang 3× lalu diganti tugas baru.
 // galat yang membuat AKUN berhenti dipakai di batch ini (tugasnya dikembalikan ke antrean untuk akun lain)
 const ACCOUNT_FATAL = new Set(['NOT_SIGNED_IN', 'BROWSER_NOT_FOUND', 'BROWSER_LAUNCH_FAILED', 'PROFILE_IN_USE', 'BROWSER_CLOSED',
   'CDP_CONNECT_FAILED', 'UNKNOWN_ACCOUNT', 'LOGIN_IN_PROGRESS']);
@@ -189,7 +199,7 @@ class BulkRunner extends EventEmitter {
     for (let i = 0; i < plan.jobs; i++) {
       const n = Math.min(plan.perJob, left);
       left -= n;
-      jobs.push({ id: crypto.randomUUID(), n: i + 1, p: i % list.length, g: groups ? i % groups.length : null, count: n, status: 'pending', accountId: null, attempts: 0, results: [], error: null, detail: null });
+      jobs.push({ id: crypto.randomUUID(), n: i + 1, p: i % list.length, g: groups ? i % groups.length : null, count: n, status: 'pending', accountId: null, attempts: 0, results: [], error: null, detail: null, slot: i + 1, gen: 0, replaces: null, replacedBy: null });
     }
     const [dmin, dmax] = DELAY[options.kind];
     const minDelay = clampInt(input.minDelay, 3, 600, dmin);
@@ -197,7 +207,7 @@ class BulkRunner extends EventEmitter {
     const stamp = new Date(now);
     const pad = (x) => String(x).padStart(2, '0');
     this.store.data.bulk = {
-      id: crypto.randomUUID(), createdAt: now, startedAt: now, finishedAt: null, updatedAt: now, stopped: false,
+      id: crypto.randomUUID(), createdAt: now, startedAt: now, finishedAt: null, updatedAt: now, stopped: false, runs: 1, retries: 0, replaced: 0,
       kind: options.kind, model: options.model, duration: options.duration, cost, perJob: plan.perJob, target: plan.target,
       options: { ...options, count: plan.perJob }, images, refMode, groups, tags: groups ? null : sanitizeTags(input.tags, images), prompts: list,
       parallel: !!input.parallel, newProject: input.newProject !== false, autoDownload: s.auto.autoDownload,
@@ -234,9 +244,7 @@ class BulkRunner extends EventEmitter {
     const s = this.store.data;
     if (s.mode !== 'auto' || !s.autoAck) throw new Error('AUTO_MODE_DISABLED');
     let n = 0;
-    for (const j of b.jobs) {
-      if (['failed', 'stopped', 'skipped'].includes(j.status)) { j.status = 'pending'; j.error = null; j.detail = null; j.attempts = 0; n++; }
-    }
+    for (const j of resumableJobs(b)) { j.status = 'pending'; j.error = null; j.detail = null; j.attempts = 0; j.retryAt = null; n++; }
     if (!n) throw new Error('NOTHING_TO_SEND');
     const upd = new Map((Array.isArray(accounts) ? accounts : []).map((a) => [a.id, a]));
     for (const a of b.accounts) {
@@ -245,7 +253,9 @@ class BulkRunner extends EventEmitter {
       if (a.status !== 'exhausted' || b.kind !== 'video' || a.credits >= b.cost) { a.status = 'ready'; a.note = null; }
       a.backoff = 1; a.fails = 0; a.jobsRun = 0;
     }
-    b.startedAt = Date.now(); b.finishedAt = null; b.stopped = false;
+    // satu runtime: timer diteruskan dari durasi sebelumnya (jeda saat aplikasi diam tidak dihitung)
+    const ran = b.finishedAt && b.startedAt ? Math.max(0, b.finishedAt - b.startedAt) : 0;
+    b.startedAt = Date.now() - ran; b.finishedAt = null; b.stopped = false; b.runs = (b.runs || 1) + 1;
     this._run().catch((e) => this._log('Bulk berhenti: ' + e.message));
     return this.state();
   }
@@ -272,13 +282,12 @@ class BulkRunner extends EventEmitter {
       b.stopped = stopped;
       this.running = false;
       this.stopRequested = false;
-      const done = b.jobs.filter((j) => j.status === 'done');
-      const items = done.reduce((s, j) => s + (j.results.length || j.count), 0);
-      const failed = b.jobs.filter((j) => j.status === 'failed').length;
-      const skipped = b.jobs.filter((j) => j.status === 'skipped').length;
-      this._log(`${stopped ? 'Bulk dihentikan' : 'Bulk selesai'}: ${items} hasil dari ${done.length} tugas${failed ? `, ${failed} gagal` : ''}${skipped ? `, ${skipped} terlewat` : ''} · durasi ${fmtDuration(b.finishedAt - b.startedAt)}.`);
+      const sum = bulkSummary(b);
+      const { items, failed, skipped, ms } = sum;
+      const unit = b.kind === 'video' ? 'video' : 'gambar';
+      this._log(`${stopped ? 'Bulk dihentikan' : 'Bulk selesai'}: ${items}/${b.target} ${unit} dari ${sum.done} tugas${failed ? `, ${failed} gagal` : ''}${sum.replaced ? ` (${sum.replaced} diganti tugas baru)` : ''}${skipped ? `, ${skipped} terlewat` : ''} · total durasi ${fmtDuration(ms)}${items ? ` · rata-rata ${fmtDuration(ms / items)} per ${unit}` : ''}.`);
       this._emit();
-      this.emit('finished', { done: done.length, items, failed, skipped, stopped, ms: b.finishedAt - b.startedAt });
+      this.emit('finished', { done: sum.done, items, failed, skipped, stopped, ms, target: b.target, replaced: sum.replaced, retries: sum.retries, perItemMs: sum.perItemMs, kind: b.kind });
     }
   }
 
@@ -316,7 +325,8 @@ class BulkRunner extends EventEmitter {
         // tugas yang sedang menunggu jeda-ulang / dipegang akun lain bisa kembali ke antrean
         const open = b.jobs.some((j) => j.status === 'pending' || (j.status === 'running' && j.accountId !== acct.id));
         if (!open) return;
-        await sleep(1000);
+        const soon = b.jobs.filter((j) => j.status === 'pending' && j.retryAt).reduce((m, j) => Math.min(m, j.retryAt), Infinity);
+        await sleep(Math.max(20, Math.min(1000, soon - Date.now())));
         continue;
       }
       job.status = 'running';
@@ -333,9 +343,11 @@ class BulkRunner extends EventEmitter {
       } finally { if (release) release(); }
       if (this.stopRequested) return;
       if (!this._nextJob() && !b.jobs.some((j) => j.status === 'pending')) continue; // tak ada tugas lagi → keluar di putaran berikut
-      const wait = Math.round(rand(b.minDelay, b.maxDelay) * acct.backoff * this.unitMs);
+      const cool = acct.fails && acct.fails % COOL_EVERY === 0;
+      const wait = Math.round((rand(b.minDelay, b.maxDelay) * acct.backoff + (cool ? COOL_DELAY : 0)) * this.unitMs);
       acct.status = 'waiting';
-      this._log(`[${acct.label}] Jeda ${Math.round(wait / 1000)} detik sebelum tugas berikutnya…`);
+      this._log(cool ? `[${acct.label}] ${acct.fails}× gagal berturut-turut — istirahat ${Math.round(wait / 1000)} detik lalu dilanjutkan…`
+        : `[${acct.label}] Jeda ${Math.round(wait / 1000)} detik sebelum tugas berikutnya…`);
       await this._wait(wait, acct);
     }
   }
@@ -377,6 +389,9 @@ class BulkRunner extends EventEmitter {
       } else job.results = res.items.map((i) => i.mediaId);
       job.status = 'done';
       job.finishedAt = Date.now();
+      // hasil sebagian (mis. 3 dari 4) → genapi kekurangannya dengan tugas baru
+      const got = job.results.length || res.items.length;
+      if (got < job.count) this._replace(job, job.count - got, `hanya ${got}/${job.count} hasil`);
       acct.done++;
       acct.fails = 0;
       acct.backoff = Math.max(1, acct.backoff / 2);
@@ -416,26 +431,69 @@ class BulkRunner extends EventEmitter {
         this._emit();
         return false;
       }
-      job.attempts++;
+      job.attempts = (job.attempts || 0) + 1;
       acct.fails++;
       acct.backoff = Math.min(MAX_BACKOFF, acct.backoff * 2);
       // video yang melewati batas tunggu mungkin tetap dibuat Flow (kredit terpakai) → jangan diulang otomatis
       const spent = video && code === 'GENERATE_TIMEOUT';
       if (spent) { acct.credits = Math.max(0, acct.credits - b.cost * job.count); acct.used += b.cost * job.count; }
-      if (!JOB_FATAL.has(code) && !spent && job.attempts < 2) {
+      if (!JOB_FATAL.has(code) && !spent && job.attempts < MAX_ATTEMPTS) {
+        // ulangi (maks. 3×) setelah jeda singkat — boleh diambil akun mana pun
         job.status = 'pending'; job.accountId = null; job.error = code;
-        job.retryAt = Date.now() + 20 * this.unitMs;
-        this._log(`[${tag}] Gagal (${code}) — diulang nanti.`);
+        job.retryAt = Date.now() + RETRY_DELAY * job.attempts * this.unitMs;
+        b.retries = (b.retries || 0) + 1;
+        this._log(`[${tag}] Gagal (${code}) — diulang ke-${job.attempts} dari ${MAX_ATTEMPTS - 1}…`);
       } else {
         job.status = 'failed'; job.error = code; job.finishedAt = Date.now();
         acct.failed++;
+        this._log(`[${tag}] Tetap gagal setelah ${job.attempts} percobaan (${code}).`);
         this.emit('job-failed', { ...job, prompt });
+        if (!JOB_FATAL.has(code)) this._replace(job, job.count, code);
       }
-      if (acct.fails >= 3) { acct.status = 'error'; acct.note = `3× gagal berturut-turut (${code})`; }
+      // gagal beruntun TIDAK lagi mematikan akun (dulu 3× → sisa batch "terlewat" = penyebab 8 gagal);
+      // jeda diperpanjang (backoff) + istirahat singkat tiap COOL_EVERY× gagal. Jumlah percobaan tetap terbatas.
       this._emit();
       return true;
     }
   }
+
+  /**
+   * Genapi permintaan: tambahkan tugas baru (prompt/gambar sama) untuk `count` hasil yang kurang.
+   * Dibatasi MAX_REPLACE per slot. → tugas baru | null
+   */
+  _replace(job, count, why) {
+    const b = this.batch;
+    if (this.stopRequested || !(count > 0)) return null;
+    const gen = (job.gen || 0) + 1;
+    if (gen > MAX_REPLACE) { this._log(`Slot #${job.slot || job.n}: batas ${MAX_REPLACE} tugas pengganti tercapai — tidak digenapi lagi.`); return null; }
+    const nj = { id: crypto.randomUUID(), n: b.jobs.length + 1, p: job.p, g: job.g, count, status: 'pending', accountId: null, attempts: 0, results: [],
+      error: null, detail: null, slot: job.slot || job.n, gen, replaces: job.n, replacedBy: null };
+    b.jobs.push(nj);
+    job.replacedBy = nj.n;
+    b.replaced = (b.replaced || 0) + 1;
+    this._log(`Menggenapi permintaan: tugas baru #${nj.n} (${count} ${b.kind === 'video' ? 'video' : 'gambar'}) menggantikan #${job.n} — ${why}.`);
+    return nj;
+  }
+}
+
+/** Tugas yang diulang oleh "Lanjutkan sisa": dihentikan / terlewat / gagal yang belum punya pengganti. */
+function resumableJobs(b) {
+  return (b && b.jobs ? b.jobs : []).filter((j) => j.status === 'stopped' || j.status === 'skipped' || (j.status === 'failed' && !j.replacedBy));
+}
+
+/** Ringkasan batch: hasil vs target, total durasi (satu runtime) & rata-rata per hasil. */
+function bulkSummary(b) {
+  const jobs = b && b.jobs ? b.jobs : [];
+  const done = jobs.filter((j) => j.status === 'done');
+  const items = done.reduce((s, j) => s + (j.results.length || j.count), 0);
+  const ms = b && b.startedAt ? Math.max(0, (b.finishedAt || Date.now()) - b.startedAt) : 0;
+  return {
+    done: done.length, items, target: b ? b.target : 0, ms, perItemMs: items ? Math.round(ms / items) : 0,
+    failed: jobs.filter((j) => j.status === 'failed').length,
+    skipped: jobs.filter((j) => j.status === 'skipped').length,
+    replaced: jobs.filter((j) => j.replacedBy).length,
+    retries: b ? b.retries || 0 : 0
+  };
 }
 
 /** Gambar referensi sebuah tugas: semua gambar (shared) atau kelompoknya sendiri (each). */
@@ -459,4 +517,4 @@ function fmtDuration(ms) {
   return h ? `${h}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`;
 }
 
-module.exports = { BulkRunner, planBulk, bulkUnits, jobImages, cleanPrompts, fmtDuration, MAX_BULK, DELAY };
+module.exports = { BulkRunner, planBulk, bulkUnits, jobImages, cleanPrompts, fmtDuration, bulkSummary, resumableJobs, MAX_BULK, DELAY, MAX_ATTEMPTS, MAX_REPLACE };

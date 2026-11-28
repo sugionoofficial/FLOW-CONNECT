@@ -16,6 +16,7 @@ const DEFAULTS = {
   browser: { prefer: 'auto', customPath: '' },
   browserWindow: 'hidden', // hidden (headless, eksperimental) | minimized | normal
   autoProject: true,       // buat project baru otomatis setelah terhubung
+  aiPageReader: true,      // AI membaca halaman Flow saat login / membuat project (bukan menebak dari pola tombol)
   studio: STUDIO,          // setelan Flow terakhir di Studio
   downloadDir: '',
   mode: 'safe',            // safe | auto
@@ -96,6 +97,7 @@ class Store {
     if (patch.theme && ['system', 'light', 'dark'].includes(patch.theme)) d.theme = patch.theme;
     if (patch.browserWindow && ['hidden', 'minimized', 'normal'].includes(patch.browserWindow)) d.browserWindow = patch.browserWindow;
     if (typeof patch.autoProject === 'boolean') d.autoProject = patch.autoProject;
+    if (typeof patch.aiPageReader === 'boolean') d.aiPageReader = patch.aiPageReader;
     if (patch.studio && typeof patch.studio === 'object') d.studio = sanitizeStudio(patch.studio, d.studio);
     if (patch.browser) {
       const p = patch.browser;

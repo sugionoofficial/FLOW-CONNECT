@@ -1363,6 +1363,8 @@ const PAGES = {
         ${s.accounts.filter((a) => a.headlessFailedAt).map((a) => `<div class="row sub">${icon('triangle-alert', 'warn-ic')}<div class="text"><div class="title">${esc(a.label)}: memakai jendela diperkecil</div><div class="desc">Flow menolak mode tersembunyi pada ${fmtDate(a.headlessFailedAt)}${a.headlessReason ? ' — ' + esc(a.headlessReason) : ''}.</div></div><div class="ctrl">${btn('resetHeadless', 'Coba tersembunyi lagi', { cls: 'sm', data: `data-id="${a.id}"` })}</div></div>`).join('')}
         <div class="row">${icon('folder-plus', 'lg')}<div class="text"><div class="title">Buat project baru otomatis</div><div class="desc">Setelah masuk / terhubung, aplikasi menekan "New project" di Flow bila belum ada project terbuka.</div></div>
           <div class="ctrl"><label class="switch"><span class="small muted">${s.autoProject ? 'Aktif' : 'Nonaktif'}</span><input type="checkbox" data-change="autoProject" ${s.autoProject ? 'checked' : ''}></label></div></div>
+        <div class="row">${icon('scan-eye', 'lg')}<div class="text"><div class="title">AI pembaca halaman</div><div class="desc">Saat login &amp; membuat project, AI membaca halaman Google Flow (teks, tombol, dan tangkapan layar) lalu memilih tombol yang benar — termasuk kartu sambutan, persetujuan, dan "What's new". Tidak pernah menekan Keluar akun, langganan, atau beli. Butuh lisensi &amp; internet; bila AI tidak tersedia aplikasi memakai cara biasa.</div></div>
+          <div class="ctrl"><label class="switch"><span class="small muted">${s.aiPageReader !== false ? 'Aktif' : 'Nonaktif'}</span><input type="checkbox" data-change="aiPageReader" ${s.aiPageReader !== false ? 'checked' : ''}></label></div></div>
       </div>
       <h2>Unduhan</h2>
       <div class="rows">
@@ -2659,6 +2661,7 @@ const CHANGES = {
   theme: async (el) => { S.settings = await call('settings:set', { theme: el.value }); render(); },
   browserWindow: async (el) => { S.settings = await call('settings:set', { browserWindow: el.value }); render(); toast('Berlaku saat akun dihubungkan / bekerja berikutnya.', 'info'); },
   autoProject: async (el) => { S.settings = await call('settings:set', { autoProject: el.checked }); render(); },
+  aiPageReader: async (el) => { S.settings = await call('settings:set', { aiPageReader: el.checked }); render(); },
   studioModel: (el) => setStudio({ model: el.value }),
   chatModel: (el) => { S.chat.model = el.value; chatSave(); render(); },
   studioApply: (el) => setStudio({ apply: el.checked }),

@@ -4,7 +4,7 @@
 // ambil file media, mencari kolom prompt / input file / tombol Generate.
 // Tidak pernah membuat token reCAPTCHA — Generate selalu lewat tombol UI Flow sendiri.
 
-const AGENT_VERSION = 13;
+const AGENT_VERSION = 14;
 
 /* eslint-disable */
 function fcAgent(V, cfg) {
@@ -586,6 +586,96 @@ function fcAgent(V, cfg) {
     }
     return { path: location.pathname, lang: (document.documentElement.lang || ''), heading: maskText(h ? h.innerText : '').slice(0, 80), buttons: labels, dialogs: overlays().length };
   }
+  // ---------- AI pembaca halaman: daftar elemen bernomor yang boleh diklik + teks terlihat ----------
+  var NAV_SEL = 'button, [role="button"], a[href], [role="link"], [role="tab"], [role="checkbox"], input[type="checkbox"], [role="menuitem"], [role="radio"], [role="switch"], [role="option"], [tabindex="0"]';
+  var NAV_BAD = /sign ?out|log ?out|keluar|switch account|ganti akun|add account|tambah akun|subscribe|upgrade|buy|purchase|beli|langganan|tingkatkan|delete|hapus|google ai (pro|ultra)|add ai credits|tambah kredit|changelog|share|bagikan/i;
+  function navOnTop(el) {
+    var r = el.getBoundingClientRect();
+    var x = Math.min(innerWidth - 1, Math.max(0, r.left + r.width / 2)), y = Math.min(innerHeight - 1, Math.max(0, r.top + r.height / 2));
+    var t = document.elementFromPoint(x, y);
+    return !!t && (t === el || el.contains(t) || t.contains(el));
+  }
+  // label untuk AI: teks tombol; kotak centang → teks <label> miliknya; ligatur ikon → kosong (nama ikon dikirim terpisah)
+  function navLabel(el) {
+    var lab = labelOf(el);
+    if (!lab && el.labels && el.labels.length) lab = (el.labels[0].innerText || '').replace(/\s+/g, ' ').trim();
+    if (!lab && el.getAttribute('aria-labelledby')) { var lb = document.getElementById(el.getAttribute('aria-labelledby')); if (lb) lab = (lb.innerText || '').trim(); }
+    if (/^(arrow_|chevron_|navigate_|keyboard_arrow_|east$|west$|close$)/.test(lab)) lab = '';
+    return lab.slice(0, 120);
+  }
+  function pageMap() {
+    var dl = Array.prototype.filter.call(document.querySelectorAll('[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog[open]'), function (d) { return visible(d) && !dialogHasSignOut(d); });
+    var inDialog = function (el) { for (var i = 0; i < dl.length; i++) if (dl[i].contains(el)) return true; return false; };
+    var all = document.querySelectorAll(NAV_SEL), els = [], out = [];
+    for (var i = 0; i < all.length && out.length < 70; i++) {
+      var el = all[i];
+      if (!visible(el)) continue;
+      if (el.parentElement && el.parentElement.closest('button, [role="button"], a[href], [role="link"], [role="menuitem"], [role="option"]')) continue; // bagian dalam tombol lain
+      if (el.matches('[contenteditable="true"], textarea, input:not([type="checkbox"]), [role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog')) continue;
+      var r = el.getBoundingClientRect();
+      if (r.width * r.height > 0.35 * innerWidth * innerHeight) continue; // wadah besar, bukan tombol
+      if (r.bottom < 0 || r.right < 0 || r.top > innerHeight || r.left > innerWidth || r.width < 6 || r.height < 6) continue;
+      if (!navOnTop(el)) continue; // tertutup kartu / dialog lain → tidak bisa diklik sekarang
+      var lab = navLabel(el);
+      if (NAV_BAD.test(lab)) continue;
+      var host = '';
+      if (el.tagName === 'A' && el.href) { try { host = new URL(el.href).host; } catch (e) { host = ''; } }
+      if (host && host !== location.host) continue; // tautan ke luar Flow
+      var root = el.closest('[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog[open]') || document.body;
+      var o = { id: out.length, role: (el.getAttribute('role') || (el.tagName === 'INPUT' ? 'checkbox' : el.tagName.toLowerCase())), label: maskText(lab).slice(0, 80),
+        icon: lab ? '' : (iconName(el) || '').slice(0, 30), dialog: inDialog(el), disabled: looksDisabled(el, root), x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+      if (o.role === 'checkbox' || el.getAttribute('aria-checked') != null) o.checked = isChecked(el);
+      if (el.tagName === 'A') o.link = true;
+      els.push(el);
+      out.push(o);
+    }
+    // elemen di dalam dialog di depan daftar
+    var order = out.map(function (o, k) { return k; }).sort(function (a, b) { return (out[b].dialog ? 1 : 0) - (out[a].dialog ? 1 : 0) || a - b; });
+    var sorted = [], sEls = [];
+    order.forEach(function (k, n) { var o = out[k]; o.id = n; sorted.push(o); sEls.push(els[k]); });
+    window.__fcNav = sEls;
+    var dtext = dl.map(function (d) { return d.innerText || ''; }).join(' | ');
+    return { path: location.pathname, title: document.title, lang: document.documentElement.lang || '', vw: innerWidth, vh: innerHeight, dialogs: dl.length,
+      dialogText: maskText(dtext).slice(0, 2000), text: maskText((document.body && document.body.innerText) || '').slice(0, 2000), elements: sorted };
+  }
+  // tanda tangan halaman: berubah bila alamat, jumlah dialog, atau teks terlihat berubah
+  function pageSig() {
+    var t = location.pathname + '|' + overlays().length + '|' + ((document.body && document.body.innerText) || '');
+    var h = 0;
+    for (var i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0;
+    return String(h);
+  }
+  // elemen pilihan AI → kotak klik, hanya bila masih elemen yang sama (label sama, terlihat, tidak terlarang)
+  function navTarget(id, label) {
+    var el = (window.__fcNav || [])[id];
+    if (!el || !el.isConnected || !visible(el)) return null;
+    var lab = navLabel(el);
+    if (maskText(lab).slice(0, 80) !== String(label || '') || NAV_BAD.test(lab)) return null;
+    return box(el, { kind: NEW_PROJECT.test(lab) || (lab.length <= 40 && NEW_PROJECT_LOOSE.test(lab)) ? 'new' : 'ai' });
+  }
+  // nomor di atas setiap elemen untuk tangkapan layar (dilepas lagi setelah difoto; tidak menghalangi klik)
+  function navMarks(on) {
+    var old = document.getElementById('__fcMarks');
+    if (old) old.remove();
+    if (!on) return true;
+    var wrap = document.createElement('div');
+    wrap.id = '__fcMarks';
+    wrap.setAttribute('aria-hidden', 'true');
+    wrap.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647';
+    (window.__fcNav || []).forEach(function (el, i) {
+      if (!el.isConnected) return;
+      var r = el.getBoundingClientRect();
+      var f = document.createElement('div');
+      f.style.cssText = 'position:fixed;left:' + r.left + 'px;top:' + r.top + 'px;width:' + r.width + 'px;height:' + r.height + 'px;outline:2px solid #ff2d55;outline-offset:1px';
+      var b = document.createElement('div');
+      b.textContent = String(i);
+      b.style.cssText = 'position:fixed;left:' + Math.max(0, r.left - 2) + 'px;top:' + Math.max(0, r.top - 16) + 'px;background:#ff2d55;color:#fff;font:bold 12px/14px sans-serif;padding:1px 4px;border-radius:3px';
+      wrap.appendChild(f);
+      wrap.appendChild(b);
+    });
+    document.documentElement.appendChild(wrap);
+    return true;
+  }
   // chip setelan di samping kolom prompt (mis. "Video · 8s · x2" / aria-label "Settings trigger")
   function settingsTrigger() {
     var ed = editor();
@@ -897,7 +987,7 @@ function fcAgent(V, cfg) {
     status: status, listMedia: listMedia, getMedia: getMedia, fetchB64: fetchB64, focusPrompt: focusPrompt,
     promptText: promptText, setPromptFallback: setPromptFallback, markFileInput: markFileInput, pasteFiles: pasteFiles,
     findGenerate: findGenerate, find: find, newProjectTarget: newProjectTarget, settingsTrigger: settingsTrigger,
-    onboardingTarget: onboardingTarget, flowBlocked: flowBlocked, pageSummary: pageSummary,
+    onboardingTarget: onboardingTarget, flowBlocked: flowBlocked, pageSummary: pageSummary, pageMap: pageMap, pageSig: pageSig, navTarget: navTarget, navMarks: navMarks,
     legacyModeTrigger: legacyModeTrigger, modelTrigger: modelTrigger, overlayOpen: overlayOpen, optionLabels: optionLabels,
     pageError: pageError, toolbarAdd: toolbarAdd, uploadMenuItem: uploadMenuItem, dialogCount: dialogCount,
     mentionOptions: mentionOptions, mentionChips: mentionChips, caretToEnd: caretToEnd, emptyFrameChip: emptyFrameChip,
